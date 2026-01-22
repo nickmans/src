@@ -57,7 +57,16 @@ class WaypointTrajNode(Node):
         self.declare_parameter('wheel_radius', 0.09)  # r
         self.declare_parameter('wheel_base', 0.2)     # L
         self.declare_parameter('max_wheel_speed', 12.0)  # rad/s
-        self.declare_parameter('max_wheel_accel', 2.0)  # rad/s^2
+        self.declare_parameter('max_wheel_accel', 6.0)  # rad/s^2
+         # Reserve wheel authority for simultaneous yaw control *only when a waypoint requests a yaw change*
+        self.declare_parameter('omega_reserve', 1.0)          # rad/s
+        self.declare_parameter('alpha_reserve', 1.0)          # rad/s^2
+
+        self.declare_parameter('yaw_change_threshold', 0.05)  # rad (~3 deg)        
+        self.declare_parameter('wheel_speed_margin', 1.0)     # 0..1
+        self.declare_parameter('wheel_accel_margin', 1.0)     # 0..1
+
+
         self.declare_parameter('map_res', 0.01)
         self.declare_parameter('map_width_m', 3.0)
         self.declare_parameter('map_height_m', 3.0)
@@ -68,18 +77,19 @@ class WaypointTrajNode(Node):
         self.declare_parameter('hard_inflate_radius', 0.2)   # optional
         self.declare_parameter('soft_inflate_radius', 0.2)  # soft padding
 
-        # Waypoints: flat list [x1,y1, x2,y2, ...]
+        # Waypoints: flat list [x1,y1,(yaw1), x2,y2,(yaw2), ...]
+        # Accepts either 2*wp_n elements (x,y pairs) or 3*wp_n elements (x,y,yaw triples).
         self.declare_parameter(
             'waypoints',
             [float('nan'), float('nan')],
-            ParameterDescriptor(description='Flat list [x1,y1, x2,y2, ...]')
+            ParameterDescriptor(description='Flat list [x1,y1,(yaw1), x2,y2,(yaw2), ...]')
         )
 
-        # Add waypoint command: set to [x,y] to add
+        # Add waypoint command: set to [x,y] or [x,y,yaw] to append; node clears it after consuming
         self.declare_parameter(
             'add_wp',
-            [float('nan'), float('nan')],
-            ParameterDescriptor(description='Set to [x,y] to append; node clears it after consuming')
+            [float('nan'), float('nan'), float('nan')],
+            ParameterDescriptor(description='Set to [x,y] or [x,y,yaw] to append; node clears it after consuming')
         )
 
         self.declare_parameter('start_pose', [0.0, 0.0, 0.0])
@@ -347,7 +357,7 @@ class WaypointTrajNode(Node):
         return dv_max
 
     # ---------- Trajectory generation (dt fixed) ----------
-    def build_dt_trajectory(self, path_xy: List[Tuple[float,float]], yaw_by_segment: List[float], current_v: float):
+    def build_dt_trajectory(self, path_xy: List[Tuple[float,float]], yaw_by_segment: List[float], reserve_by_segment: List[float], current_v: float):
         if len(path_xy) < 1:
             return [], [], [], []
 
@@ -364,7 +374,7 @@ class WaypointTrajNode(Node):
             omega_dir_max = vref / max(Rref, 1e-6)
 
         # 1) resample geometry by ds_geom
-        xs, ys, yaws = self.resample_with_yaw(path_xy, yaw_by_segment, ds_geom)
+        xs, ys, yaws, reserves = self.resample_with_yaw(path_xy, yaw_by_segment, reserve_by_segment, ds_geom)
 
         # 2) compute curvature-based vmax
         # alpha: tangent heading
@@ -404,6 +414,11 @@ class WaypointTrajNode(Node):
         r = float(self.get_parameter('wheel_radius').value)
         L = float(self.get_parameter('wheel_base').value)
         w_max = float(self.get_parameter('max_wheel_speed').value)
+
+        speed_margin = float(self.get_parameter('wheel_speed_margin').value)
+        omega_reserve = abs(float(self.get_parameter('omega_reserve').value))
+        w_max_nom = w_max * speed_margin
+        omega_term = (L * omega_reserve) / max(r, 1e-9)
         for i in range(len(xs)):
             if i < len(xs) - 1:
                 dx = xs[i+1] - xs[i]
@@ -413,16 +428,26 @@ class WaypointTrajNode(Node):
                     theta = math.atan2(dy, dx)
                     vx = v_geom[i] * math.cos(theta)
                     vy = v_geom[i] * math.sin(theta)
-                    omega = 0.0  # no yaw
+                    omega = 0.0  # translation-only; yaw reserve handled via w_max_eff below
                     w1 = (vy + L * omega) / r
                     w2 = (-0.5 * vy + (math.sqrt(3)/2) * vx + L * omega) / r
                     w3 = (-0.5 * vy - (math.sqrt(3)/2) * vx + L * omega) / r
                     max_w = max(abs(w1), abs(w2), abs(w3))
-                    if max_w > w_max:
-                        v_geom[i] *= w_max / max_w
+                    # Reserve wheel headroom only on segments where yaw is changing.
+                    w_max_eff = max(0.0, w_max_nom - float(reserves[i]) * omega_term)
+                    if w_max_eff < 1e-9:
+                        v_geom[i] = 0.0
+                        continue
+                    if max_w > w_max_eff:
+                        v_geom[i] *= w_max_eff / max_w
 
         # Apply acceleration limits with forward and backward pass
         a_max = float(self.get_parameter('max_wheel_accel').value)
+        accel_margin = float(self.get_parameter('wheel_accel_margin').value)
+        alpha_reserve = abs(float(self.get_parameter('alpha_reserve').value))
+
+        a_max_nom = a_max * accel_margin
+        alpha_term = (L * alpha_reserve) / max(r, 1e-9)
         ds = ds_geom
 
         # Set final velocity to 0
@@ -431,28 +456,32 @@ class WaypointTrajNode(Node):
         # Backward pass for deceleration to 0
         for i in range(len(v_geom)-2, -1, -1):
             theta = thetas[i]
-            dv_max_decel = self.max_dv_accel(v_geom[i+1], theta, ds, a_max, r, L)
+            seg_reserve = max(float(reserves[i]), float(reserves[i+1]))
+            a_eff = max(0.0, a_max_nom - seg_reserve * alpha_term)
+            dv_max_decel = self.max_dv_accel(v_geom[i+1], theta, ds, a_eff, r, L)
             v_geom[i] = min(v_geom[i], v_geom[i+1] + dv_max_decel)
 
         # Forward pass for acceleration from start
         for i in range(1, len(v_geom)):
-            theta = thetas[i-1]
-            dv_max_accel = self.max_dv_accel(v_geom[i-1], theta, ds, a_max, r, L)
-            v_geom[i] = min(v_geom[i], v_geom[i-1] + dv_max_accel)
+            theta = thetas[i - 1]
+            seg_reserve = max(float(reserves[i - 1]), float(reserves[i]))
+            a_eff = max(0.0, a_max_nom - seg_reserve * alpha_term)
+            dv_max_accel = self.max_dv_accel(v_geom[i - 1], theta, ds, a_eff, r, L)
+            v_geom[i] = min(v_geom[i], v_geom[i - 1] + dv_max_accel)
 
         # 3) walk in fixed dt: s += v(s)*dt
         return self.walk_dt(xs, ys, yaws, v_geom, ds_geom, dt)
 
-    def resample_with_yaw(self, path_xy, yaw_by_segment, ds):
-        self.get_logger().info(f"resample called with path_xy len {len(path_xy)}, yaw_by_segment len {len(yaw_by_segment)}")
+    def resample_with_yaw(self, path_xy, yaw_by_segment, reserve_by_segment, ds):
+        self.get_logger().info(f"resample called with path_xy len {len(path_xy)}, yaw_by_segment len {len(yaw_by_segment)}, reserve_by_segment len {len(reserve_by_segment)}")
         if not yaw_by_segment:
             self.get_logger().error("yaw_by_segment is empty!")
-            return [path_xy[0][0]] if path_xy else [], [path_xy[0][1]] if path_xy else [], [0.0]
-        # path_xy is a stitched list; yaw_by_segment is per-point desired yaw already aligned
+            return [path_xy[0][0]] if path_xy else [], [path_xy[0][1]] if path_xy else [], [0.0], [0.0]        # path_xy is a stitched list; yaw_by_segment is per-point desired yaw already aligned
         # resample by distance using linear interpolation
         xs = [path_xy[0][0]]
         ys = [path_xy[0][1]]
         yaws = [yaw_by_segment[0]]
+        reserves = [float(reserve_by_segment[0]) if reserve_by_segment else 0.0]
 
         # cumulative along original
         s = [0.0]
@@ -463,7 +492,7 @@ class WaypointTrajNode(Node):
 
         total = s[-1]
         if total < 1e-6:
-            return xs, ys, yaws
+            return xs, ys, yaws, reserves
 
         # resample targets
         n = int(math.floor(total / ds))
@@ -478,11 +507,15 @@ class WaypointTrajNode(Node):
             y = path_xy[j][1] + t*(path_xy[j+1][1] - path_xy[j][1])
             # yaw desired: just interpolate linearly (or hold) — yaw is decoupled anyway
             yaw = yaw_by_segment[j] + t*wrap_to_pi(yaw_by_segment[j+1] - yaw_by_segment[j])
-            xs.append(x); ys.append(y); yaws.append(yaw)
+            rsv = 0.0
+            if reserve_by_segment:
+                rsv = max(float(reserve_by_segment[j]), float(reserve_by_segment[j+1]))
+            xs.append(x); ys.append(y); yaws.append(yaw); reserves.append(rsv)
 
         # ensure final point
         xs.append(path_xy[-1][0]); ys.append(path_xy[-1][1]); yaws.append(yaw_by_segment[-1])
-        return xs, ys, yaws
+        reserves.append(float(reserve_by_segment[-1]) if reserve_by_segment else 0.0)
+        return xs, ys, yaws, reserves
 
     def walk_dt(self, xs, ys, yaws, v_geom, ds_geom, dt):
         # v_geom defined at geom samples spaced ~ds_geom. We'll step along them.
@@ -542,8 +575,6 @@ class WaypointTrajNode(Node):
 
     def publish_waypoints(self, wps_xy):
         ma = MarkerArray()
-
-        # 1) spheres for waypoints
         m = Marker()
         m.header.stamp = self.get_clock().now().to_msg()
         m.header.frame_id = self.get_parameter('map_frame').value
@@ -554,16 +585,16 @@ class WaypointTrajNode(Node):
         m.scale.x = 0.12
         m.scale.y = 0.12
         m.scale.z = 0.12
-        m.color = ColorRGBA(r=1.0, g=1.0, b=0.0, a=1.0)  # yellow
+        m.color = ColorRGBA(r=1.0, g=1.0, b=0.0, a=1.0)
 
-        for (x, y) in wps_xy:
-            p = Point(x=float(x), y=float(y), z=0.05)
-            m.points.append(p)
+        for wp in wps_xy:
+            x, y = wp[0], wp[1]   # <-- FIX: works for (x,y) or (x,y,yaw)
+            m.points.append(Point(x=float(x), y=float(y), z=0.05))
 
         ma.markers.append(m)
 
-        # 2) labels (0,1,2,...) at each waypoint
-        for i, (x, y) in enumerate(wps_xy):
+        for i, wp in enumerate(wps_xy):
+            x, y = wp[0], wp[1]   # <-- FIX
             t = Marker()
             t.header = m.header
             t.ns = "wp_text"
@@ -582,6 +613,7 @@ class WaypointTrajNode(Node):
         self.marker_counter += 1
 
 
+
     # ---------- Main loop ----------
     def on_timer(self):
         gs, grid = self.build_costmap()
@@ -589,34 +621,69 @@ class WaypointTrajNode(Node):
 
         # Handle add_waypoint command
         add_wp = self.get_parameter('add_wp').value
-        if add_wp and len(add_wp) == 2 and math.isfinite(add_wp[0]) and math.isfinite(add_wp[1]):
-            vals = add_wp  # [x, y]
+        if add_wp and len(add_wp) in (2, 3) and math.isfinite(add_wp[0]) and math.isfinite(add_wp[1]) and (len(add_wp) == 2 or math.isfinite(add_wp[2])):
+            vals = [float(add_wp[0]), float(add_wp[1])] if len(add_wp) == 2 else [float(add_wp[0]), float(add_wp[1]), float(add_wp[2])]
             wp_flat = list(self.get_parameter('waypoints').value)
-            wp_n = self.get_parameter('wp_n').value
+            wp_n = int(self.get_parameter('wp_n').value)
+
+            # Infer current stride from wp_flat/wp_n; if unknown, default to vals stride.
+            stride = None
+            if wp_n > 0:
+                if len(wp_flat) == 2 * wp_n:
+                    stride = 2
+                elif len(wp_flat) == 3 * wp_n:
+                    stride = 3
+            if stride is None:
+                stride = len(vals)
+
+            # Upgrade existing (x,y) list to (x,y,yaw) if user now adds yaw.
+            if stride == 2 and len(vals) == 3 and wp_n > 0:
+                upgraded = []
+                for i in range(wp_n):
+                    upgraded.extend([float(wp_flat[2*i]), float(wp_flat[2*i+1]), 0.0])
+                wp_flat = upgraded
+                stride = 3
+
+            # Keep representation consistent.
+            if stride == 3 and len(vals) == 2:
+                vals = [vals[0], vals[1], 0.0]
+
             if wp_n == 0:
                 wp_flat = vals
             else:
                 wp_flat.extend(vals)
+
             new_wp_n = wp_n + 1
             self.set_parameters([
                 Parameter('waypoints', Parameter.Type.DOUBLE_ARRAY, wp_flat),
                 Parameter('wp_n', Parameter.Type.INTEGER, new_wp_n),
-                Parameter('add_wp', Parameter.Type.DOUBLE_ARRAY, [float('nan'), float('nan')])
+                Parameter('add_wp', Parameter.Type.DOUBLE_ARRAY, [float('nan'), float('nan'), float('nan')])
             ])
             self.get_logger().info(f"Added waypoint {vals}, wp_n now {new_wp_n}")
 
         # Build waypoint list
-        wp_n = self.get_parameter('wp_n').value
+        wp_n = int(self.get_parameter('wp_n').value)
         if wp_n == 0:
             return  # no trajectory
-        wp_flat = self.get_parameter('waypoints').value
-        if len(wp_flat) % 2 != 0:
-            self.get_logger().warn(f"Waypoints parameter has odd number of elements ({len(wp_flat)}), must be even (x,y pairs). Skipping planning.")
+        wp_flat = list(self.get_parameter('waypoints').value)
+
+        if len(wp_flat) == 2 * wp_n:
+            stride = 2
+        elif len(wp_flat) == 3 * wp_n:
+            stride = 3
+        else:
+            self.get_logger().warn(
+                f"Waypoints parameter length {len(wp_flat)} doesn't match wp_n={wp_n} "
+                f"(expected 2*wp_n or 3*wp_n). Skipping planning."
+            )
             return
+
         wps = []
         for i in range(wp_n):
-            if 2*i + 1 < len(wp_flat):
-                wps.append((float(wp_flat[2*i]), float(wp_flat[2*i+1])))
+            x = float(wp_flat[stride * i])
+            y = float(wp_flat[stride * i + 1])
+            yaw = float(wp_flat[stride * i + 2]) if stride == 3 else 0.0
+            wps.append((x, y, yaw))
 
         self.get_logger().info(f"Planning to waypoints: {wps}")
         self.publish_waypoints(wps)
@@ -643,11 +710,20 @@ class WaypointTrajNode(Node):
         self.get_logger().info(f"Current pose: {cur}")
 
         stitched_xy = []
+        yaw_by_point = []
+        reserve_by_point = []
+
+        # Reserve yaw authority only on segments whose target waypoint requests a yaw change.
+        yaw_thresh = float(self.get_parameter('yaw_change_threshold').value)
+        yaw_prev = float(cur[2])
+        yaw_change_flags: List[bool] = []
+        for (_, _, gyaw) in wps:
+            yaw_change_flags.append(abs(wrap_to_pi(float(gyaw) - yaw_prev)) > yaw_thresh)
+            yaw_prev = float(gyaw)
 
         # Plan sequentially to each waypoint
         start_xy = (cur[0], cur[1])
-        for (gx, gy) in wps:
-            gyaw = 0.0
+        for seg_idx, (gx, gy, gyaw) in enumerate(wps):
             # For omni robot, use direct line to waypoint (assuming no obstacles)
             start_x, start_y = start_xy
             if (start_x, start_y) == (gx, gy):
@@ -658,23 +734,17 @@ class WaypointTrajNode(Node):
                 self.get_logger().warn(f"No path to ({gx:.2f},{gy:.2f})")
                 return
 
-            # stitch, avoid duplicating first point
-            if not stitched_xy:
-                for p in seg:
-                    stitched_xy.append(p)
-            else:
-                for p in seg[1:]:
-                    stitched_xy.append(p)
-
+            pts = seg if not stitched_xy else seg[1:]  # avoid duplicating first point
+            for p in pts:
+                stitched_xy.append(p)
+                yaw_by_point.append(float(gyaw))  # viz only; controller uses waypoint yaw directly
+                reserve_by_point.append(1.0 if yaw_change_flags[seg_idx] else 0.0)
             start_xy = (gx, gy)
 
-        # Compute yaw from path directions - but for omni, set to 0 since yaw is independent
-        yaw_by_segment = [0.0] * len(stitched_xy)
-
-        self.publish_path('/planned_path', stitched_xy, yaw_by_segment)
+        self.publish_path('/planned_path', stitched_xy, yaw_by_point)
 
         # Build dt trajectory
-        tx, ty, tyaw, tv = self.build_dt_trajectory(stitched_xy, yaw_by_segment, self.current_v)
+        tx, ty, tyaw, tv = self.build_dt_trajectory(stitched_xy, yaw_by_point, reserve_by_point, self.current_v)
         if len(tx) < 2:
             return
 
@@ -692,39 +762,39 @@ class WaypointTrajNode(Node):
         msg.info.origin.position.x = gs.origin_x
         msg.info.origin.position.y = gs.origin_y
         msg.info.origin.position.z = 0.0
-        q = yaw_to_quat(0.0)
+
+        q = yaw_to_quat(0.0)  # <-- FIX: don't use undefined yaw
         msg.info.origin.orientation.x = q[0]
         msg.info.origin.orientation.y = q[1]
         msg.info.origin.orientation.z = q[2]
         msg.info.origin.orientation.w = q[3]
 
-        # OccupancyGrid expects -1 unknown, 0..100
         msg.data = [int(v) for v in grid]
         self.costmap_pub.publish(msg)
 
-    def publish_path(self, topic_name: str, xy: List[Tuple[float,float]], yaw_list: List[float]):
+
+    def publish_path(self, topic_name: str, xy: List[Tuple[float, float]], yaw_list: List[float]):
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
         path.header.frame_id = self.get_parameter('map_frame').value
-        for i, (x, y) in enumerate(xy):
+
+        for i, (x, y) in enumerate(xy):  # <-- FIX: iterate xy + define i
             ps = PoseStamped()
             ps.header = path.header
             ps.pose.position.x = float(x)
             ps.pose.position.y = float(y)
             ps.pose.position.z = 0.0
-            yaw = yaw_list[min(i, len(yaw_list)-1)]
-            q = yaw_to_quat(0.0)
+
+            yaw = yaw_list[min(i, len(yaw_list) - 1)]
+            q = yaw_to_quat(yaw)  # <-- FIX: show yaw in RViz (optional but correct)
             ps.pose.orientation.x = q[0]
             ps.pose.orientation.y = q[1]
             ps.pose.orientation.z = q[2]
             ps.pose.orientation.w = q[3]
-            path.poses.append(ps)
-        # This node publishes planned_path already via self.path_pub in init
-        self.path_pub.publish(path)
 
-    from std_msgs.msg import ColorRGBA
-    from geometry_msgs.msg import Point
-    from visualization_msgs.msg import Marker, MarkerArray
+            path.poses.append(ps)
+
+        self.path_pub.publish(path)
 
     def publish_trajectory(self, x, y, yaw, v):
         # Trajectory as Path + parallel speed array

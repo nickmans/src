@@ -61,16 +61,16 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'dt': 0.01,
-            'v_max': 0.3,
+            'v_max': 0.5,
             'turn_radius_ref': 0.4,
-            'v_at_radius_ref': 0.3,
+            'v_at_radius_ref': 0.5,
             'omega_dir_max': -1.0,     # use computed omega = v/R
-            'ds_geom': 0.03,
+            'ds_geom': 0.05,
 
             'wheel_radius': 0.09,
             'wheel_base': 0.2,
             'max_wheel_speed': 12.0,
-            'max_wheel_accel': 2.0,
+            'max_wheel_accel': 6.0,
             'map_width_m': 3.0,
             'map_height_m': 3.0,
             'map_frame': 'odom',
