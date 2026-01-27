@@ -62,9 +62,7 @@ def generate_launch_description():
         parameters=[{
             'dt': 0.01,
             'v_max': 0.5,
-            'turn_radius_ref': 0.4,
-            'v_at_radius_ref': 0.5,
-            'omega_dir_max': -1.0,     # use computed omega = v/R
+            'omega_dir_max': 2.0,     # use computed omega = v/R
             'ds_geom': 0.05,
 
             'wheel_radius': 0.09,

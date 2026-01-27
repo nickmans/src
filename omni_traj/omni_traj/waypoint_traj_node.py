@@ -1,33 +1,70 @@
 #!/usr/bin/env python3
+"""
+waypoint_traj.py
+
+Yaw-decoupled translation trajectory planner for a 3-omni kiwi drive.
+
+Key points:
+- Geometry is yaw-decoupled: we plan (x,y) and a velocity direction theta_v in the map frame.
+- Robot yaw is NOT used for the path; it is only used to tighten wheel speed/accel feasibility
+  (theta_body = theta_map - yaw_now). If you don't want this, set use_yaw_for_wheel_limits=false.
+
+Exact waypoint visitation:
+- Waypoints are positional constraints only.
+- The dt integrator guarantees a sample exactly at each waypoint arc-length when feasible.
+  If not feasible in the current dt, it will approach without crossing, braking as needed,
+  then hit exactly on a later dt step.
+
+Obstacle avoidance:
+- Local costmap from fused LiDAR scans (+ inflation).
+- Each segment uses straight line if collision-free, else A* (soft penalty).
+
+Limits enforced (translation-only):
+- v_max (live-tunable; can be updated externally)
+- wheel speed cap (direction-dependent kiwi translation model)
+- wheel accel cap (exact per-wheel discrete constraint)
+- velocity-direction rate cap via curvature of theta_v(s)
+
+Waypoint param format (backward-compatible):
+- waypoints: flat [x1,y1,(ignored), x2,y2,(ignored), ...]
+- add_wp: [x,y] or [x,y,_] appended; third value ignored
+"""
+
 import math
 import heapq
-from dataclasses import dataclass
-from typing import List, Tuple
 import json
+from dataclasses import dataclass
+from typing import Deque, List, Optional, Tuple
+from collections import deque
 
 import rclpy
 from rclpy.node import Node
-from rcl_interfaces.msg import ParameterDescriptor, ParameterType
+from rclpy.duration import Duration
+from rclpy.time import Time
+from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.parameter import Parameter
 
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import OccupancyGrid, Path, Odometry
-from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Float32MultiArray
-from visualization_msgs.msg import Marker, MarkerArray
-
-from std_msgs.msg import ColorRGBA
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import PoseStamped, Point
+from std_msgs.msg import Float32MultiArray, ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 
 import tf2_ros
 
+
+PHI1 = math.pi / 2.0
+PHI2 = -math.pi / 6.0
+PHI3 = -5.0 * math.pi / 6.0
+
+
 def wrap_to_pi(a: float) -> float:
     return (a + math.pi) % (2.0 * math.pi) - math.pi
 
-def yaw_to_quat(yaw: float):
-    # planar quaternion
+
+def yaw_to_quat(yaw: float) -> Tuple[float, float, float, float]:
     return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
+
 
 @dataclass
 class GridSpec:
@@ -37,132 +74,126 @@ class GridSpec:
     origin_x: float
     origin_y: float
 
+
 class WaypointTrajNode(Node):
-    def __init__(self):
-        super().__init__('waypoint_traj')
+    def __init__(self) -> None:
+        super().__init__("waypoint_traj")
 
         # --- Params (live-tunable)
-        self.declare_parameter('dt', 0.01)
-        self.declare_parameter('v_max', 0.3)
+        self.declare_parameter("dt", 0.01)
+        self.declare_parameter("v_max", 0.5)
+        self.declare_parameter("ds_geom", 0.05)
 
-        # Direction-rate limit:
-        # omega_dir_max = v_at_radius_ref / turn_radius_ref
-        self.declare_parameter('turn_radius_ref', 0.4)
-        self.declare_parameter('v_at_radius_ref', 0.3)
-        self.declare_parameter('omega_dir_max', -1.0)  # if >0, overrides computed
+        self.declare_parameter("omega_dir_max", 2.0)
+        self.declare_parameter("omega_dir_lookahead_m", 0.05)
 
-        self.declare_parameter('ds_geom', 0.03)  # curvature estimation spacing
+        self.declare_parameter("wheel_radius", 0.09)
+        self.declare_parameter("max_wheel_speed", 12.0)   # rad/s
+        self.declare_parameter("max_wheel_accel", 6.0)    # rad/s^2
 
-        # Kiwi drive kinematics
-        self.declare_parameter('wheel_radius', 0.09)  # r
-        self.declare_parameter('wheel_base', 0.2)     # L
-        self.declare_parameter('max_wheel_speed', 12.0)  # rad/s
-        self.declare_parameter('max_wheel_accel', 6.0)  # rad/s^2
-         # Reserve wheel authority for simultaneous yaw control *only when a waypoint requests a yaw change*
-        self.declare_parameter('omega_reserve', 1.0)          # rad/s
-        self.declare_parameter('alpha_reserve', 1.0)          # rad/s^2
+        self.declare_parameter("use_yaw_for_wheel_limits", True)
 
-        self.declare_parameter('yaw_change_threshold', 0.05)  # rad (~3 deg)        
-        self.declare_parameter('wheel_speed_margin', 1.0)     # 0..1
-        self.declare_parameter('wheel_accel_margin', 1.0)     # 0..1
+        self.declare_parameter("map_res", 0.01)
+        self.declare_parameter("map_width_m", 3.0)
+        self.declare_parameter("map_height_m", 3.0)
+        self.declare_parameter("map_frame", "odom")
+        self.declare_parameter("base_frame", "base_link")
 
+        self.declare_parameter("hard_inflate_radius", 0.2)
+        self.declare_parameter("soft_inflate_radius", 0.2)
 
-        self.declare_parameter('map_res', 0.01)
-        self.declare_parameter('map_width_m', 3.0)
-        self.declare_parameter('map_height_m', 3.0)
-        self.declare_parameter('map_frame', 'odom')
-        self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter("astar_soft_penalty", 6.0)
+        self.declare_parameter("astar_nearest_free_search_m", 0.25)
 
-        # Inflation
-        self.declare_parameter('hard_inflate_radius', 0.2)   # optional
-        self.declare_parameter('soft_inflate_radius', 0.2)  # soft padding
-
-        # Waypoints: flat list [x1,y1,(yaw1), x2,y2,(yaw2), ...]
-        # Accepts either 2*wp_n elements (x,y pairs) or 3*wp_n elements (x,y,yaw triples).
         self.declare_parameter(
-            'waypoints',
-            [float('nan'), float('nan')],
-            ParameterDescriptor(description='Flat list [x1,y1,(yaw1), x2,y2,(yaw2), ...]')
+            "waypoints",
+            [float("nan"), float("nan")],
+            ParameterDescriptor(description="Flat list [x1,y1,(ignored), x2,y2,(ignored), ...]"),
         )
-
-        # Add waypoint command: set to [x,y] or [x,y,yaw] to append; node clears it after consuming
         self.declare_parameter(
-            'add_wp',
-            [float('nan'), float('nan'), float('nan')],
-            ParameterDescriptor(description='Set to [x,y] or [x,y,yaw] to append; node clears it after consuming')
+            "add_wp",
+            [float("nan"), float("nan"), float("nan")],
+            ParameterDescriptor(description="Set to [x,y] or [x,y,_] to append; node clears after consuming"),
         )
+        self.declare_parameter("start_pose", [0.0, 0.0, 0.0])
+        self.declare_parameter("wp_n", 0)
 
-        self.declare_parameter('start_pose', [0.0, 0.0, 0.0])
-        self.declare_parameter('wp_n', 0)
+        self.declare_parameter("lidar1_topic", "/lidar1/scan")
+        self.declare_parameter("lidar2_topic", "/lidar2/scan")
 
-        # LiDAR topics
-        self.declare_parameter('lidar1_topic', '/lidar1/scan')
-        self.declare_parameter('lidar2_topic', '/lidar2/scan')
-
-        # --- TF (optional; for empty scans it's irrelevant, but later it matters)
-        self.tf_buffer = tf2_ros.Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
+        # --- TF
+        self.tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        # --- Odometry for current velocity
-        self.odom_sub = self.create_subscription(Odometry, '/odom', self.on_odom, 10)
-        self.current_v = 0.0
+        # --- Odometry
+        self.odom_sub = self.create_subscription(Odometry, "/odom", self.on_odom, 10)
+        self.current_speed = 0.0
 
-        # --- Subscriptions
-        t1 = self.get_parameter('lidar1_topic').value
-        t2 = self.get_parameter('lidar2_topic').value
+        # --- LiDAR
+        t1 = self.get_parameter("lidar1_topic").value
+        t2 = self.get_parameter("lidar2_topic").value
         self.sub1 = self.create_subscription(LaserScan, t1, self.on_scan1, 10)
         self.sub2 = self.create_subscription(LaserScan, t2, self.on_scan2, 10)
-
-        self.last_scan1 = None
-        self.last_scan2 = None
+        self.last_scan1: Optional[LaserScan] = None
+        self.last_scan2: Optional[LaserScan] = None
 
         # --- Publishers
-        self.wp_marker_pub = self.create_publisher(MarkerArray, '/waypoint_markers', 1)
-        self.costmap_pub = self.create_publisher(OccupancyGrid, '/costmap', 1)
-        self.path_pub = self.create_publisher(Path, '/planned_path', 1)
-        self.traj_path_pub = self.create_publisher(Path, '/trajectory_path', 1)
-        self.traj_v_pub = self.create_publisher(Float32MultiArray, '/trajectory_v', 1)
-        self.marker_pub = self.create_publisher(MarkerArray, '/trajectory_markers', 1)
+        self.wp_marker_pub = self.create_publisher(MarkerArray, "/waypoint_markers", 1)
+        self.costmap_pub = self.create_publisher(OccupancyGrid, "/costmap", 1)
+        self.path_pub = self.create_publisher(Path, "/planned_path", 1)
+        self.traj_path_pub = self.create_publisher(Path, "/trajectory_path", 1)
+        self.traj_v_pub = self.create_publisher(Float32MultiArray, "/trajectory_v", 1)
+        self.marker_pub = self.create_publisher(MarkerArray, "/trajectory_markers", 1)
 
-        # Recompute at 2 Hz for now
         self.timer = self.create_timer(0.5, self.on_timer)
-
-        # Counter to force RViz marker updates on parameter changes
         self.marker_counter = 0
 
-    # ---------- LiDAR callbacks ----------
-    def on_scan1(self, msg: LaserScan):
+    # ---------- Callbacks ----------
+    def on_scan1(self, msg: LaserScan) -> None:
         self.last_scan1 = msg
 
-    def on_scan2(self, msg: LaserScan):
+    def on_scan2(self, msg: LaserScan) -> None:
         self.last_scan2 = msg
 
-    def on_odom(self, msg: Odometry):
-        # Assume velocity along the robot's forward direction
-        self.current_v = msg.twist.twist.linear.x
+    def on_odom(self, msg: Odometry) -> None:
+        vx = float(msg.twist.twist.linear.x)
+        vy = float(msg.twist.twist.linear.y)
+        self.current_speed = float(math.hypot(vx, vy))
 
-    # ---------- Utility: world<->grid ----------
-    def make_grid_spec(self) -> GridSpec:
-        res = float(self.get_parameter('map_res').value)
-        w_m = float(self.get_parameter('map_width_m').value)
-        h_m = float(self.get_parameter('map_height_m').value)
+    # ---------- TF pose ----------
+    def get_current_pose(self) -> Tuple[float, float, float]:
+        frame_map = self.get_parameter("map_frame").value
+        base_frame = self.get_parameter("base_frame").value
+        try:
+            tf = self.tf_buffer.lookup_transform(frame_map, base_frame, Time())
+            t = tf.transform.translation
+            q = tf.transform.rotation
+            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            yaw = math.atan2(siny_cosp, cosy_cosp)
+            return float(t.x), float(t.y), float(yaw)
+        except Exception:
+            sp = self.get_parameter("start_pose").value
+            return float(sp[0]), float(sp[1]), float(sp[2])
 
+    # ---------- Grid utils ----------
+    def make_grid_spec(self, center_xy: Tuple[float, float]) -> GridSpec:
+        res = float(self.get_parameter("map_res").value)
+        w_m = float(self.get_parameter("map_width_m").value)
+        h_m = float(self.get_parameter("map_height_m").value)
         width = int(round(w_m / res))
         height = int(round(h_m / res))
-
-        # Fixed map centered around start pose in map_frame
-        sp = self.get_parameter('start_pose').value
-        cx, cy = float(sp[0]), float(sp[1])
+        cx, cy = float(center_xy[0]), float(center_xy[1])
         origin_x = cx - 0.5 * width * res
         origin_y = cy - 0.5 * height * res
         return GridSpec(res=res, width=width, height=height, origin_x=origin_x, origin_y=origin_y)
 
-    def world_to_grid(self, gs: GridSpec, x: float, y: float) -> Tuple[int,int]:
+    def world_to_grid(self, gs: GridSpec, x: float, y: float) -> Tuple[int, int]:
         ix = int(math.floor((x - gs.origin_x) / gs.res))
         iy = int(math.floor((y - gs.origin_y) / gs.res))
         return ix, iy
 
-    def grid_to_world(self, gs: GridSpec, ix: int, iy: int) -> Tuple[float,float]:
+    def grid_to_world(self, gs: GridSpec, ix: int, iy: int) -> Tuple[float, float]:
         x = gs.origin_x + (ix + 0.5) * gs.res
         y = gs.origin_y + (iy + 0.5) * gs.res
         return x, y
@@ -173,75 +204,61 @@ class WaypointTrajNode(Node):
     def idx(self, gs: GridSpec, ix: int, iy: int) -> int:
         return iy * gs.width + ix
 
-    # ---------- Build fused costmap (hard + soft) ----------
-    def build_costmap(self) -> Tuple[GridSpec, List[int]]:
-        gs = self.make_grid_spec()
-        grid = [0] * (gs.width * gs.height)  # 0 free, 50 soft, 100 hard
+    # ---------- Costmap ----------
+    def build_costmap(self, center_xy: Tuple[float, float]) -> Tuple[GridSpec, List[int]]:
+        gs = self.make_grid_spec(center_xy=center_xy)
+        grid = [0] * (gs.width * gs.height)
 
-        # Convert scans to obstacle points in map_frame
-        points = []
+        pts: List[Tuple[float, float]] = []
         if self.last_scan1 is not None:
-            points += self.scan_to_points(self.last_scan1, gs)
+            pts.extend(self.scan_to_points(self.last_scan1))
         if self.last_scan2 is not None:
-            points += self.scan_to_points(self.last_scan2, gs)
+            pts.extend(self.scan_to_points(self.last_scan2))
 
-        # Mark hard obstacles
-        for (x, y) in points:
+        for (x, y) in pts:
             ix, iy = self.world_to_grid(gs, x, y)
             if self.in_bounds(gs, ix, iy):
                 grid[self.idx(gs, ix, iy)] = 100
 
-        # Inflate to soft ring
-        soft_r = float(self.get_parameter('soft_inflate_radius').value)
-        hard_r = float(self.get_parameter('hard_inflate_radius').value)
+        hard_r = float(self.get_parameter("hard_inflate_radius").value)
+        soft_r = float(self.get_parameter("soft_inflate_radius").value)
         self.inflate(grid, gs, hard_r=hard_r, soft_r=soft_r)
-
         return gs, grid
 
-    def scan_to_points(self, scan: LaserScan, gs: GridSpec) -> List[Tuple[float,float]]:
-        # Empty scan => no points
-        # For real scans: transform each hit into map_frame (if TF available)
-        pts = []
-
-        frame_map = self.get_parameter('map_frame').value
+    def scan_to_points(self, scan: LaserScan) -> List[Tuple[float, float]]:
+        frame_map = self.get_parameter("map_frame").value
         scan_frame = scan.header.frame_id
 
-        # Lookup transform map <- scan
         T = None
         try:
-            tf = self.tf_buffer.lookup_transform(frame_map, scan_frame, rclpy.time.Time())
+            tf = self.tf_buffer.lookup_transform(frame_map, scan_frame, Time())
             T = tf.transform
         except Exception:
-            T = None  # fallback below
+            T = None
 
-        angle = scan.angle_min
+        pts: List[Tuple[float, float]] = []
+        angle = float(scan.angle_min)
         for r in scan.ranges:
-            if math.isfinite(r) and (scan.range_min <= r <= scan.range_max):
-                xs = r * math.cos(angle)
-                ys = r * math.sin(angle)
-                # z ignored
-
+            rr = float(r)
+            if math.isfinite(rr) and (scan.range_min <= rr <= scan.range_max):
+                xs = rr * math.cos(angle)
+                ys = rr * math.sin(angle)
                 if T is None:
-                    # fallback: treat scan frame as map frame
                     xm, ym = xs, ys
                 else:
                     xm, ym = self.apply_transform_2d(T, xs, ys)
-
                 pts.append((xm, ym))
-            angle += scan.angle_increment
+            angle += float(scan.angle_increment)
         return pts
 
-    def apply_transform_2d(self, tr, x, y):
-        # Apply 2D rotation+translation using quaternion
-        tx = tr.translation.x
-        ty = tr.translation.y
-        qx = tr.rotation.x
-        qy = tr.rotation.y
-        qz = tr.rotation.z
-        qw = tr.rotation.w
+    def apply_transform_2d(self, tr, x: float, y: float) -> Tuple[float, float]:
+        tx = float(tr.translation.x)
+        ty = float(tr.translation.y)
+        qx = float(tr.rotation.x)
+        qy = float(tr.rotation.y)
+        qz = float(tr.rotation.z)
+        qw = float(tr.rotation.w)
 
-        # rotation matrix for yaw-only is simplest; but allow general quat -> yaw
-        # yaw from quaternion:
         siny_cosp = 2.0 * (qw * qz + qx * qy)
         cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
         yaw = math.atan2(siny_cosp, cosy_cosp)
@@ -250,10 +267,11 @@ class WaypointTrajNode(Node):
         yr = math.sin(yaw) * x + math.cos(yaw) * y
         return (xr + tx, yr + ty)
 
-    def inflate(self, grid: List[int], gs: GridSpec, hard_r: float, soft_r: float):
+    def inflate(self, grid: List[int], gs: GridSpec, hard_r: float, soft_r: float) -> None:
         if soft_r <= 1e-6 and hard_r <= 1e-6:
             return
-        hard_cells = []
+
+        hard_cells: List[Tuple[int, int]] = []
         for iy in range(gs.height):
             for ix in range(gs.width):
                 if grid[self.idx(gs, ix, iy)] >= 100:
@@ -262,9 +280,7 @@ class WaypointTrajNode(Node):
         if not hard_cells:
             return
 
-        hard_rad = int(math.ceil(hard_r / gs.res)) if hard_r > 0 else 0
         soft_rad = int(math.ceil(soft_r / gs.res)) if soft_r > 0 else 0
-
         for (hx, hy) in hard_cells:
             for dy in range(-soft_rad, soft_rad + 1):
                 for dx in range(-soft_rad, soft_rad + 1):
@@ -279,8 +295,65 @@ class WaypointTrajNode(Node):
                         if grid[self.idx(gs, ix, iy)] < 100:
                             grid[self.idx(gs, ix, iy)] = max(grid[self.idx(gs, ix, iy)], 50)
 
-    # ---------- A* ----------
-    def astar(self, gs: GridSpec, grid: List[int], start_xy, goal_xy) -> List[Tuple[float,float]]:
+    # ---------- A* helpers ----------
+    def nearest_free_cell(
+        self,
+        gs: GridSpec,
+        grid: List[int],
+        ij: Tuple[int, int],
+        max_radius_cells: int,
+    ) -> Optional[Tuple[int, int]]:
+        gx, gy = ij
+        if self.in_bounds(gs, gx, gy) and grid[self.idx(gs, gx, gy)] < 100:
+            return ij
+
+        visited = {ij}
+        q: Deque[Tuple[int, int]] = deque([ij])
+
+        while q:
+            x, y = q.popleft()
+            if not self.in_bounds(gs, x, y):
+                continue
+            if abs(x - gx) > max_radius_cells or abs(y - gy) > max_radius_cells:
+                continue
+            if grid[self.idx(gs, x, y)] < 100:
+                return (x, y)
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1),
+                           (-1, -1), (-1, 1), (1, -1), (1, 1)]:
+                nx, ny = x + dx, y + dy
+                if (nx, ny) not in visited:
+                    visited.add((nx, ny))
+                    q.append((nx, ny))
+        return None
+
+    def line_collision_free(
+        self,
+        gs: GridSpec,
+        grid: List[int],
+        a_xy: Tuple[float, float],
+        b_xy: Tuple[float, float],
+        step_m: Optional[float] = None,
+    ) -> bool:
+        if step_m is None:
+            step_m = max(gs.res * 0.5, 0.01)
+        ax, ay = a_xy
+        bx, by = b_xy
+        dist = math.hypot(bx - ax, by - ay)
+        if dist < 1e-9:
+            return True
+        n = int(math.ceil(dist / step_m))
+        for i in range(n + 1):
+            t = i / max(n, 1)
+            x = ax + t * (bx - ax)
+            y = ay + t * (by - ay)
+            ix, iy = self.world_to_grid(gs, x, y)
+            if not self.in_bounds(gs, ix, iy):
+                return False
+            if grid[self.idx(gs, ix, iy)] >= 100:
+                return False
+        return True
+
+    def astar(self, gs: GridSpec, grid: List[int], start_xy, goal_xy) -> List[Tuple[float, float]]:
         sx, sy = start_xy
         gx, gy = goal_xy
         sxi, syi = self.world_to_grid(gs, sx, sy)
@@ -291,17 +364,21 @@ class WaypointTrajNode(Node):
         if grid[self.idx(gs, gxi, gyi)] >= 100:
             return []
 
-        def h(ix, iy):
+        soft_pen = float(self.get_parameter("astar_soft_penalty").value)
+
+        def h(ix: int, iy: int) -> float:
             return math.hypot(ix - gxi, iy - gyi)
 
-        # 8-neighborhood
-        neigh = [(-1,0,1.0), (1,0,1.0), (0,-1,1.0), (0,1,1.0),
-                 (-1,-1,math.sqrt(2)), (-1,1,math.sqrt(2)), (1,-1,math.sqrt(2)), (1,1,math.sqrt(2))]
+        neigh = [
+            (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
+            (-1, -1, math.sqrt(2.0)), (-1, 1, math.sqrt(2.0)),
+            (1, -1, math.sqrt(2.0)), (1, 1, math.sqrt(2.0)),
+        ]
 
-        openq = []
+        openq: List[Tuple[float, float, Tuple[int, int]]] = []
         heapq.heappush(openq, (h(sxi, syi), 0.0, (sxi, syi)))
-        came = {}
-        gscore = { (sxi, syi): 0.0 }
+        came: dict = {}
+        gscore = {(sxi, syi): 0.0}
 
         while openq:
             _, gcur, (ix, iy) = heapq.heappop(openq)
@@ -315,22 +392,15 @@ class WaypointTrajNode(Node):
                 occ = grid[self.idx(gs, nx, ny)]
                 if occ >= 100:
                     continue
-
-                # Soft cells add penalty (tunable via weight)
-                penalty = 0.0
-                if occ >= 50:
-                    penalty = 3.0
-
+                penalty = soft_pen if occ >= 50 else 0.0
                 ng = gcur + w + penalty
                 if (nx, ny) not in gscore or ng < gscore[(nx, ny)]:
                     gscore[(nx, ny)] = ng
                     came[(nx, ny)] = (ix, iy)
-                    f = ng + h(nx, ny)
-                    heapq.heappush(openq, (f, ng, (nx, ny)))
-
+                    heapq.heappush(openq, (ng + h(nx, ny), ng, (nx, ny)))
         return []
 
-    def reconstruct(self, gs: GridSpec, came, goal_ij):
+    def reconstruct(self, gs: GridSpec, came: dict, goal_ij: Tuple[int, int]) -> List[Tuple[float, float]]:
         path_ij = [goal_ij]
         cur = goal_ij
         while cur in came:
@@ -339,245 +409,533 @@ class WaypointTrajNode(Node):
         path_ij.reverse()
         return [self.grid_to_world(gs, ix, iy) for (ix, iy) in path_ij]
 
-    def max_dv_accel(self, v1, theta, ds, a_max, r, L):
-        if v1 < 1e-6:
-            return a_max * ds  # arbitrary large
-        sin_t = math.sin(theta)
-        cos_t = math.cos(theta)
-        dw_dv = [
-            sin_t / r,
-            (-0.5 * sin_t + (math.sqrt(3)/2) * cos_t) / r,
-            (-0.5 * sin_t - (math.sqrt(3)/2) * cos_t) / r
-        ]
-        k = max(abs(x) for x in dw_dv)
-        if k < 1e-6:
-            return 1e9  # no limit
-        t = ds / v1
-        dv_max = a_max * t / k
-        return dv_max
+    def plan_segment_path(
+        self,
+        gs: GridSpec,
+        grid: List[int],
+        start_xy: Tuple[float, float],
+        goal_xy: Tuple[float, float],
+    ) -> List[Tuple[float, float]]:
+        gxi, gyi = self.world_to_grid(gs, goal_xy[0], goal_xy[1])
+        if not self.in_bounds(gs, gxi, gyi):
+            self.get_logger().warn("Waypoint outside local costmap window. Increase map_width_m/map_height_m.")
+            return []
+        if grid[self.idx(gs, gxi, gyi)] >= 100:
+            self.get_logger().warn("Waypoint lies in inflated obstacle; cannot satisfy exact visitation.")
+            return []
 
-    # ---------- Trajectory generation (dt fixed) ----------
-    def build_dt_trajectory(self, path_xy: List[Tuple[float,float]], yaw_by_segment: List[float], reserve_by_segment: List[float], current_v: float):
-        if len(path_xy) < 1:
+        if self.line_collision_free(gs, grid, start_xy, goal_xy):
+            return [start_xy, goal_xy]
+
+        sxi, syi = self.world_to_grid(gs, start_xy[0], start_xy[1])
+        if not self.in_bounds(gs, sxi, syi):
+            return []
+        if grid[self.idx(gs, sxi, syi)] >= 100:
+            max_search_m = float(self.get_parameter("astar_nearest_free_search_m").value)
+            max_r = int(math.ceil(max_search_m / gs.res))
+            s_free = self.nearest_free_cell(gs, grid, (sxi, syi), max_r)
+            if s_free is None:
+                return []
+            start_xy = self.grid_to_world(gs, s_free[0], s_free[1])
+
+        path = self.astar(gs, grid, start_xy, goal_xy)
+        if not path:
+            return []
+        path[0] = start_xy
+        path[-1] = goal_xy
+        return path
+
+    # ---------- Waypoint parsing ----------
+    def consume_add_wp(self) -> None:
+        add_wp = self.get_parameter("add_wp").value
+        if not add_wp or len(add_wp) not in (2, 3):
+            return
+        if not (math.isfinite(add_wp[0]) and math.isfinite(add_wp[1])):
+            return
+
+        vals = [float(add_wp[0]), float(add_wp[1])]
+        wp_flat = list(self.get_parameter("waypoints").value)
+        wp_n = int(self.get_parameter("wp_n").value)
+
+        stride = 2
+        if wp_n > 0 and len(wp_flat) == 3 * wp_n:
+            stride = 3
+
+        if wp_n == 0:
+            wp_flat = vals if stride == 2 else [vals[0], vals[1], float("nan")]
+        else:
+            if stride == 2:
+                wp_flat.extend(vals)
+            else:
+                wp_flat.extend([vals[0], vals[1], float("nan")])
+
+        self.set_parameters([
+            Parameter("waypoints", Parameter.Type.DOUBLE_ARRAY, wp_flat),
+            Parameter("wp_n", Parameter.Type.INTEGER, wp_n + 1),
+            Parameter("add_wp", Parameter.Type.DOUBLE_ARRAY, [float("nan"), float("nan"), float("nan")]),
+        ])
+        self.get_logger().info(f"Added waypoint {vals}, wp_n now {wp_n + 1}")
+
+    def read_waypoints(self) -> Optional[List[Tuple[float, float]]]:
+        wp_n = int(self.get_parameter("wp_n").value)
+        if wp_n <= 0:
+            return None
+
+        wp_flat = list(self.get_parameter("waypoints").value)
+        if len(wp_flat) == 2 * wp_n:
+            stride = 2
+        elif len(wp_flat) == 3 * wp_n:
+            stride = 3
+        else:
+            self.get_logger().warn(
+                f"Waypoints length {len(wp_flat)} doesn't match wp_n={wp_n} (expected 2*wp_n or 3*wp_n)"
+            )
+            return None
+
+        out: List[Tuple[float, float]] = []
+        for i in range(wp_n):
+            x = float(wp_flat[stride * i])
+            y = float(wp_flat[stride * i + 1])
+            out.append((x, y))
+        return out
+
+    # ---------- Geometry: simplify + resample ----------
+    def simplify_polyline_keep_indices(
+        self,
+        pts: List[Tuple[float, float]],
+        keep_vertex_indices: List[int],
+        eps_angle: float = 1e-6,
+        eps_dist: float = 1e-9,
+    ) -> Tuple[List[Tuple[float, float]], List[int], List[int]]:
+        if len(pts) < 3:
+            return pts, keep_vertex_indices, list(range(len(pts)))
+
+        keep_set = set(keep_vertex_indices)
+        new_pts: List[Tuple[float, float]] = [pts[0]]
+        old_to_new = [-1] * len(pts)
+        old_to_new[0] = 0
+
+        def is_collinear(a, b, c) -> bool:
+            ax, ay = a
+            bx, by = b
+            cx, cy = c
+            abx, aby = bx - ax, by - ay
+            bcx, bcy = cx - bx, cy - by
+            lab = math.hypot(abx, aby)
+            lbc = math.hypot(bcx, bcy)
+            if lab < eps_dist or lbc < eps_dist:
+                return True
+            th1 = math.atan2(aby, abx)
+            th2 = math.atan2(bcy, bcx)
+            return abs(wrap_to_pi(th2 - th1)) <= eps_angle
+
+        for i in range(1, len(pts) - 1):
+            if i in keep_set:
+                new_pts.append(pts[i])
+                old_to_new[i] = len(new_pts) - 1
+                continue
+            a = new_pts[-1]
+            b = pts[i]
+            c = pts[i + 1]
+            if is_collinear(a, b, c):
+                continue
+            new_pts.append(b)
+            old_to_new[i] = len(new_pts) - 1
+
+        new_pts.append(pts[-1])
+        old_to_new[len(pts) - 1] = len(new_pts) - 1
+
+        new_keep: List[int] = []
+        for idx in keep_vertex_indices:
+            mapped = old_to_new[idx]
+            if mapped >= 0:
+                new_keep.append(mapped)
+        return new_pts, sorted(set(new_keep)), old_to_new
+
+    def resample_vertex_preserving_with_map(
+        self,
+        poly_xy: List[Tuple[float, float]],
+        ds: float,
+    ) -> Tuple[List[float], List[float], List[float], List[int]]:
+        if not poly_xy:
+            return [], [], [], []
+        if len(poly_xy) == 1:
+            x, y = poly_xy[0]
+            return [float(x)], [float(y)], [0.0], [0]
+
+        ds = max(float(ds), 1e-6)
+
+        xs: List[float] = [float(poly_xy[0][0])]
+        ys: List[float] = [float(poly_xy[0][1])]
+        ths: List[float] = [0.0]
+        vertex_out: List[int] = [0]
+
+        for i in range(len(poly_xy) - 1):
+            x0, y0 = float(poly_xy[i][0]), float(poly_xy[i][1])
+            x1, y1 = float(poly_xy[i + 1][0]), float(poly_xy[i + 1][1])
+            dx, dy = x1 - x0, y1 - y0
+            seg_len = math.hypot(dx, dy)
+
+            if seg_len < 1e-12:
+                xs.append(x1)
+                ys.append(y1)
+                ths.append(ths[-1])
+                vertex_out.append(len(xs) - 1)
+                continue
+
+            th = float(math.atan2(dy, dx))
+            ths[-1] = th
+
+            n_inner = int(math.floor(seg_len / ds))
+            for k in range(1, n_inner + 1):
+                d = k * ds
+                if d >= seg_len:
+                    break
+                a = d / seg_len
+                xs.append(x0 + a * dx)
+                ys.append(y0 + a * dy)
+                ths.append(th)
+
+            xs.append(x1)
+            ys.append(y1)
+            ths.append(th)
+            vertex_out.append(len(xs) - 1)
+
+        if len(ths) >= 2:
+            ths[-1] = ths[-2]
+        return xs, ys, ths, vertex_out
+
+    # ---------- Caps ----------
+    def build_v_dir_caps(
+        self,
+        s: List[float],
+        theta_v: List[float],
+        v_user_max: float,
+        omega_dir_max: float,
+        lookahead_m: float,
+    ) -> List[float]:
+        n = len(s)
+        if n < 3 or omega_dir_max <= 1e-6:
+            return [v_user_max] * n
+
+        kappa = [0.0] * n
+        for i in range(n - 1):
+            ds_i = max(s[i + 1] - s[i], 1e-12)
+            dth = abs(wrap_to_pi(theta_v[i + 1] - theta_v[i]))
+            kappa[i] = dth / ds_i
+        kappa[-1] = kappa[-2]
+
+        out = [v_user_max] * n
+        if lookahead_m <= 1e-6:
+            for i in range(n):
+                if kappa[i] > 1e-9:
+                    out[i] = min(v_user_max, omega_dir_max / kappa[i])
+            return out
+
+        for i in range(n):
+            end = i
+            while end < n and (s[end] - s[i]) <= lookahead_m:
+                end += 1
+            end = min(end, n)
+
+            max_k = 0.0
+            for j in range(i, end):
+                max_k = max(max_k, kappa[j])
+
+            if max_k > 1e-9:
+                out[i] = min(v_user_max, omega_dir_max / max_k)
+        return out
+
+    # ---------- Wheel feasibility (translation-only) ----------
+    def k_from_theta_body(self, theta_body: float, r: float) -> Tuple[float, float, float]:
+        inv_r = 1.0 / max(r, 1e-12)
+        return (
+            inv_r * math.cos(theta_body - PHI1),
+            inv_r * math.cos(theta_body - PHI2),
+            inv_r * math.cos(theta_body - PHI3),
+        )
+
+    def wheel_speed_cap_from_k(self, k: Tuple[float, float, float], w_max: float) -> float:
+        eps = 1e-12
+        caps = []
+        for ki in k:
+            aki = abs(ki)
+            if aki > eps:
+                caps.append(w_max / aki)
+        return float(min(caps)) if caps else 1e9
+
+    def feasible_v_interval_from_wheel_accel(
+        self,
+        k_next: Tuple[float, float, float],
+        w_prev: Tuple[float, float, float],
+        a_wheel_max: float,
+        dt: float,
+        v_cap: float,
+    ) -> Tuple[float, float, bool]:
+        a = a_wheel_max * dt
+        lo = -1e18
+        hi = 1e18
+        eps = 1e-12
+
+        for i, ki in enumerate(k_next):
+            wi = w_prev[i]
+            if abs(ki) < eps:
+                if abs(wi) > a + 1e-9:
+                    return 0.0, 0.0, False
+                continue
+
+            a_i = (wi - a) / ki
+            b_i = (wi + a) / ki
+            if a_i > b_i:
+                a_i, b_i = b_i, a_i
+            lo = max(lo, a_i)
+            hi = min(hi, b_i)
+
+        lo = max(lo, 0.0)
+        hi = min(hi, v_cap)
+        return float(lo), float(hi), bool(hi + 1e-12 >= lo)
+
+    # ---------- Interp ----------
+    def interp_lin(self, s_arr: List[float], arr: List[float], st: float) -> float:
+        if st <= s_arr[0]:
+            return float(arr[0])
+        if st >= s_arr[-1]:
+            return float(arr[-1])
+        j = 0
+        while j < len(s_arr) - 2 and s_arr[j + 1] < st:
+            j += 1
+        s0, s1 = s_arr[j], s_arr[j + 1]
+        a = (st - s0) / max(s1 - s0, 1e-12)
+        return float(arr[j] + a * (arr[j + 1] - arr[j]))
+
+    def interp_ang(self, s_arr: List[float], arr: List[float], st: float) -> float:
+        if st <= s_arr[0]:
+            return float(arr[0])
+        if st >= s_arr[-1]:
+            return float(arr[-1])
+        j = 0
+        while j < len(s_arr) - 2 and s_arr[j + 1] < st:
+            j += 1
+        s0, s1 = s_arr[j], s_arr[j + 1]
+        a = (st - s0) / max(s1 - s0, 1e-12)
+        d = wrap_to_pi(arr[j + 1] - arr[j])
+        return float(wrap_to_pi(arr[j] + a * d))
+
+    # ---------- Trajectory generation ----------
+    def build_dt_trajectory(
+        self,
+        xs: List[float],
+        ys: List[float],
+        theta_map: List[float],
+        waypoint_s: List[float],
+        current_speed: float,
+        yaw_now: float,
+    ) -> Tuple[List[float], List[float], List[float], List[float]]:
+        if len(xs) < 2:
             return [], [], [], []
 
-        dt = float(self.get_parameter('dt').value)
-        v_max = float(self.get_parameter('v_max').value)
-        ds_geom = float(self.get_parameter('ds_geom').value)
+        dt = float(self.get_parameter("dt").value)
+        v_user_max = float(self.get_parameter("v_max").value)
+        omega_dir_max = float(self.get_parameter("omega_dir_max").value)
+        lookahead_m = float(self.get_parameter("omega_dir_lookahead_m").value)
 
-        omega_override = float(self.get_parameter('omega_dir_max').value)
-        if omega_override > 0.0:
-            omega_dir_max = omega_override
-        else:
-            Rref = float(self.get_parameter('turn_radius_ref').value)
-            vref = float(self.get_parameter('v_at_radius_ref').value)
-            omega_dir_max = vref / max(Rref, 1e-6)
+        r = float(self.get_parameter("wheel_radius").value)
+        w_max = float(self.get_parameter("max_wheel_speed").value)
+        a_wheel_max = float(self.get_parameter("max_wheel_accel").value)
+        use_yaw = bool(self.get_parameter("use_yaw_for_wheel_limits").value)
 
-        # 1) resample geometry by ds_geom
-        xs, ys, yaws, reserves = self.resample_with_yaw(path_xy, yaw_by_segment, reserve_by_segment, ds_geom)
-
-        # 2) compute curvature-based vmax
-        # alpha: tangent heading
-        alpha = []
-        for i in range(len(xs)-1):
-            alpha.append(math.atan2(ys[i+1]-ys[i], xs[i+1]-xs[i]))
-        if len(alpha) < 2:
-            # almost a point / straight
-            # output dt samples linearly
-            return self.walk_dt(xs, ys, yaws, [v_max]*len(xs), ds_geom, dt)
-
-        thetas = []
-        for i in range(len(xs)-1):
-            dx = xs[i+1] - xs[i]
-            dy = ys[i+1] - ys[i]
-            thetas.append(math.atan2(dy, dx))
-        if thetas:
-            thetas.append(thetas[-1])  # for last point
-
-        kappa = [0.0]*len(xs)
-        for i in range(1, len(alpha)):
-            da = abs(wrap_to_pi(alpha[i] - alpha[i-1]))
-            kappa[i] = da / max(ds_geom, 1e-6)
-
-        v_geom = []
-        for i in range(len(xs)):
-            if kappa[i] < 1e-6:
-                v_curve = 1e9
-            else:
-                v_curve = omega_dir_max / kappa[i]
-            v_geom.append(min(v_max, v_curve))
-
-        # Start from current velocity
-        v_geom[0] = current_v
-
-        # Adjust for kiwi drive wheel speed limits
-        r = float(self.get_parameter('wheel_radius').value)
-        L = float(self.get_parameter('wheel_base').value)
-        w_max = float(self.get_parameter('max_wheel_speed').value)
-
-        speed_margin = float(self.get_parameter('wheel_speed_margin').value)
-        omega_reserve = abs(float(self.get_parameter('omega_reserve').value))
-        w_max_nom = w_max * speed_margin
-        omega_term = (L * omega_reserve) / max(r, 1e-9)
-        for i in range(len(xs)):
-            if i < len(xs) - 1:
-                dx = xs[i+1] - xs[i]
-                dy = ys[i+1] - ys[i]
-                dist = math.hypot(dx, dy)
-                if dist > 1e-6:
-                    theta = math.atan2(dy, dx)
-                    vx = v_geom[i] * math.cos(theta)
-                    vy = v_geom[i] * math.sin(theta)
-                    omega = 0.0  # translation-only; yaw reserve handled via w_max_eff below
-                    w1 = (vy + L * omega) / r
-                    w2 = (-0.5 * vy + (math.sqrt(3)/2) * vx + L * omega) / r
-                    w3 = (-0.5 * vy - (math.sqrt(3)/2) * vx + L * omega) / r
-                    max_w = max(abs(w1), abs(w2), abs(w3))
-                    # Reserve wheel headroom only on segments where yaw is changing.
-                    w_max_eff = max(0.0, w_max_nom - float(reserves[i]) * omega_term)
-                    if w_max_eff < 1e-9:
-                        v_geom[i] = 0.0
-                        continue
-                    if max_w > w_max_eff:
-                        v_geom[i] *= w_max_eff / max_w
-
-        # Apply acceleration limits with forward and backward pass
-        a_max = float(self.get_parameter('max_wheel_accel').value)
-        accel_margin = float(self.get_parameter('wheel_accel_margin').value)
-        alpha_reserve = abs(float(self.get_parameter('alpha_reserve').value))
-
-        a_max_nom = a_max * accel_margin
-        alpha_term = (L * alpha_reserve) / max(r, 1e-9)
-        ds = ds_geom
-
-        # Set final velocity to 0
-        v_geom[-1] = 0.0
-
-        # Backward pass for deceleration to 0
-        for i in range(len(v_geom)-2, -1, -1):
-            theta = thetas[i]
-            seg_reserve = max(float(reserves[i]), float(reserves[i+1]))
-            a_eff = max(0.0, a_max_nom - seg_reserve * alpha_term)
-            dv_max_decel = self.max_dv_accel(v_geom[i+1], theta, ds, a_eff, r, L)
-            v_geom[i] = min(v_geom[i], v_geom[i+1] + dv_max_decel)
-
-        # Forward pass for acceleration from start
-        for i in range(1, len(v_geom)):
-            theta = thetas[i - 1]
-            seg_reserve = max(float(reserves[i - 1]), float(reserves[i]))
-            a_eff = max(0.0, a_max_nom - seg_reserve * alpha_term)
-            dv_max_accel = self.max_dv_accel(v_geom[i - 1], theta, ds, a_eff, r, L)
-            v_geom[i] = min(v_geom[i], v_geom[i - 1] + dv_max_accel)
-
-        # 3) walk in fixed dt: s += v(s)*dt
-        return self.walk_dt(xs, ys, yaws, v_geom, ds_geom, dt)
-
-    def resample_with_yaw(self, path_xy, yaw_by_segment, reserve_by_segment, ds):
-        self.get_logger().info(f"resample called with path_xy len {len(path_xy)}, yaw_by_segment len {len(yaw_by_segment)}, reserve_by_segment len {len(reserve_by_segment)}")
-        if not yaw_by_segment:
-            self.get_logger().error("yaw_by_segment is empty!")
-            return [path_xy[0][0]] if path_xy else [], [path_xy[0][1]] if path_xy else [], [0.0], [0.0]        # path_xy is a stitched list; yaw_by_segment is per-point desired yaw already aligned
-        # resample by distance using linear interpolation
-        xs = [path_xy[0][0]]
-        ys = [path_xy[0][1]]
-        yaws = [yaw_by_segment[0]]
-        reserves = [float(reserve_by_segment[0]) if reserve_by_segment else 0.0]
-
-        # cumulative along original
-        s = [0.0]
-        for i in range(1, len(path_xy)):
-            dx = path_xy[i][0] - path_xy[i-1][0]
-            dy = path_xy[i][1] - path_xy[i-1][1]
-            s.append(s[-1] + math.hypot(dx, dy))
-
-        total = s[-1]
-        if total < 1e-6:
-            return xs, ys, yaws, reserves
-
-        # resample targets
-        n = int(math.floor(total / ds))
-        targets = [k*ds for k in range(1, n+1)]
-        j = 0
-        for st in targets:
-            while j < len(s)-2 and s[j+1] < st:
-                j += 1
-            s0, s1 = s[j], s[j+1]
-            t = (st - s0) / max(s1 - s0, 1e-9)
-            x = path_xy[j][0] + t*(path_xy[j+1][0] - path_xy[j][0])
-            y = path_xy[j][1] + t*(path_xy[j+1][1] - path_xy[j][1])
-            # yaw desired: just interpolate linearly (or hold) — yaw is decoupled anyway
-            yaw = yaw_by_segment[j] + t*wrap_to_pi(yaw_by_segment[j+1] - yaw_by_segment[j])
-            rsv = 0.0
-            if reserve_by_segment:
-                rsv = max(float(reserve_by_segment[j]), float(reserve_by_segment[j+1]))
-            xs.append(x); ys.append(y); yaws.append(yaw); reserves.append(rsv)
-
-        # ensure final point
-        xs.append(path_xy[-1][0]); ys.append(path_xy[-1][1]); yaws.append(yaw_by_segment[-1])
-        reserves.append(float(reserve_by_segment[-1]) if reserve_by_segment else 0.0)
-        return xs, ys, yaws, reserves
-
-    def walk_dt(self, xs, ys, yaws, v_geom, ds_geom, dt):
-        # v_geom defined at geom samples spaced ~ds_geom. We'll step along them.
-        # Build cumulative s for geom samples
+        # Arc-length
         s = [0.0]
         for i in range(1, len(xs)):
-            s.append(s[-1] + math.hypot(xs[i]-xs[i-1], ys[i]-ys[i-1]))
+            s.append(s[-1] + math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]))
         total = s[-1]
-        if total < 1e-6:
+        if total < 1e-9:
             return [], [], [], []
 
-        # Helper: interpolate by s
-        def interp(arr, st):
-            # find segment
-            j = 0
-            # linear scan is OK for small; optimize later if needed
-            while j < len(s)-2 and s[j+1] < st:
-                j += 1
-            s0, s1 = s[j], s[j+1]
-            t = (st - s0) / max(s1 - s0, 1e-9)
-            return arr[j] + t*(arr[j+1]-arr[j])
+        v_dir_cap = self.build_v_dir_caps(s, theta_map, v_user_max, omega_dir_max, lookahead_m)
 
-        # For yaw, wrap-safe interpolation
-        def interp_yaw(st):
-            j = 0
-            while j < len(s)-2 and s[j+1] < st:
-                j += 1
-            s0, s1 = s[j], s[j+1]
-            t = (st - s0) / max(s1 - s0, 1e-9)
-            dy = wrap_to_pi(yaws[j+1] - yaws[j])
-            return wrap_to_pi(yaws[j] + t*dy)
+        # Conservative braking envelope (translation): a_trans ~= a_wheel_max * r
+        a_trans = max(1e-6, a_wheel_max * r)
 
-        # dt samples
-        out_x = []
-        out_y = []
-        out_yaw = []
-        out_v = []
+        def state_at(st: float) -> Tuple[float, float, float, float, Tuple[float, float, float]]:
+            x = self.interp_lin(s, xs, st)
+            y = self.interp_lin(s, ys, st)
+            th_map = self.interp_ang(s, theta_map, st)
+            vdc = self.interp_lin(s, v_dir_cap, st)
+            th_body = wrap_to_pi(th_map - yaw_now) if use_yaw else th_map
+            kk = self.k_from_theta_body(th_body, r)
+            return x, y, th_map, vdc, kk
+
+        wp_s = sorted([sv for sv in waypoint_s if 0.0 <= sv <= total])
+        wp_ptr = 0
 
         st = 0.0
-        # initial
-        out_x.append(xs[0]); out_y.append(ys[0]); out_yaw.append(yaws[0]); out_v.append(interp(v_geom, 0.0))
+        x0, y0, th0, vdc0, k0 = state_at(st)
+        v0 = max(0.0, float(current_speed))
+        v0 = min(v0, v_user_max, vdc0, self.wheel_speed_cap_from_k(k0, w_max))
+        w_prev = (v0 * k0[0], v0 * k0[1], v0 * k0[2])
 
-        while st < total - 1e-6:
-            v = max(interp(v_geom, st), 0.01)  # avoid zero step
-            st_next = min(st + v*dt, total)
-            x = interp(xs, st_next)
-            y = interp(ys, st_next)
-            yaw = interp_yaw(st_next)
-            v_cmd = interp(v_geom, st_next)
+        out_x = [x0]
+        out_y = [y0]
+        out_th = [th0]
+        out_v = [v0]
 
-            out_x.append(x); out_y.append(y); out_yaw.append(yaw); out_v.append(v_cmd)
+        wp_eps_s = 1e-6
+        max_iters = int(max(50.0, (total / max(1e-3, v_user_max)) / max(dt, 1e-4)) * 10.0) + 8000
+
+        for _ in range(max_iters):
+            while wp_ptr < len(wp_s) and wp_s[wp_ptr] <= st + wp_eps_s:
+                wp_ptr += 1
+
+            remaining = total - st
+            if remaining <= 1e-6:
+                break
+
+            v_prev = float(out_v[-1])
+            next_wp = wp_s[wp_ptr] if wp_ptr < len(wp_s) else None
+
+            # Try to hit the next waypoint exactly in this dt, if it's the next constraint.
+            if next_wp is not None and next_wp > st + wp_eps_s:
+                dist_to_wp = next_wp - st
+                v_exact = max(0.0, 2.0 * dist_to_wp / max(dt, 1e-12) - v_prev)
+
+                _, _, _, vdc_e, k_e = state_at(next_wp)
+                rem_e = total - next_wp
+                v_brake_e = math.sqrt(max(0.0, 2.0 * a_trans * rem_e))
+                v_cap_e = min(
+                    v_user_max,
+                    vdc_e,
+                    v_brake_e,
+                    rem_e / max(dt, 1e-12),
+                    self.wheel_speed_cap_from_k(k_e, w_max),
+                )
+                lo_e, hi_e, ok_e = self.feasible_v_interval_from_wheel_accel(
+                    k_next=k_e,
+                    w_prev=w_prev,
+                    a_wheel_max=a_wheel_max,
+                    dt=dt,
+                    v_cap=v_cap_e,
+                )
+                if ok_e and lo_e - 1e-9 <= v_exact <= hi_e + 1e-9 and v_exact <= v_cap_e + 1e-9:
+                    st_next = next_wp
+                    v_next = float(min(max(v_exact, 0.0), v_cap_e))
+                    x, y, th_map, _, k_now = state_at(st_next)
+                    w_prev = (v_next * k_now[0], v_next * k_now[1], v_next * k_now[2])
+
+                    out_x.append(x)
+                    out_y.append(y)
+                    out_th.append(th_map)
+                    out_v.append(v_next)
+                    st = st_next
+                    continue
+
+            # Otherwise: choose a step that does NOT cross the next waypoint.
+            v_next = v_prev
+            for __ in range(30):
+                # Cap to avoid crossing next waypoint in this dt (keep a tiny margin)
+                if next_wp is not None and next_wp > st + wp_eps_s:
+                    dist = max(0.0, (next_wp - st) - wp_eps_s)
+                    v_cross_cap = max(0.0, 2.0 * dist / max(dt, 1e-12) - v_prev)
+                    v_next = min(v_next, v_cross_cap)
+
+                v_next = max(0.0, v_next)
+
+                st_cand = st + 0.5 * (v_prev + v_next) * dt
+                st_cand = min(st_cand, total)
+
+                _, _, _, vdc_c, k_c = state_at(st_cand)
+                rem_c = total - st_cand
+                v_brake = math.sqrt(max(0.0, 2.0 * a_trans * rem_c))
+
+                v_cap = min(
+                    v_user_max,
+                    vdc_c,
+                    v_brake,
+                    rem_c / max(dt, 1e-12),
+                    self.wheel_speed_cap_from_k(k_c, w_max),
+                )
+
+                lo, hi, ok = self.feasible_v_interval_from_wheel_accel(
+                    k_next=k_c,
+                    w_prev=w_prev,
+                    a_wheel_max=a_wheel_max,
+                    dt=dt,
+                    v_cap=v_cap,
+                )
+                if not ok:
+                    v_next *= 0.5
+                    continue
+
+                v_new = min(v_cap, hi)
+                if v_new < lo:
+                    v_new = lo
+
+                if abs(v_new - v_next) < 1e-4:
+                    v_next = float(v_new)
+                    break
+                v_next = float(v_new)
+
+            st_next = st + 0.5 * (v_prev + v_next) * dt
+            st_next = min(st_next, total)
+
+            # Hard safety: never cross the waypoint without landing exactly.
+            if next_wp is not None and st_next > next_wp + wp_eps_s:
+                st_next = next_wp
+                v_next = max(0.0, 2.0 * (st_next - st) / max(dt, 1e-12) - v_prev)
+
+            if st_next <= st + 1e-12:
+                self.get_logger().warn("No progress in dt integrator; truncating trajectory.")
+                break
+
+            x, y, th_map, _, k_now = state_at(st_next)
+            w_prev = (v_next * k_now[0], v_next * k_now[1], v_next * k_now[2])
+
+            out_x.append(x)
+            out_y.append(y)
+            out_th.append(th_map)
+            out_v.append(float(v_next))
             st = st_next
 
-        # final point speed = 0 (optional)
-        out_v[-1] = 0.0
-        return out_x, out_y, out_yaw, out_v
+        # Ensure final sample at goal, then brake tail to 0
+        xT, yT, thT, _, kT = state_at(total)
+        if math.hypot(out_x[-1] - xT, out_y[-1] - yT) > 1e-6:
+            out_x.append(xT)
+            out_y.append(yT)
+            out_th.append(thT)
+            out_v.append(out_v[-1])
 
-    def publish_waypoints(self, wps_xy):
+        w_prev = (out_v[-1] * kT[0], out_v[-1] * kT[1], out_v[-1] * kT[2])
+        for _ in range(12000):
+            if max(abs(w_prev[0]), abs(w_prev[1]), abs(w_prev[2])) <= 1e-3:
+                break
+            v_cap = min(v_user_max, self.wheel_speed_cap_from_k(kT, w_max))
+            lo, hi, ok = self.feasible_v_interval_from_wheel_accel(
+                k_next=kT,
+                w_prev=w_prev,
+                a_wheel_max=a_wheel_max,
+                dt=dt,
+                v_cap=v_cap,
+            )
+            if not ok:
+                break
+            v_next = max(0.0, lo)
+            w_prev = (v_next * kT[0], v_next * kT[1], v_next * kT[2])
+
+            out_x.append(xT)
+            out_y.append(yT)
+            out_th.append(thT)
+            out_v.append(float(v_next))
+
+        out_v[-1] = 0.0
+        return out_x, out_y, out_th, out_v
+
+    # ---------- Visualization ----------
+    def publish_waypoints(self, wps: List[Tuple[float, float]]) -> None:
         ma = MarkerArray()
+
         m = Marker()
         m.header.stamp = self.get_clock().now().to_msg()
-        m.header.frame_id = self.get_parameter('map_frame').value
+        m.header.frame_id = self.get_parameter("map_frame").value
         m.ns = "wps"
         m.id = self.marker_counter
         m.type = Marker.SPHERE_LIST
@@ -587,14 +945,11 @@ class WaypointTrajNode(Node):
         m.scale.z = 0.12
         m.color = ColorRGBA(r=1.0, g=1.0, b=0.0, a=1.0)
 
-        for wp in wps_xy:
-            x, y = wp[0], wp[1]   # <-- FIX: works for (x,y) or (x,y,yaw)
+        for (x, y) in wps:
             m.points.append(Point(x=float(x), y=float(y), z=0.05))
-
         ma.markers.append(m)
 
-        for i, wp in enumerate(wps_xy):
-            x, y = wp[0], wp[1]   # <-- FIX
+        for i, (x, y) in enumerate(wps):
             t = Marker()
             t.header = m.header
             t.ns = "wp_text"
@@ -612,150 +967,82 @@ class WaypointTrajNode(Node):
         self.wp_marker_pub.publish(ma)
         self.marker_counter += 1
 
-
-
     # ---------- Main loop ----------
-    def on_timer(self):
-        gs, grid = self.build_costmap()
-        self.publish_costmap(gs, grid)
-
-        # Handle add_waypoint command
-        add_wp = self.get_parameter('add_wp').value
-        if add_wp and len(add_wp) in (2, 3) and math.isfinite(add_wp[0]) and math.isfinite(add_wp[1]) and (len(add_wp) == 2 or math.isfinite(add_wp[2])):
-            vals = [float(add_wp[0]), float(add_wp[1])] if len(add_wp) == 2 else [float(add_wp[0]), float(add_wp[1]), float(add_wp[2])]
-            wp_flat = list(self.get_parameter('waypoints').value)
-            wp_n = int(self.get_parameter('wp_n').value)
-
-            # Infer current stride from wp_flat/wp_n; if unknown, default to vals stride.
-            stride = None
-            if wp_n > 0:
-                if len(wp_flat) == 2 * wp_n:
-                    stride = 2
-                elif len(wp_flat) == 3 * wp_n:
-                    stride = 3
-            if stride is None:
-                stride = len(vals)
-
-            # Upgrade existing (x,y) list to (x,y,yaw) if user now adds yaw.
-            if stride == 2 and len(vals) == 3 and wp_n > 0:
-                upgraded = []
-                for i in range(wp_n):
-                    upgraded.extend([float(wp_flat[2*i]), float(wp_flat[2*i+1]), 0.0])
-                wp_flat = upgraded
-                stride = 3
-
-            # Keep representation consistent.
-            if stride == 3 and len(vals) == 2:
-                vals = [vals[0], vals[1], 0.0]
-
-            if wp_n == 0:
-                wp_flat = vals
-            else:
-                wp_flat.extend(vals)
-
-            new_wp_n = wp_n + 1
-            self.set_parameters([
-                Parameter('waypoints', Parameter.Type.DOUBLE_ARRAY, wp_flat),
-                Parameter('wp_n', Parameter.Type.INTEGER, new_wp_n),
-                Parameter('add_wp', Parameter.Type.DOUBLE_ARRAY, [float('nan'), float('nan'), float('nan')])
-            ])
-            self.get_logger().info(f"Added waypoint {vals}, wp_n now {new_wp_n}")
-
-        # Build waypoint list
-        wp_n = int(self.get_parameter('wp_n').value)
-        if wp_n == 0:
-            return  # no trajectory
-        wp_flat = list(self.get_parameter('waypoints').value)
-
-        if len(wp_flat) == 2 * wp_n:
-            stride = 2
-        elif len(wp_flat) == 3 * wp_n:
-            stride = 3
-        else:
-            self.get_logger().warn(
-                f"Waypoints parameter length {len(wp_flat)} doesn't match wp_n={wp_n} "
-                f"(expected 2*wp_n or 3*wp_n). Skipping planning."
-            )
+    def on_timer(self) -> None:
+        self.consume_add_wp()
+        wps = self.read_waypoints()
+        if not wps:
             return
 
-        wps = []
-        for i in range(wp_n):
-            x = float(wp_flat[stride * i])
-            y = float(wp_flat[stride * i + 1])
-            yaw = float(wp_flat[stride * i + 2]) if stride == 3 else 0.0
-            wps.append((x, y, yaw))
-
-        self.get_logger().info(f"Planning to waypoints: {wps}")
         self.publish_waypoints(wps)
 
-        # Try to obtain current robot pose in map frame via TF. Fallback to
-        # the `start_pose` parameter if TF is unavailable.
-        cur = None
-        try:
-            tf = self.tf_buffer.lookup_transform(
-                self.get_parameter('map_frame').value,
-                self.get_parameter('base_frame').value,
-                rclpy.time.Time()
-            )
-            t = tf.transform.translation
-            q = tf.transform.rotation
-            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
-            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-            yaw = math.atan2(siny_cosp, cosy_cosp)
-            cur = (float(t.x), float(t.y), float(yaw))
-        except Exception:
-            sp = self.get_parameter('start_pose').value
-            cur = (float(sp[0]), float(sp[1]), float(sp[2]))
+        cur_x, cur_y, cur_yaw = self.get_current_pose()
+        gs, grid = self.build_costmap(center_xy=(cur_x, cur_y))
+        self.publish_costmap(gs, grid)
 
-        self.get_logger().info(f"Current pose: {cur}")
+        stitched: List[Tuple[float, float]] = []
+        waypoint_vertex_indices: List[int] = []
+        start_xy = (cur_x, cur_y)
 
-        stitched_xy = []
-        yaw_by_point = []
-        reserve_by_point = []
-
-        # Reserve yaw authority only on segments whose target waypoint requests a yaw change.
-        yaw_thresh = float(self.get_parameter('yaw_change_threshold').value)
-        yaw_prev = float(cur[2])
-        yaw_change_flags: List[bool] = []
-        for (_, _, gyaw) in wps:
-            yaw_change_flags.append(abs(wrap_to_pi(float(gyaw) - yaw_prev)) > yaw_thresh)
-            yaw_prev = float(gyaw)
-
-        # Plan sequentially to each waypoint
-        start_xy = (cur[0], cur[1])
-        for seg_idx, (gx, gy, gyaw) in enumerate(wps):
-            # For omni robot, use direct line to waypoint (assuming no obstacles)
-            start_x, start_y = start_xy
-            if (start_x, start_y) == (gx, gy):
-                seg = [(start_x, start_y)]
-            else:
-                seg = [(start_x, start_y), (gx, gy)]
+        for (gx, gy) in wps:
+            goal_xy = (gx, gy)
+            seg = self.plan_segment_path(gs, grid, start_xy, goal_xy)
             if not seg:
-                self.get_logger().warn(f"No path to ({gx:.2f},{gy:.2f})")
+                self.get_logger().warn(f"Planning failed start={start_xy} goal={goal_xy}")
                 return
+            if not stitched:
+                stitched.extend(seg)
+            else:
+                stitched.extend(seg[1:])
+            waypoint_vertex_indices.append(len(stitched) - 1)
+            start_xy = goal_xy
 
-            pts = seg if not stitched_xy else seg[1:]  # avoid duplicating first point
-            for p in pts:
-                stitched_xy.append(p)
-                yaw_by_point.append(float(gyaw))  # viz only; controller uses waypoint yaw directly
-                reserve_by_point.append(1.0 if yaw_change_flags[seg_idx] else 0.0)
-            start_xy = (gx, gy)
+        stitched, waypoint_vertex_indices, _ = self.simplify_polyline_keep_indices(
+            stitched, waypoint_vertex_indices
+        )
 
-        self.publish_path('/planned_path', stitched_xy, yaw_by_point)
+        ds = float(self.get_parameter("ds_geom").value)
+        xs, ys, ths, vertex_out = self.resample_vertex_preserving_with_map(stitched, ds)
+        if len(xs) < 2:
+            return
 
-        # Build dt trajectory
-        tx, ty, tyaw, tv = self.build_dt_trajectory(stitched_xy, yaw_by_point, reserve_by_point, self.current_v)
+        s = [0.0]
+        for i in range(1, len(xs)):
+            s.append(s[-1] + math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]))
+
+        waypoint_s: List[float] = []
+        for v_idx in waypoint_vertex_indices:
+            if 0 <= v_idx < len(vertex_out):
+                out_i = vertex_out[v_idx]
+                if 0 <= out_i < len(s):
+                    waypoint_s.append(float(s[out_i]))
+
+        self.publish_path(xs, ys, ths)
+
+        tx, ty, tth, tv = self.build_dt_trajectory(
+            xs=xs,
+            ys=ys,
+            theta_map=ths,
+            waypoint_s=waypoint_s,
+            current_speed=float(self.current_speed),
+            yaw_now=float(cur_yaw),
+        )
         if len(tx) < 2:
             return
 
-        self.publish_trajectory(tx, ty, tyaw, tv)
-        self.get_logger().info("Published trajectory")
+        self.publish_trajectory(tx, ty, tth, tv)
+
+        data = {"x": tx, "y": ty, "theta_v": tth, "v": tv}
+        with open("/tmp/last_trajectory.json", "w") as f:
+            json.dump(data, f)
+
+        self.get_logger().info("Published trajectory (guaranteed waypoint samples, dt-consistent).")
 
     # ---------- Publishing ----------
-    def publish_costmap(self, gs: GridSpec, grid: List[int]):
+    def publish_costmap(self, gs: GridSpec, grid: List[int]) -> None:
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = self.get_parameter('map_frame').value
+        msg.header.frame_id = self.get_parameter("map_frame").value
         msg.info.resolution = gs.res
         msg.info.width = gs.width
         msg.info.height = gs.height
@@ -763,7 +1050,7 @@ class WaypointTrajNode(Node):
         msg.info.origin.position.y = gs.origin_y
         msg.info.origin.position.z = 0.0
 
-        q = yaw_to_quat(0.0)  # <-- FIX: don't use undefined yaw
+        q = yaw_to_quat(0.0)
         msg.info.origin.orientation.x = q[0]
         msg.info.origin.orientation.y = q[1]
         msg.info.origin.orientation.z = q[2]
@@ -772,35 +1059,32 @@ class WaypointTrajNode(Node):
         msg.data = [int(v) for v in grid]
         self.costmap_pub.publish(msg)
 
-
-    def publish_path(self, topic_name: str, xy: List[Tuple[float, float]], yaw_list: List[float]):
+    def publish_path(self, xs: List[float], ys: List[float], theta_v: List[float]) -> None:
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
-        path.header.frame_id = self.get_parameter('map_frame').value
+        path.header.frame_id = self.get_parameter("map_frame").value
 
-        for i, (x, y) in enumerate(xy):  # <-- FIX: iterate xy + define i
+        for i in range(len(xs)):
             ps = PoseStamped()
             ps.header = path.header
-            ps.pose.position.x = float(x)
-            ps.pose.position.y = float(y)
+            ps.pose.position.x = float(xs[i])
+            ps.pose.position.y = float(ys[i])
             ps.pose.position.z = 0.0
 
-            yaw = yaw_list[min(i, len(yaw_list) - 1)]
-            q = yaw_to_quat(yaw)  # <-- FIX: show yaw in RViz (optional but correct)
+            th = float(theta_v[i]) if i < len(theta_v) else 0.0
+            q = yaw_to_quat(th)
             ps.pose.orientation.x = q[0]
             ps.pose.orientation.y = q[1]
             ps.pose.orientation.z = q[2]
             ps.pose.orientation.w = q[3]
-
             path.poses.append(ps)
 
         self.path_pub.publish(path)
 
-    def publish_trajectory(self, x, y, yaw, v):
-        # Trajectory as Path + parallel speed array
+    def publish_trajectory(self, x: List[float], y: List[float], theta_v: List[float], v: List[float]) -> None:
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
-        path.header.frame_id = self.get_parameter('map_frame').value
+        path.header.frame_id = self.get_parameter("map_frame").value
 
         for i in range(len(x)):
             ps = PoseStamped()
@@ -808,7 +1092,9 @@ class WaypointTrajNode(Node):
             ps.pose.position.x = float(x[i])
             ps.pose.position.y = float(y[i])
             ps.pose.position.z = 0.0
-            q = yaw_to_quat(yaw[i])
+
+            th = float(theta_v[i]) if i < len(theta_v) else 0.0
+            q = yaw_to_quat(th)
             ps.pose.orientation.x = q[0]
             ps.pose.orientation.y = q[1]
             ps.pose.orientation.z = q[2]
@@ -821,7 +1107,6 @@ class WaypointTrajNode(Node):
         arr.data = [float(val) for val in v]
         self.traj_v_pub.publish(arr)
 
-        # Markers for RViz
         ma = MarkerArray()
         m = Marker()
         m.header = path.header
@@ -830,52 +1115,30 @@ class WaypointTrajNode(Node):
         m.type = Marker.LINE_STRIP
         m.action = Marker.ADD
         m.scale.x = 0.04
-
-        # IMPORTANT: still set alpha somewhere (RViz uses either m.color or per-point colors)
         m.color.a = 1.0
 
-        vmin = 0.0
-        vmax = max(max(v), 1e-6)
-
+        vmax = max(max(v), 1e-6) if v else 1e-6
         for i in range(len(x)):
-            p = Point()
-            p.x = float(x[i])
-            p.y = float(y[i])
-            p.z = 0.02
+            p = Point(x=float(x[i]), y=float(y[i]), z=0.02)
             m.points.append(p)
 
-            # normalize speed 0..1
-            t = float(v[i] - vmin) / float(vmax - vmin + 1e-9)
+            t = float(v[i]) / float(vmax)
             t = max(0.0, min(1.0, t))
-
-            # simple blue->red gradient:
-            c = ColorRGBA()
-            c.r = t
-            c.g = 0.0
-            c.b = 1.0 - t
-            c.a = 1.0
+            c = ColorRGBA(r=t, g=0.0, b=1.0 - t, a=1.0)
             m.colors.append(c)
 
         ma.markers.append(m)
         self.marker_pub.publish(ma)
         self.marker_counter += 1
 
-        # Save trajectory to file for debugging
-        data = {
-            'x': x,
-            'y': y,
-            'yaw': yaw,
-            'v': v
-        }
-        with open('/tmp/last_trajectory.json', 'w') as f:
-            json.dump(data, f)
 
-def main():
+def main() -> None:
     rclpy.init()
     node = WaypointTrajNode()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
