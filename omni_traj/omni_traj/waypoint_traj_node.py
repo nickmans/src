@@ -24,6 +24,8 @@ Limits enforced (translation-only):
 - wheel speed cap (direction-dependent kiwi translation model)
 - wheel accel cap (exact per-wheel discrete constraint)
 - velocity-direction rate cap via curvature of theta_v(s)
+- IMPORTANT FIX: "future braking" envelope so we slow down smoothly before upcoming low speed caps
+  (prevents the pre-corner v(t) bouncing you observed)
 
 Waypoint param format (backward-compatible):
 - waypoints: flat [x1,y1,(ignored), x2,y2,(ignored), ...]
@@ -86,6 +88,12 @@ class WaypointTrajNode(Node):
 
         self.declare_parameter("omega_dir_max", 2.0)
         self.declare_parameter("omega_dir_lookahead_m", 0.05)
+
+        # Future-braking (fixes pre-corner velocity bouncing)
+        # - brake_future_lookahead_m: extra lookahead (meters). If 0, we still ensure at least braking distance from v_max.
+        # - brake_future_samples: how many samples to scan ahead for the minimum speed limit.
+        self.declare_parameter("brake_future_lookahead_m", 0.0)
+        self.declare_parameter("brake_future_samples", 15)
 
         self.declare_parameter("wheel_radius", 0.09)
         self.declare_parameter("max_wheel_speed", 12.0)   # rad/s
@@ -739,6 +747,10 @@ class WaypointTrajNode(Node):
         omega_dir_max = float(self.get_parameter("omega_dir_max").value)
         lookahead_m = float(self.get_parameter("omega_dir_lookahead_m").value)
 
+        brake_L_extra = float(self.get_parameter("brake_future_lookahead_m").value)
+        brake_N = int(self.get_parameter("brake_future_samples").value)
+        brake_N = max(3, min(brake_N, 200))
+
         r = float(self.get_parameter("wheel_radius").value)
         w_max = float(self.get_parameter("max_wheel_speed").value)
         a_wheel_max = float(self.get_parameter("max_wheel_accel").value)
@@ -754,7 +766,7 @@ class WaypointTrajNode(Node):
 
         v_dir_cap = self.build_v_dir_caps(s, theta_map, v_user_max, omega_dir_max, lookahead_m)
 
-        # Conservative braking envelope (translation): a_trans ~= a_wheel_max * r
+        # Conservative translation accel envelope: a_trans ~= a_wheel_max * r
         a_trans = max(1e-6, a_wheel_max * r)
 
         def state_at(st: float) -> Tuple[float, float, float, float, Tuple[float, float, float]]:
@@ -765,6 +777,40 @@ class WaypointTrajNode(Node):
             th_body = wrap_to_pi(th_map - yaw_now) if use_yaw else th_map
             kk = self.k_from_theta_body(th_body, r)
             return x, y, th_map, vdc, kk
+
+        def speed_limit_at(st: float) -> float:
+            _, _, _, vdc, kk = state_at(st)
+            return min(v_user_max, vdc, self.wheel_speed_cap_from_k(kk, w_max))
+
+        def future_brake_cap(st0: float) -> float:
+            """
+            Cap v(st0) so we can reach the minimum upcoming speed limit within a lookahead window
+            using accel bound a_trans.
+
+            v(st0) <= sqrt(v_min_ahead^2 + 2*a_trans*ds_ahead)
+            """
+            if a_trans <= 1e-12:
+                return 1e9
+
+            # ensure we look far enough to brake from v_user_max if needed
+            brake_dist_from_vmax = (v_user_max * v_user_max) / max(2.0 * a_trans, 1e-12)
+            L = max(lookahead_m, brake_L_extra, brake_dist_from_vmax)
+
+            if L <= 1e-6:
+                return 1e9
+
+            st1 = min(total, st0 + L)
+            ds_ahead = max(0.0, st1 - st0)
+            if ds_ahead <= 1e-9:
+                return 1e9
+
+            vmin = 1e18
+            for i in range(brake_N + 1):
+                a = i / float(brake_N)
+                sa = st0 + a * ds_ahead
+                vmin = min(vmin, speed_limit_at(sa))
+
+            return math.sqrt(max(0.0, vmin * vmin + 2.0 * a_trans * ds_ahead))
 
         wp_s = sorted([sv for sv in waypoint_s if 0.0 <= sv <= total])
         wp_ptr = 0
@@ -801,14 +847,21 @@ class WaypointTrajNode(Node):
 
                 _, _, _, vdc_e, k_e = state_at(next_wp)
                 rem_e = total - next_wp
-                v_brake_e = math.sqrt(max(0.0, 2.0 * a_trans * rem_e))
+
+                # stop-at-end cap
+                v_brake_end_e = math.sqrt(max(0.0, 2.0 * a_trans * rem_e))
+                # future-brake cap (slow down BEFORE sharp turn caps)
+                v_brake_future_e = future_brake_cap(next_wp)
+
                 v_cap_e = min(
                     v_user_max,
                     vdc_e,
-                    v_brake_e,
+                    v_brake_end_e,
+                    v_brake_future_e,
                     rem_e / max(dt, 1e-12),
                     self.wheel_speed_cap_from_k(k_e, w_max),
                 )
+
                 lo_e, hi_e, ok_e = self.feasible_v_interval_from_wheel_accel(
                     k_next=k_e,
                     w_prev=w_prev,
@@ -845,12 +898,17 @@ class WaypointTrajNode(Node):
 
                 _, _, _, vdc_c, k_c = state_at(st_cand)
                 rem_c = total - st_cand
-                v_brake = math.sqrt(max(0.0, 2.0 * a_trans * rem_c))
+
+                # stop-at-end cap
+                v_brake_end = math.sqrt(max(0.0, 2.0 * a_trans * rem_c))
+                # future-brake cap (THIS is the key fix)
+                v_brake_future = future_brake_cap(st_cand)
 
                 v_cap = min(
                     v_user_max,
                     vdc_c,
-                    v_brake,
+                    v_brake_end,
+                    v_brake_future,
                     rem_c / max(dt, 1e-12),
                     self.wheel_speed_cap_from_k(k_c, w_max),
                 )
@@ -1032,7 +1090,15 @@ class WaypointTrajNode(Node):
 
         self.publish_trajectory(tx, ty, tth, tv)
 
-        data = {"x": tx, "y": ty, "theta_v": tth, "v": tv}
+        # Save last trajectory for debugging / offline plots
+        # (include a yaw column of zeros so your import pipeline has it)
+        data = {
+            "x": tx,
+            "y": ty,
+            "theta_v": tth,
+            "v": tv,
+            "yaw": [0.0] * len(tx),
+        }
         with open("/tmp/last_trajectory.json", "w") as f:
             json.dump(data, f)
 
