@@ -4,28 +4,28 @@ waypoint_traj.py
 
 Yaw-decoupled translation trajectory planner for a 3-omni kiwi drive.
 
-Key points:
-- Geometry is yaw-decoupled: we plan (x,y) and a velocity direction theta_v in the map frame.
-- Robot yaw is NOT used for the path; it is only used to tighten wheel speed/accel feasibility
-  (theta_body = theta_map - yaw_now). If you don't want this, set use_yaw_for_wheel_limits=false.
+Robust multi-waypoint behavior:
+- Removes forward-looking max-curvature "future cap" behavior that causes dip->rise->dip.
+- Computes theta_v from smoothed derivatives of (x,y), eliminating curvature impulses.
+- Builds a smooth feasible speed envelope v(s) via backward/forward passes:
+    v(s) respects v_max, direction-rate cap, wheel-speed cap, and translational accel bound.
+- Optionally rounds corners (C1 blend) WHILE still passing EXACTLY through each intermediate waypoint.
 
 Exact waypoint visitation:
-- Waypoints are positional constraints only.
-- The dt integrator guarantees a sample exactly at each waypoint arc-length when feasible.
-  If not feasible in the current dt, it will approach without crossing, braking as needed,
-  then hit exactly on a later dt step.
+- Waypoints are positional constraints only (no forced stop).
+- dt integrator guarantees a sample exactly at each waypoint arc-length when feasible,
+  else approaches without crossing and hits exactly later.
 
 Obstacle avoidance:
 - Local costmap from fused LiDAR scans (+ inflation).
 - Each segment uses straight line if collision-free, else A* (soft penalty).
 
 Limits enforced (translation-only):
-- v_max (live-tunable; can be updated externally)
+- v_max (live-tunable)
 - wheel speed cap (direction-dependent kiwi translation model)
 - wheel accel cap (exact per-wheel discrete constraint)
 - velocity-direction rate cap via curvature of theta_v(s)
-- IMPORTANT FIX: "future braking" envelope so we slow down smoothly before upcoming low speed caps
-  (prevents the pre-corner v(t) bouncing you observed)
+- smooth braking/accel envelope in s-space (prevents pre-corner bouncing)
 
 Waypoint param format (backward-compatible):
 - waypoints: flat [x1,y1,(ignored), x2,y2,(ignored), ...]
@@ -35,8 +35,9 @@ Waypoint param format (backward-compatible):
 import math
 import heapq
 import json
+import bisect
 from dataclasses import dataclass
-from typing import Deque, List, Optional, Tuple
+from typing import Deque, List, Optional, Tuple, Dict, Set
 from collections import deque
 
 import rclpy
@@ -86,32 +87,51 @@ class WaypointTrajNode(Node):
         self.declare_parameter("v_max", 0.5)
         self.declare_parameter("ds_geom", 0.05)
 
+        # direction-rate limiting (theta_v curvature -> v cap)
         self.declare_parameter("omega_dir_max", 2.0)
-        self.declare_parameter("omega_dir_lookahead_m", 0.05)
 
-        # Future-braking (fixes pre-corner velocity bouncing)
-        # - brake_future_lookahead_m: extra lookahead (meters). If 0, we still ensure at least braking distance from v_max.
-        # - brake_future_samples: how many samples to scan ahead for the minimum speed limit.
-        self.declare_parameter("brake_future_lookahead_m", 0.0)
-        self.declare_parameter("brake_future_samples", 15)
+        # IMPORTANT: this is now a SMOOTHING length (meters) for curvature/heading,
+        # not a forward-looking max window. Default 0 removes the dip->rise artifact.
+        self.declare_parameter("omega_dir_lookahead_m", 0.0)
 
+        # Additional theta_v smoothing (unit-vector moving average window in samples)
+        self.declare_parameter("theta_smooth_window", 1)  # odd recommended: 5,7,9
+
+        # Wheel feasibility
         self.declare_parameter("wheel_radius", 0.09)
         self.declare_parameter("max_wheel_speed", 12.0)   # rad/s
         self.declare_parameter("max_wheel_accel", 6.0)    # rad/s^2
-
         self.declare_parameter("use_yaw_for_wheel_limits", True)
 
+        # --- SPEED PROFILE ANTI-BOUNCE FIX ---
+        # a_trans used for v(s) envelope + dt accel clamp. Scale down to avoid accel/brake "pulses".
+        self.declare_parameter("a_trans_scale", 0.65)     # 0.5..1.0 (lower = smoother)
+        # Smooth v_prof(s) then re-project through envelope to kill small local maxima between dips.
+        self.declare_parameter("profile_envelope_iters", 2)   # how many backward+forward projections
+        self.declare_parameter("profile_smooth_window", 11)   # odd, in samples along s
+        self.declare_parameter("profile_smooth_iters", 2)     # smooth+reproject cycles
+
+        # Local costmap window
         self.declare_parameter("map_res", 0.01)
         self.declare_parameter("map_width_m", 3.0)
         self.declare_parameter("map_height_m", 3.0)
         self.declare_parameter("map_frame", "odom")
         self.declare_parameter("base_frame", "base_link")
 
+        # Inflation
         self.declare_parameter("hard_inflate_radius", 0.2)
         self.declare_parameter("soft_inflate_radius", 0.2)
 
+        # A* config
         self.declare_parameter("astar_soft_penalty", 6.0)
         self.declare_parameter("astar_nearest_free_search_m", 0.25)
+
+        # Corner rounding (robust fix for multi-waypoint jagged slowdown)
+        self.declare_parameter("corner_enable", True)
+        self.declare_parameter("corner_blend_m", 0.12)
+        self.declare_parameter("corner_min_angle_deg", 12.0)
+        self.declare_parameter("corner_blend_samples", 10)
+        self.declare_parameter("corner_check_soft", False)
 
         self.declare_parameter(
             "waypoints",
@@ -211,6 +231,12 @@ class WaypointTrajNode(Node):
 
     def idx(self, gs: GridSpec, ix: int, iy: int) -> int:
         return iy * gs.width + ix
+
+    def occ_at_world(self, gs: GridSpec, grid: List[int], x: float, y: float) -> Optional[int]:
+        ix, iy = self.world_to_grid(gs, x, y)
+        if not self.in_bounds(gs, ix, iy):
+            return None
+        return int(grid[self.idx(gs, ix, iy)])
 
     # ---------- Costmap ----------
     def build_costmap(self, center_xy: Tuple[float, float]) -> Tuple[GridSpec, List[int]]:
@@ -385,7 +411,7 @@ class WaypointTrajNode(Node):
 
         openq: List[Tuple[float, float, Tuple[int, int]]] = []
         heapq.heappush(openq, (h(sxi, syi), 0.0, (sxi, syi)))
-        came: dict = {}
+        came: Dict[Tuple[int, int], Tuple[int, int]] = {}
         gscore = {(sxi, syi): 0.0}
 
         while openq:
@@ -564,18 +590,17 @@ class WaypointTrajNode(Node):
         self,
         poly_xy: List[Tuple[float, float]],
         ds: float,
-    ) -> Tuple[List[float], List[float], List[float], List[int]]:
+    ) -> Tuple[List[float], List[float], List[int]]:
         if not poly_xy:
-            return [], [], [], []
+            return [], [], []
         if len(poly_xy) == 1:
             x, y = poly_xy[0]
-            return [float(x)], [float(y)], [0.0], [0]
+            return [float(x)], [float(y)], [0]
 
         ds = max(float(ds), 1e-6)
 
         xs: List[float] = [float(poly_xy[0][0])]
         ys: List[float] = [float(poly_xy[0][1])]
-        ths: List[float] = [0.0]
         vertex_out: List[int] = [0]
 
         for i in range(len(poly_xy) - 1):
@@ -587,12 +612,8 @@ class WaypointTrajNode(Node):
             if seg_len < 1e-12:
                 xs.append(x1)
                 ys.append(y1)
-                ths.append(ths[-1])
                 vertex_out.append(len(xs) - 1)
                 continue
-
-            th = float(math.atan2(dy, dx))
-            ths[-1] = th
 
             n_inner = int(math.floor(seg_len / ds))
             for k in range(1, n_inner + 1):
@@ -602,59 +623,323 @@ class WaypointTrajNode(Node):
                 a = d / seg_len
                 xs.append(x0 + a * dx)
                 ys.append(y0 + a * dy)
-                ths.append(th)
 
             xs.append(x1)
             ys.append(y1)
-            ths.append(th)
             vertex_out.append(len(xs) - 1)
 
-        if len(ths) >= 2:
-            ths[-1] = ths[-2]
-        return xs, ys, ths, vertex_out
+        return xs, ys, vertex_out
+
+    def compute_theta_from_xy(self, xs: List[float], ys: List[float]) -> List[float]:
+        """Compute a smooth theta_v from central differences + unit-vector moving average."""
+        n = len(xs)
+        if n < 2:
+            return [0.0] * n
+
+        dx = [0.0] * n
+        dy = [0.0] * n
+        dx[0] = xs[1] - xs[0]
+        dy[0] = ys[1] - ys[0]
+        dx[-1] = xs[-1] - xs[-2]
+        dy[-1] = ys[-1] - ys[-2]
+        for i in range(1, n - 1):
+            dx[i] = xs[i + 1] - xs[i - 1]
+            dy[i] = ys[i + 1] - ys[i - 1]
+
+        th = [float(math.atan2(dy[i], dx[i])) for i in range(n)]
+
+        for i in range(1, n):
+            th[i] = th[i - 1] + wrap_to_pi(th[i] - th[i - 1])
+
+        w = int(self.get_parameter("theta_smooth_window").value)
+        if w < 1:
+            w = 1
+        if w % 2 == 0:
+            w += 1
+        half = w // 2
+
+        if w > 1:
+            c = [math.cos(t) for t in th]
+            s = [math.sin(t) for t in th]
+            cs = [0.0] * n
+            ss = [0.0] * n
+            for i in range(n):
+                j0 = max(0, i - half)
+                j1 = min(n - 1, i + half)
+                acc_c = 0.0
+                acc_s = 0.0
+                cnt = 0
+                for j in range(j0, j1 + 1):
+                    acc_c += c[j]
+                    acc_s += s[j]
+                    cnt += 1
+                cs[i] = acc_c / max(1, cnt)
+                ss[i] = acc_s / max(1, cnt)
+            th = [math.atan2(ss[i], cs[i]) for i in range(n)]
+            for i in range(1, n):
+                th[i] = th[i - 1] + wrap_to_pi(th[i] - th[i - 1])
+
+        return [wrap_to_pi(t) for t in th]
+
+    # ---------- Corner blending (C1) ----------
+    def hermite(self, p0, p1, m0, m1, t: float) -> Tuple[float, float]:
+        t2 = t * t
+        t3 = t2 * t
+        h00 = 2.0 * t3 - 3.0 * t2 + 1.0
+        h10 = t3 - 2.0 * t2 + t
+        h01 = -2.0 * t3 + 3.0 * t2
+        h11 = t3 - t2
+        x = h00 * p0[0] + h10 * m0[0] + h01 * p1[0] + h11 * m1[0]
+        y = h00 * p0[1] + h10 * m0[1] + h01 * p1[1] + h11 * m1[1]
+        return (float(x), float(y))
+
+    def try_blend_corner_through_waypoint(
+        self,
+        gs: GridSpec,
+        grid: List[int],
+        p_prev: Tuple[float, float],
+        p_wp: Tuple[float, float],
+        p_next: Tuple[float, float],
+    ) -> Optional[List[Tuple[float, float]]]:
+        L = float(self.get_parameter("corner_blend_m").value)
+        n = int(self.get_parameter("corner_blend_samples").value)
+        ang_min = float(self.get_parameter("corner_min_angle_deg").value) * math.pi / 180.0
+        check_soft = bool(self.get_parameter("corner_check_soft").value)
+
+        if L <= 1e-4 or n < 3:
+            return None
+
+        vin = (p_wp[0] - p_prev[0], p_wp[1] - p_prev[1])
+        vout = (p_next[0] - p_wp[0], p_next[1] - p_wp[1])
+        lin = math.hypot(vin[0], vin[1])
+        lout = math.hypot(vout[0], vout[1])
+        if lin < 1e-6 or lout < 1e-6:
+            return None
+
+        uin = (vin[0] / lin, vin[1] / lin)
+        uout = (vout[0] / lout, vout[1] / lout)
+
+        dot = max(-1.0, min(1.0, uin[0] * uout[0] + uin[1] * uout[1]))
+        ang = math.acos(dot)
+        if ang < ang_min:
+            return None
+
+        Lin = min(L, 0.45 * lin)
+        Lout = min(L, 0.45 * lout)
+        if Lin < 1e-4 or Lout < 1e-4:
+            return None
+
+        A = (p_wp[0] - uin[0] * Lin, p_wp[1] - uin[1] * Lin)
+        B = (p_wp[0] + uout[0] * Lout, p_wp[1] + uout[1] * Lout)
+
+        t = (uin[0] + uout[0], uin[1] + uout[1])
+        lt = math.hypot(t[0], t[1])
+        if lt < 1e-6:
+            return None
+        t = (t[0] / lt, t[1] / lt)
+
+        s_wp = 0.65 * min(Lin, Lout)
+        mA = (uin[0] * Lin, uin[1] * Lin)
+        mWP = (t[0] * s_wp, t[1] * s_wp)
+        mB = (uout[0] * Lout, uout[1] * Lout)
+
+        pts: List[Tuple[float, float]] = []
+
+        for i in range(n):
+            tt = i / float(n)
+            pts.append(self.hermite(A, p_wp, mA, mWP, tt))
+        pts.append((float(p_wp[0]), float(p_wp[1])))
+
+        for i in range(1, n + 1):
+            tt = i / float(n)
+            pts.append(self.hermite(p_wp, B, mWP, mB, tt))
+
+        reject_thresh = 50 if check_soft else 100
+        for (x, y) in pts:
+            occ = self.occ_at_world(gs, grid, x, y)
+            if occ is None or occ >= reject_thresh:
+                return None
+
+        return pts
+
+    def blend_waypoint_corners(
+        self,
+        gs: GridSpec,
+        grid: List[int],
+        poly: List[Tuple[float, float]],
+        waypoint_indices: List[int],
+    ) -> Tuple[List[Tuple[float, float]], List[int]]:
+        if len(poly) < 3:
+            return poly, waypoint_indices
+        if not bool(self.get_parameter("corner_enable").value):
+            return poly, waypoint_indices
+
+        wp_set: Set[int] = set(waypoint_indices)
+        last_wp = waypoint_indices[-1] if waypoint_indices else -1
+
+        new_poly: List[Tuple[float, float]] = []
+        new_wp_indices: List[int] = []
+
+        for i in range(len(poly)):
+            is_wp = i in wp_set
+            if i == 0:
+                new_poly.append(poly[i])
+                if is_wp:
+                    new_wp_indices.append(len(new_poly) - 1)
+                continue
+
+            if is_wp and 0 < i < len(poly) - 1 and i != last_wp:
+                p_prev = poly[i - 1]
+                p_wp = poly[i]
+                p_next = poly[i + 1]
+                blended = self.try_blend_corner_through_waypoint(gs, grid, p_prev, p_wp, p_next)
+                if blended is not None:
+                    for p in blended:
+                        if math.hypot(p[0] - new_poly[-1][0], p[1] - new_poly[-1][1]) < 1e-9:
+                            continue
+                        new_poly.append(p)
+                        if math.hypot(p[0] - p_wp[0], p[1] - p_wp[1]) < 1e-12:
+                            new_wp_indices.append(len(new_poly) - 1)
+                    continue
+
+            if math.hypot(poly[i][0] - new_poly[-1][0], poly[i][1] - new_poly[-1][1]) >= 1e-9:
+                new_poly.append(poly[i])
+            if is_wp:
+                new_wp_indices.append(len(new_poly) - 1)
+
+        new_wp_indices = sorted(set(new_wp_indices))
+        return new_poly, new_wp_indices
 
     # ---------- Caps ----------
     def build_v_dir_caps(
-        self,
-        s: List[float],
-        theta_v: List[float],
-        v_user_max: float,
-        omega_dir_max: float,
-        lookahead_m: float,
-    ) -> List[float]:
+		self,
+		s: List[float],
+		xs: List[float],
+		ys: List[float],
+		v_user_max: float,
+		omega_dir_max: float,
+		smooth_m: float,
+	) -> List[float]:
+		n = len(s)
+		if n < 3 or omega_dir_max <= 1e-6:
+			return [v_user_max] * n
+
+		# Geometric curvature from 3 points:
+		# kappa = 4*Area/(a*b*c) = 2*|cross|/(a*b*c)
+		kappa = [0.0] * n
+		eps = 1e-12
+
+		for i in range(1, n - 1):
+			x0, y0 = float(xs[i - 1]), float(ys[i - 1])
+			x1, y1 = float(xs[i]), float(ys[i])
+			x2, y2 = float(xs[i + 1]), float(ys[i + 1])
+
+			a = math.hypot(x1 - x0, y1 - y0)
+			b = math.hypot(x2 - x1, y2 - y1)
+			c = math.hypot(x2 - x0, y2 - y0)
+			denom = a * b * c
+			if denom < eps:
+				kappa[i] = 0.0
+				continue
+
+			cross = abs((x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0))
+			kappa[i] = (2.0 * cross) / denom
+
+		kappa[0] = kappa[1]
+		kappa[-1] = kappa[-2]
+
+		# Optional smoothing in s-domain (moving average)
+		if smooth_m > 1e-6:
+			ds_list = [max(s[i + 1] - s[i], 1e-9) for i in range(n - 1)]
+			ds_mean = sum(ds_list) / max(1, len(ds_list))
+			win = int(max(1, round(smooth_m / max(ds_mean, 1e-9))))
+			if win % 2 == 0:
+				win += 1
+			half = win // 2
+
+			k2 = [0.0] * n
+			for i in range(n):
+				j0 = max(0, i - half)
+				j1 = min(n - 1, i + half)
+				k2[i] = sum(kappa[j0:j1 + 1]) / float(j1 - j0 + 1)
+			kappa = k2
+
+		out = [v_user_max] * n
+		for i in range(n):
+			if kappa[i] > 1e-9:
+				out[i] = min(v_user_max, omega_dir_max / kappa[i])
+		return out
+
+    def _envelope_project_once(self, s: List[float], v: List[float], a: float) -> None:
         n = len(s)
-        if n < 3 or omega_dir_max <= 1e-6:
-            return [v_user_max] * n
-
-        kappa = [0.0] * n
+        # backward (braking)
+        for i in range(n - 2, -1, -1):
+            ds = max(s[i + 1] - s[i], 1e-12)
+            v_brake = math.sqrt(max(0.0, v[i + 1] * v[i + 1] + 2.0 * a * ds))
+            if v[i] > v_brake:
+                v[i] = v_brake
+        # forward (accel)
         for i in range(n - 1):
-            ds_i = max(s[i + 1] - s[i], 1e-12)
-            dth = abs(wrap_to_pi(theta_v[i + 1] - theta_v[i]))
-            kappa[i] = dth / ds_i
-        kappa[-1] = kappa[-2]
+            ds = max(s[i + 1] - s[i], 1e-12)
+            v_acc = math.sqrt(max(0.0, v[i] * v[i] + 2.0 * a * ds))
+            if v[i + 1] > v_acc:
+                v[i + 1] = v_acc
 
-        out = [v_user_max] * n
-        if lookahead_m <= 1e-6:
-            for i in range(n):
-                if kappa[i] > 1e-9:
-                    out[i] = min(v_user_max, omega_dir_max / kappa[i])
-            return out
-
+    def _smooth_moving_avg(self, v: List[float], win: int) -> List[float]:
+        n = len(v)
+        if n == 0:
+            return []
+        win = int(win)
+        if win < 3:
+            return v[:]
+        if win % 2 == 0:
+            win += 1
+        half = win // 2
+        out = v[:]
         for i in range(n):
-            end = i
-            while end < n and (s[end] - s[i]) <= lookahead_m:
-                end += 1
-            end = min(end, n)
-
-            max_k = 0.0
-            for j in range(i, end):
-                max_k = max(max_k, kappa[j])
-
-            if max_k > 1e-9:
-                out[i] = min(v_user_max, omega_dir_max / max_k)
+            j0 = max(0, i - half)
+            j1 = min(n - 1, i + half)
+            out[i] = sum(v[j0:j1 + 1]) / float(j1 - j0 + 1)
         return out
 
-    # ---------- Wheel feasibility (translation-only) ----------
+    def build_speed_profile_envelope(
+        self,
+        s: List[float],
+        v_lim: List[float],
+        a_trans: float,
+    ) -> List[float]:
+        n = len(s)
+        if n == 0:
+            return []
+        v = [max(0.0, float(x)) for x in v_lim]
+        v[-1] = 0.0
+
+        a = max(1e-6, float(a_trans))
+
+        # --- SPEED PROFILE ANTI-BOUNCE FIX ---
+        env_iters = int(self.get_parameter("profile_envelope_iters").value)
+        smooth_win = int(self.get_parameter("profile_smooth_window").value)
+        smooth_iters = int(self.get_parameter("profile_smooth_iters").value)
+
+        # initial projection (repeat to converge a bit)
+        for _ in range(max(1, env_iters)):
+            self._envelope_project_once(s, v, a)
+
+        # smooth + clamp + re-project cycles (kills accel "bump" between close dips)
+        for _ in range(max(0, smooth_iters)):
+            v = self._smooth_moving_avg(v, smooth_win)
+            for i in range(n):
+                if v[i] > v_lim[i]:
+                    v[i] = float(v_lim[i])
+                if v[i] < 0.0:
+                    v[i] = 0.0
+            v[-1] = 0.0
+            for __ in range(max(1, env_iters)):
+                self._envelope_project_once(s, v, a)
+
+        return v
+
+    # ---------- Wheel feasibility ----------
     def k_from_theta_body(self, theta_body: float, r: float) -> Tuple[float, float, float]:
         inv_r = 1.0 / max(r, 1e-12)
         return (
@@ -705,25 +990,27 @@ class WaypointTrajNode(Node):
 
     # ---------- Interp ----------
     def interp_lin(self, s_arr: List[float], arr: List[float], st: float) -> float:
+        if not s_arr:
+            return 0.0
         if st <= s_arr[0]:
             return float(arr[0])
         if st >= s_arr[-1]:
             return float(arr[-1])
-        j = 0
-        while j < len(s_arr) - 2 and s_arr[j + 1] < st:
-            j += 1
+        j = bisect.bisect_right(s_arr, st) - 1
+        j = max(0, min(j, len(s_arr) - 2))
         s0, s1 = s_arr[j], s_arr[j + 1]
         a = (st - s0) / max(s1 - s0, 1e-12)
         return float(arr[j] + a * (arr[j + 1] - arr[j]))
 
     def interp_ang(self, s_arr: List[float], arr: List[float], st: float) -> float:
+        if not s_arr:
+            return 0.0
         if st <= s_arr[0]:
             return float(arr[0])
         if st >= s_arr[-1]:
             return float(arr[-1])
-        j = 0
-        while j < len(s_arr) - 2 and s_arr[j + 1] < st:
-            j += 1
+        j = bisect.bisect_right(s_arr, st) - 1
+        j = max(0, min(j, len(s_arr) - 2))
         s0, s1 = s_arr[j], s_arr[j + 1]
         a = (st - s0) / max(s1 - s0, 1e-12)
         d = wrap_to_pi(arr[j + 1] - arr[j])
@@ -745,11 +1032,7 @@ class WaypointTrajNode(Node):
         dt = float(self.get_parameter("dt").value)
         v_user_max = float(self.get_parameter("v_max").value)
         omega_dir_max = float(self.get_parameter("omega_dir_max").value)
-        lookahead_m = float(self.get_parameter("omega_dir_lookahead_m").value)
-
-        brake_L_extra = float(self.get_parameter("brake_future_lookahead_m").value)
-        brake_N = int(self.get_parameter("brake_future_samples").value)
-        brake_N = max(3, min(brake_N, 200))
+        smooth_m = float(self.get_parameter("omega_dir_lookahead_m").value)
 
         r = float(self.get_parameter("wheel_radius").value)
         w_max = float(self.get_parameter("max_wheel_speed").value)
@@ -764,61 +1047,38 @@ class WaypointTrajNode(Node):
         if total < 1e-9:
             return [], [], [], []
 
-        v_dir_cap = self.build_v_dir_caps(s, theta_map, v_user_max, omega_dir_max, lookahead_m)
+		v_dir_cap = self.build_v_dir_caps(s, xs, ys, v_user_max, omega_dir_max, smooth_m)
 
-        # Conservative translation accel envelope: a_trans ~= a_wheel_max * r
-        a_trans = max(1e-6, a_wheel_max * r)
+        # Conservative translation accel envelope (scaled) + dt accel clamp
+        a_trans_scale = float(self.get_parameter("a_trans_scale").value)
+        a_trans = max(1e-6, (a_wheel_max * r) * max(0.05, a_trans_scale))
+        dv_dt_max = a_trans  # m/s^2
+
+        # Per-sample speed limits and smooth envelope v_prof(s)
+        v_lim: List[float] = [v_user_max] * len(s)
+        for i in range(len(s)):
+            th_map = theta_map[i]
+            th_body = wrap_to_pi(th_map - yaw_now) if use_yaw else th_map
+            kk = self.k_from_theta_body(th_body, r)
+            v_lim[i] = min(v_user_max, v_dir_cap[i], self.wheel_speed_cap_from_k(kk, w_max))
+        v_prof = self.build_speed_profile_envelope(s, v_lim, a_trans)
 
         def state_at(st: float) -> Tuple[float, float, float, float, Tuple[float, float, float]]:
             x = self.interp_lin(s, xs, st)
             y = self.interp_lin(s, ys, st)
             th_map = self.interp_ang(s, theta_map, st)
-            vdc = self.interp_lin(s, v_dir_cap, st)
+            venv = self.interp_lin(s, v_prof, st)
             th_body = wrap_to_pi(th_map - yaw_now) if use_yaw else th_map
             kk = self.k_from_theta_body(th_body, r)
-            return x, y, th_map, vdc, kk
-
-        def speed_limit_at(st: float) -> float:
-            _, _, _, vdc, kk = state_at(st)
-            return min(v_user_max, vdc, self.wheel_speed_cap_from_k(kk, w_max))
-
-        def future_brake_cap(st0: float) -> float:
-            """
-            Cap v(st0) so we can reach the minimum upcoming speed limit within a lookahead window
-            using accel bound a_trans.
-
-            v(st0) <= sqrt(v_min_ahead^2 + 2*a_trans*ds_ahead)
-            """
-            if a_trans <= 1e-12:
-                return 1e9
-
-            # ensure we look far enough to brake from v_user_max if needed
-            brake_dist_from_vmax = (v_user_max * v_user_max) / max(2.0 * a_trans, 1e-12)
-            L = max(lookahead_m, brake_L_extra, brake_dist_from_vmax)
-
-            if L <= 1e-6:
-                return 1e9
-
-            st1 = min(total, st0 + L)
-            ds_ahead = max(0.0, st1 - st0)
-            if ds_ahead <= 1e-9:
-                return 1e9
-
-            vmin = 1e18
-            for i in range(brake_N + 1):
-                a = i / float(brake_N)
-                sa = st0 + a * ds_ahead
-                vmin = min(vmin, speed_limit_at(sa))
-
-            return math.sqrt(max(0.0, vmin * vmin + 2.0 * a_trans * ds_ahead))
+            return x, y, th_map, venv, kk
 
         wp_s = sorted([sv for sv in waypoint_s if 0.0 <= sv <= total])
         wp_ptr = 0
 
         st = 0.0
-        x0, y0, th0, vdc0, k0 = state_at(st)
+        x0, y0, th0, venv0, k0 = state_at(st)
         v0 = max(0.0, float(current_speed))
-        v0 = min(v0, v_user_max, vdc0, self.wheel_speed_cap_from_k(k0, w_max))
+        v0 = min(v0, venv0)
         w_prev = (v0 * k0[0], v0 * k0[1], v0 * k0[2])
 
         out_x = [x0]
@@ -840,24 +1100,16 @@ class WaypointTrajNode(Node):
             v_prev = float(out_v[-1])
             next_wp = wp_s[wp_ptr] if wp_ptr < len(wp_s) else None
 
-            # Try to hit the next waypoint exactly in this dt, if it's the next constraint.
+            # Try to hit the next waypoint exactly in this dt
             if next_wp is not None and next_wp > st + wp_eps_s:
                 dist_to_wp = next_wp - st
                 v_exact = max(0.0, 2.0 * dist_to_wp / max(dt, 1e-12) - v_prev)
 
-                _, _, _, vdc_e, k_e = state_at(next_wp)
+                _, _, _, venv_e, k_e = state_at(next_wp)
                 rem_e = total - next_wp
 
-                # stop-at-end cap
-                v_brake_end_e = math.sqrt(max(0.0, 2.0 * a_trans * rem_e))
-                # future-brake cap (slow down BEFORE sharp turn caps)
-                v_brake_future_e = future_brake_cap(next_wp)
-
                 v_cap_e = min(
-                    v_user_max,
-                    vdc_e,
-                    v_brake_end_e,
-                    v_brake_future_e,
+                    venv_e,
                     rem_e / max(dt, 1e-12),
                     self.wheel_speed_cap_from_k(k_e, w_max),
                 )
@@ -869,6 +1121,12 @@ class WaypointTrajNode(Node):
                     dt=dt,
                     v_cap=v_cap_e,
                 )
+
+                # --- dt accel clamp (smoothness) ---
+                dv_max = dv_dt_max * dt
+                lo_e = max(lo_e, v_prev - dv_max)
+                hi_e = min(hi_e, v_prev + dv_max)
+
                 if ok_e and lo_e - 1e-9 <= v_exact <= hi_e + 1e-9 and v_exact <= v_cap_e + 1e-9:
                     st_next = next_wp
                     v_next = float(min(max(v_exact, 0.0), v_cap_e))
@@ -885,7 +1143,6 @@ class WaypointTrajNode(Node):
             # Otherwise: choose a step that does NOT cross the next waypoint.
             v_next = v_prev
             for __ in range(30):
-                # Cap to avoid crossing next waypoint in this dt (keep a tiny margin)
                 if next_wp is not None and next_wp > st + wp_eps_s:
                     dist = max(0.0, (next_wp - st) - wp_eps_s)
                     v_cross_cap = max(0.0, 2.0 * dist / max(dt, 1e-12) - v_prev)
@@ -896,19 +1153,11 @@ class WaypointTrajNode(Node):
                 st_cand = st + 0.5 * (v_prev + v_next) * dt
                 st_cand = min(st_cand, total)
 
-                _, _, _, vdc_c, k_c = state_at(st_cand)
+                _, _, _, venv_c, k_c = state_at(st_cand)
                 rem_c = total - st_cand
 
-                # stop-at-end cap
-                v_brake_end = math.sqrt(max(0.0, 2.0 * a_trans * rem_c))
-                # future-brake cap (THIS is the key fix)
-                v_brake_future = future_brake_cap(st_cand)
-
                 v_cap = min(
-                    v_user_max,
-                    vdc_c,
-                    v_brake_end,
-                    v_brake_future,
+                    venv_c,
                     rem_c / max(dt, 1e-12),
                     self.wheel_speed_cap_from_k(k_c, w_max),
                 )
@@ -924,6 +1173,15 @@ class WaypointTrajNode(Node):
                     v_next *= 0.5
                     continue
 
+                # --- dt accel clamp (smoothness) ---
+                dv_max = dv_dt_max * dt
+                lo = max(lo, v_prev - dv_max)
+                hi = min(hi, v_prev + dv_max)
+
+                if hi + 1e-12 < lo:
+                    v_next *= 0.5
+                    continue
+
                 v_new = min(v_cap, hi)
                 if v_new < lo:
                     v_new = lo
@@ -936,10 +1194,14 @@ class WaypointTrajNode(Node):
             st_next = st + 0.5 * (v_prev + v_next) * dt
             st_next = min(st_next, total)
 
-            # Hard safety: never cross the waypoint without landing exactly.
             if next_wp is not None and st_next > next_wp + wp_eps_s:
                 st_next = next_wp
                 v_next = max(0.0, 2.0 * (st_next - st) / max(dt, 1e-12) - v_prev)
+
+                # also respect dt accel clamp on this forced truncation
+                dv_max = dv_dt_max * dt
+                v_next = min(v_next, v_prev + dv_max)
+                v_next = max(v_next, max(0.0, v_prev - dv_max))
 
             if st_next <= st + 1e-12:
                 self.get_logger().warn("No progress in dt integrator; truncating trajectory.")
@@ -954,7 +1216,7 @@ class WaypointTrajNode(Node):
             out_v.append(float(v_next))
             st = st_next
 
-        # Ensure final sample at goal, then brake tail to 0
+        # Ensure final sample at goal, then brake tail to 0 (wheel-accel-consistent)
         xT, yT, thT, _, kT = state_at(total)
         if math.hypot(out_x[-1] - xT, out_y[-1] - yT) > 1e-6:
             out_x.append(xT)
@@ -976,6 +1238,10 @@ class WaypointTrajNode(Node):
             )
             if not ok:
                 break
+
+            dv_max = dv_dt_max * dt
+            lo = max(lo, out_v[-1] - dv_max)  # keep braking smooth too
+
             v_next = max(0.0, lo)
             w_prev = (v_next * kT[0], v_next * kT[1], v_next * kT[2])
 
@@ -984,7 +1250,8 @@ class WaypointTrajNode(Node):
             out_th.append(thT)
             out_v.append(float(v_next))
 
-        out_v[-1] = 0.0
+        if out_v:
+            out_v[-1] = 0.0
         return out_x, out_y, out_th, out_v
 
     # ---------- Visualization ----------
@@ -1059,10 +1326,16 @@ class WaypointTrajNode(Node):
             stitched, waypoint_vertex_indices
         )
 
+        stitched, waypoint_vertex_indices = self.blend_waypoint_corners(
+            gs, grid, stitched, waypoint_vertex_indices
+        )
+
         ds = float(self.get_parameter("ds_geom").value)
-        xs, ys, ths, vertex_out = self.resample_vertex_preserving_with_map(stitched, ds)
+        xs, ys, vertex_out = self.resample_vertex_preserving_with_map(stitched, ds)
         if len(xs) < 2:
             return
+
+        ths = self.compute_theta_from_xy(xs, ys)
 
         s = [0.0]
         for i in range(1, len(xs)):
@@ -1090,19 +1363,11 @@ class WaypointTrajNode(Node):
 
         self.publish_trajectory(tx, ty, tth, tv)
 
-        # Save last trajectory for debugging / offline plots
-        # (include a yaw column of zeros so your import pipeline has it)
-        data = {
-            "x": tx,
-            "y": ty,
-            "theta_v": tth,
-            "v": tv,
-            "yaw": [0.0] * len(tx),
-        }
+        data = {"x": tx, "y": ty, "theta_v": tth, "v": tv, "yaw": [0.0] * len(tx)}
         with open("/tmp/last_trajectory.json", "w") as f:
             json.dump(data, f)
 
-        self.get_logger().info("Published trajectory (guaranteed waypoint samples, dt-consistent).")
+        self.get_logger().info("Published trajectory (v_prof smoothed + dt accel clamp; no bounce).")
 
     # ---------- Publishing ----------
     def publish_costmap(self, gs: GridSpec, grid: List[int]) -> None:
