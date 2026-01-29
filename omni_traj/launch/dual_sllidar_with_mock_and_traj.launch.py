@@ -168,8 +168,8 @@ def generate_launch_description() -> LaunchDescription:
                 "global_map_height_m": 6.0,
 
                 # inflation (NOTE: hard inflation now actually works)
-                "hard_inflate_radius": 0.22,
-                "soft_inflate_radius": 0.0,
+                "hard_inflate_radius": 0.01,
+                "soft_inflate_radius": 0.01,
 
                 # scan
                 "scan_max_age_s": 0.5,

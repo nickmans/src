@@ -100,8 +100,8 @@ class WaypointTrajNode(Node):
         self.declare_parameter("motion_compensate", False)         # set True if robot moves + you want de-warp
 
         # ===== Inflation =====
-        self.declare_parameter("hard_inflate_radius", 0.22)  # typical = robot radius
-        self.declare_parameter("soft_inflate_radius", 0.0)
+        self.declare_parameter("hard_inflate_radius", 0.01)  # typical = robot radius
+        self.declare_parameter("soft_inflate_radius", 0.01)
 
         # ===== Odom history =====
         self.declare_parameter("odom_history_s", 2.0)
@@ -374,10 +374,6 @@ class WaypointTrajNode(Node):
         no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
         stride = max(1, int(self.get_parameter("scan_beam_stride").value))
 
-        # Extract sensor offset for later subtraction
-        sensor_offset_x = float(tr.translation.x)
-        sensor_offset_y = float(tr.translation.y)
-
         pts: List[Tuple[float, float]] = []
         ang = float(scan.angle_min)
         inc = float(scan.angle_increment)
@@ -395,12 +391,6 @@ class WaypointTrajNode(Node):
             xs = r * math.cos(ang)
             ys = r * math.sin(ang)
             xb, yb = self._apply_transform_2d(tr, xs, ys)
-            
-            # Subtract sensor offset to express point as if sensor was at origin
-            # This is necessary for proper fusion of multiple sensors
-            xb -= sensor_offset_x
-            yb -= sensor_offset_y
-            
             pts.append((xb, yb))
 
             ang += inc
@@ -449,36 +439,84 @@ class WaypointTrajNode(Node):
         range_max = min(float(s.range_max) for s in scans)
         range_min = max(0.0, min(float(s.range_min) for s in scans))
 
+        # Process each scan and fuse
         for s in scans:
             stamp_ns = Time.from_msg(s.header.stamp).nanoseconds
-            base_pose_scan = self._odom_pose_at(stamp_ns) or base_pose_now
+            
+            # Get robot pose at scan time for motion compensation
+            if motion_comp:
+                base_pose_scan = self._odom_pose_at(stamp_ns) or base_pose_now
+            else:
+                base_pose_scan = base_pose_now
 
-            pts_base = self._points_from_scan_in_base(s)
-            if not pts_base:
+            # Get transform from sensor frame to base_link
+            tr = self._lookup_base_from_scan(s.header.frame_id)
+            if tr is None:
                 continue
+            
+            # Extract sensor offset
+            sensor_x = float(tr.translation.x)
+            sensor_y = float(tr.translation.y)
 
-            for (xb, yb) in pts_base:
-                # optional motion compensation: express point in *current* base_link
+            # Process each beam in the scan
+            rmin = float(s.range_min)
+            rmax = float(s.range_max)
+            no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
+            stride = max(1, int(self.get_parameter("scan_beam_stride").value))
+            
+            beam_angle = float(s.angle_min)
+            beam_inc = float(s.angle_increment)
+            
+            for i, rr in enumerate(s.ranges):
+                if (i % stride) != 0:
+                    beam_angle += beam_inc
+                    continue
+
+                r = float(rr)
+                if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps):
+                    beam_angle += beam_inc
+                    continue
+
+                # Convert beam to Cartesian in sensor frame
+                xs = r * math.cos(beam_angle)
+                ys = r * math.sin(beam_angle)
+                
+                # Move to origin frame by subtracting sensor offset
+                x_origin = xs - sensor_x
+                y_origin = ys - sensor_y
+
+                # Apply motion compensation if enabled
                 if motion_comp:
-                    xm, ym = self._se2_apply(base_pose_scan, xb, yb)
-                    xb2, yb2 = self._se2_apply_inv(base_pose_now, xm, ym)
+                    # Transform point to world frame using scan pose
+                    xm, ym = self._se2_apply(base_pose_scan, x_origin, y_origin)
+                    # Transform back using current pose (de-warp)
+                    x_final, y_final = self._se2_apply_inv(base_pose_now, xm, ym)
                 else:
-                    xb2, yb2 = xb, yb
+                    x_final = x_origin
+                    y_final = y_origin
 
-                if use_excl and (xb2 * xb2 + yb2 * yb2) < excl_r2:
+                # Check robot exclusion
+                if use_excl and (x_final * x_final + y_final * y_final) < excl_r2:
+                    beam_angle += beam_inc
                     continue
 
-                rr = math.hypot(xb2, yb2)
-                if rr < range_min or rr > range_max:
+                # Compute range and angle from origin
+                rr_fused = math.hypot(x_final, y_final)
+                if rr_fused < range_min or rr_fused > range_max:
+                    beam_angle += beam_inc
                     continue
 
-                aa = math.atan2(yb2, xb2)
-                if aa < a_min or aa >= a_max:
+                aa_fused = math.atan2(y_final, x_final)
+                if aa_fused < a_min or aa_fused >= a_max:
+                    beam_angle += beam_inc
                     continue
 
-                k = int((aa - a_min) / inc)
-                if 0 <= k < n and rr < ranges[k]:
-                    ranges[k] = rr
+                # Bin the range (take minimum per angle bin)
+                k = int((aa_fused - a_min) / inc)
+                if 0 <= k < n and rr_fused < ranges[k]:
+                    ranges[k] = rr_fused
+
+                beam_angle += beam_inc
 
         msg = LaserScan()
         msg.header.stamp = now_t.to_msg()
