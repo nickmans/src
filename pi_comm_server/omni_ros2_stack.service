@@ -1,0 +1,15 @@
+[Unit]
+Description=OMNI ROS2 Stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=bash -c 'source /opt/ros/humble/setup.bash && source /home/nickolas/ros2_ws/install/setup.bash && ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py'
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

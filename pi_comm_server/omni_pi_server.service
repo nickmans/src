@@ -1,0 +1,15 @@
+[Unit]
+Description=OMNI TCP Communication Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omni_pi_server --host 0.0.0.0 --port 9000 --log-level INFO
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

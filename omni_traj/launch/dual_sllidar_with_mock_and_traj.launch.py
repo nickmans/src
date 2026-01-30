@@ -163,13 +163,19 @@ def generate_launch_description() -> LaunchDescription:
                 "waypoint_reached_tol_m": 0.10,
 
                 # map/costmap sizing
-                "global_map_res": 0.02,
-                "global_map_width_m": 6.0,
-                "global_map_height_m": 6.0,
+                "global_map_res": 0.05,
+                "global_map_width_m": 10.0,
+                "global_map_height_m": 10.0,
 
                 # inflation (NOTE: hard inflation now actually works)
-                "hard_inflate_radius": 0.01,
-                "soft_inflate_radius": 0.01,
+                "hard_inflate_radius": 0.22,
+                "soft_inflate_radius": 0.44,
+
+                # robot kinematics & constraints
+                "wheel_radius_m": 0.05,
+                "wheelbase_m": 0.20,
+                "max_wheel_acceleration_ms2": 1.0,
+                "max_linear_velocity_ms": 1.0,
 
                 # scan
                 "scan_max_age_s": 0.5,

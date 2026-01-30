@@ -24,7 +24,14 @@ from rclpy.parameter import Parameter
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import ColorRGBA
+from std_srvs.srv import Empty
 from visualization_msgs.msg import Marker, MarkerArray
+
+try:
+    from scipy.interpolate import CubicSpline
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
 
 
 def wrap_to_pi(a: float) -> float:
@@ -81,9 +88,9 @@ class WaypointTrajNode(Node):
         self.declare_parameter("waypoint_reached_tol_m", 0.10)
 
         # ===== Global grid =====
-        self.declare_parameter("global_map_res", 0.02)
-        self.declare_parameter("global_map_width_m", 6.0)
-        self.declare_parameter("global_map_height_m", 6.0)
+        self.declare_parameter("global_map_res", 0.05)
+        self.declare_parameter("global_map_width_m", 10.0)
+        self.declare_parameter("global_map_height_m", 10.0)
 
         # ===== Scans =====
         self.declare_parameter("lidar1_topic", "/lidar1/scan")
@@ -100,8 +107,15 @@ class WaypointTrajNode(Node):
         self.declare_parameter("motion_compensate", False)         # set True if robot moves + you want de-warp
 
         # ===== Inflation =====
-        self.declare_parameter("hard_inflate_radius", 0.01)  # typical = robot radius
-        self.declare_parameter("soft_inflate_radius", 0.01)
+        self.declare_parameter("hard_inflate_radius", 0.22)  # typical = robot radius
+        self.declare_parameter("soft_inflate_radius", 0.44)
+
+        # ===== Robot kinematics & constraints =====
+        self.declare_parameter("wheel_radius_m", 0.09)           # Wheel radius in meters
+        self.declare_parameter("wheelbase_m", 0.22)              # Distance from center to wheel (omni) or half-wheelbase
+        self.declare_parameter("max_wheel_acceleration_ms2", 1.0) # Max acceleration per wheel (m/s²)
+        self.declare_parameter("max_linear_velocity_ms", 0.5)    # Max linear velocity (m/s)
+        self.declare_parameter("max_lateral_accel", 1.0)        # Max lateral (centripetal) accel (m/s^2)
 
         # ===== Odom history =====
         self.declare_parameter("odom_history_s", 2.0)
@@ -151,8 +165,14 @@ class WaypointTrajNode(Node):
 
         self.wp_marker_pub = self.create_publisher(MarkerArray, "/waypoint_markers", 1)
         self.path_pub = self.create_publisher(Path, "/planned_path", 1)
+        self.velocity_marker_pub = self.create_publisher(MarkerArray, "/path_velocity_markers", 1)
 
-        self.timer = self.create_timer(0.2, self.on_timer)  # 5 Hz
+        # ===== Services =====
+        self.srv_clear_all_wp = self.create_service(Empty, "/clear_all_waypoints", self.handle_clear_all_waypoints)
+        self.srv_pop_next_wp = self.create_service(Empty, "/pop_next_waypoint", self.handle_pop_next_waypoint)
+
+        # Main loop at 5 Hz
+        self.timer = self.create_timer(1.0 / 5.0, self.on_timer)
 
         self._last_tf_warn_ns = 0
         self._tf_warn_period_ns = int(1e9)
@@ -713,6 +733,47 @@ class WaypointTrajNode(Node):
                 ]
             )
 
+    def handle_clear_all_waypoints(self, request, response):
+        """Clear all waypoints."""
+        self.set_parameters(
+            [
+                Parameter("waypoints", Parameter.Type.DOUBLE_ARRAY, [float("nan"), float("nan")]),
+                Parameter("wp_n", Parameter.Type.INTEGER, 0),
+            ]
+        )
+        self.get_logger().info("All waypoints cleared.")
+        return response
+
+    def handle_pop_next_waypoint(self, request, response):
+        """Remove the next (first) waypoint from the queue."""
+        wp_n = int(self.get_parameter("wp_n").value)
+        if wp_n <= 0:
+            self.get_logger().warn("No waypoints to pop.")
+            return response
+
+        wp_flat = list(self.get_parameter("waypoints").value)
+        if len(wp_flat) == 2 * wp_n:
+            stride = 2
+        elif len(wp_flat) == 3 * wp_n:
+            stride = 3
+        else:
+            self.get_logger().warn("Invalid waypoint format.")
+            return response
+
+        # Remove first waypoint
+        wp_flat = wp_flat[stride:]
+        wp_n -= 1
+
+        self.set_parameters(
+            [
+                Parameter("waypoints", Parameter.Type.DOUBLE_ARRAY,
+                          wp_flat if wp_n > 0 else [float("nan"), float("nan")]),
+                Parameter("wp_n", Parameter.Type.INTEGER, wp_n),
+            ]
+        )
+        self.get_logger().info(f"Popped next waypoint. {wp_n} remaining.")
+        return response
+
     # =======================
     # Planning (A*) — unchanged / minimal
     # =======================
@@ -732,9 +793,102 @@ class WaypointTrajNode(Node):
             ix, iy = self.world_to_grid(self.gs_map, x, y)
             if not self.in_bounds(self.gs_map, ix, iy):
                 return False
-            if grid[self.idx(self.gs_map, ix, iy)] >= 100:
+            if grid[self.idx(self.gs_map, ix, iy)] >= 100:  # Only block hard obstacles
                 return False
         return True
+
+    def get_wheel_velocities(self, vx_body: float, vy_body: float, omega: float) -> List[float]:
+        """
+        Compute required wheel velocities for 3-wheel omnidirectional robot.
+        Uses standard 120° wheel configuration (equilateral triangle).
+        
+        Args:
+            vx_body: Linear velocity in x (body frame, m/s)
+            vy_body: Linear velocity in y (body frame, m/s)
+            omega: Angular velocity (rad/s)
+        
+        Returns:
+            List of 3 wheel velocities [w1, w2, w3] in rad/s
+        """
+        r = float(self.get_parameter("wheel_radius_m").value)
+        L = float(self.get_parameter("wheelbase_m").value)
+        
+        if r < 1e-6:
+            return [0.0, 0.0, 0.0]
+        
+        # 3-wheel omni kinematics (120° wheel spacing)
+        # Inverse kinematics: body velocity to wheel velocity
+        sqrt3_2 = math.sqrt(3) / 2.0
+        
+        w1 = (2.0 / 3.0 * vy_body + L * omega) / r
+        w2 = (-0.5 * vy_body + sqrt3_2 * vx_body + L * omega) / r
+        w3 = (-0.5 * vy_body - sqrt3_2 * vx_body + L * omega) / r
+        
+        return [w1, w2, w3]
+
+    def body_velocity_from_wheel_velocity(self, w1: float, w2: float, w3: float) -> Tuple[float, float, float]:
+        """
+        Compute body velocity from wheel velocities.
+        Used for sensor feedback / odometry.
+        
+        Args:
+            w1, w2, w3: Wheel velocities (rad/s)
+        
+        Returns:
+            Tuple of (vx_body, vy_body, omega)
+        """
+        r = float(self.get_parameter("wheel_radius_m").value)
+        L = float(self.get_parameter("wheelbase_m").value)
+        
+        if r < 1e-6 or L < 1e-6:
+            return 0.0, 0.0, 0.0
+        
+        # Forward kinematics: wheel velocity to body velocity
+        sqrt3_3 = math.sqrt(3) / 3.0
+        
+        vx_body = r * sqrt3_3 * (w2 - w3)
+        vy_body = r * (2.0 / 3.0 * w1 - 1.0 / 3.0 * (w2 + w3))
+        omega = r * (w1 + w2 + w3) / (3.0 * L)
+        
+        return vx_body, vy_body, omega
+
+    def max_velocity_for_acceleration(self, v_current: float, distance: float, max_accel: float) -> float:
+        """
+        Compute maximum velocity achievable given current velocity, 
+        distance to next segment, and acceleration limit.
+        
+        Uses: v_next² = v_current² + 2*a*distance
+        """
+        if distance < 1e-6:
+            return v_current
+        
+        v_next_sq = v_current * v_current + 2.0 * max_accel * distance
+        return math.sqrt(max(0.0, v_next_sq))
+
+    def constrain_velocity_by_kinematics(self, vx: float, vy: float) -> Tuple[float, float]:
+        """
+        Constrain desired velocity (vx, vy) to respect max wheel acceleration.
+        Assumes omega=0 (no rotation for now).
+        Returns constrained (vx, vy).
+        """
+        max_wheel_accel = float(self.get_parameter("max_wheel_acceleration_ms2").value)
+        max_linear_vel = float(self.get_parameter("max_linear_velocity_ms").value)
+        
+        # Magnitude of desired velocity
+        v_mag = math.hypot(vx, vy)
+        
+        # Cap by max linear velocity
+        if v_mag > max_linear_vel:
+            scale = max_linear_vel / max(v_mag, 1e-6)
+            vx *= scale
+            vy *= scale
+            v_mag = max_linear_vel
+        
+        # For omega=0, wheel velocities are just vx/r scaled
+        # Since we're not rotating, constraint simplifies to just max linear velocity
+        # (Individual wheel accel is handled during trajectory smoothing)
+        
+        return vx, vy
 
     def astar(self, grid: List[int], start_xy: Tuple[float, float], goal_xy: Tuple[float, float]) -> List[Tuple[float, float]]:
         sx, sy = start_xy
@@ -770,9 +924,11 @@ class WaypointTrajNode(Node):
                 nx, ny = ix + dx, iy + dy
                 if not self.in_bounds(self.gs_map, nx, ny):
                     continue
-                if grid[self.idx(self.gs_map, nx, ny)] >= 100:
+                if grid[self.idx(self.gs_map, nx, ny)] >= 100:  # Hard obstacle blocks
                     continue
-                ng = gcur + w
+                # Add cell cost to movement cost: soft cells (50) add 0.5, hard cells add 1.0
+                cell_cost = grid[self.idx(self.gs_map, nx, ny)] / 100.0
+                ng = gcur + w + cell_cost
                 if (nx, ny) not in gscore or ng < gscore[(nx, ny)]:
                     gscore[(nx, ny)] = ng
                     came[(nx, ny)] = (ix, iy)
@@ -797,6 +953,218 @@ class WaypointTrajNode(Node):
         path[0] = start_xy
         path[-1] = goal_xy
         return path
+
+    def smooth_path_cubic_spline(self, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """
+        Smooth path using cubic spline interpolation (industry standard).
+        Produces smooth, natural-looking curves through waypoints.
+        
+        Args:
+            path: A* waypoints
+        
+        Returns:
+            Densely sampled smooth path
+        """
+        if len(path) < 3 or not HAS_SCIPY:
+            # Not enough points for spline or scipy unavailable - return original path
+            return path
+        
+        xs = [p[0] for p in path]
+        ys = [p[1] for p in path]
+        
+        # Parameter along path (arc length approximation)
+        t = [0.0]
+        for i in range(1, len(path)):
+            dx = xs[i] - xs[i-1]
+            dy = ys[i] - ys[i-1]
+            dist = math.hypot(dx, dy)
+            t.append(t[-1] + dist)
+        
+        # Create cubic splines for x(t) and y(t)
+        try:
+            spline_x = CubicSpline(t, xs, bc_type='natural')
+            spline_y = CubicSpline(t, ys, bc_type='natural')
+        except Exception as e:
+            self.get_logger().warn(f"Spline interpolation failed: {e}. Using original path.")
+            return path
+        
+        # Resample smooth path at regular intervals
+        n_samples = max(100, int(t[-1] / 0.05))  # ~5cm spacing
+        t_smooth = [t[0] + (t[-1] - t[0]) * i / max(1, n_samples - 1) for i in range(n_samples)]
+        
+        smooth_path = []
+        for t_val in t_smooth:
+            x_smooth = float(spline_x(t_val))
+            y_smooth = float(spline_y(t_val))
+            smooth_path.append((x_smooth, y_smooth))
+        
+        return smooth_path
+
+
+    def build_velocity_constrained_trajectory(self, path: List[Tuple[float, float]]) -> Tuple[List[float], List[float], List[float], List[float]]:
+        """Generate a velocity profile along the path respecting wheel acceleration
+        constraints.
+
+        Uses forward-backward passes and curvature-based limits to produce a
+        velocity for each point along the provided path.
+
+        Args:
+            path: List of (x, y) waypoints from A*
+
+        Returns:
+            Tuple of (xs, ys, yaws, velocities). Empty lists on failure.
+        """
+        if len(path) < 2:
+            return [], [], [], []
+
+        max_wheel_accel = float(self.get_parameter("max_wheel_acceleration_ms2").value)
+        max_linear_vel = float(self.get_parameter("max_linear_velocity_ms").value)
+        max_lateral_accel = float(self.get_parameter("max_lateral_accel").value)
+
+        n = len(path)
+
+        # If path is only two points (start and single waypoint), densify
+        # the segment so the velocity profiler has intermediate samples to
+        # accelerate over. This fixes the case where a 2-point path would
+        # otherwise yield velocities=[0,0] (start and end only).
+        if n == 2:
+            x0, y0 = path[0]
+            x1, y1 = path[1]
+            total_dist = math.hypot(x1 - x0, y1 - y0)
+            # target spacing ~5cm
+            spacing = 0.05
+            n_samples = max(3, int(math.ceil(total_dist / spacing)) + 1)
+            dense = []
+            for i in range(n_samples):
+                t = i / max(1, n_samples - 1)
+                dense.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
+            path = dense
+            n = len(path)
+        # segment distances and tangents
+        dists: List[float] = []
+        tangents: List[Tuple[float, float]] = []
+        for i in range(n - 1):
+            x1, y1 = path[i]
+            x2, y2 = path[i + 1]
+            dx = x2 - x1
+            dy = y2 - y1
+            dist = math.hypot(dx, dy)
+            dists.append(dist)
+            if dist < 1e-6:
+                tangents.append((1.0, 0.0))
+            else:
+                tangents.append((dx / dist, dy / dist))
+
+        # Numerical curvature estimate (central differences) on sampled points
+        kappas = [0.0] * n
+        if n >= 3:
+            for i in range(1, n - 1):
+                x_prev, y_prev = path[i - 1]
+                x_curr, y_curr = path[i]
+                x_next, y_next = path[i + 1]
+
+                ds1 = max(1e-6, math.hypot(x_curr - x_prev, y_curr - y_prev))
+                ds2 = max(1e-6, math.hypot(x_next - x_curr, y_next - y_curr))
+                ds = 0.5 * (ds1 + ds2)
+
+                dx_dt = (x_next - x_prev) / (2.0 * ds)
+                dy_dt = (y_next - y_prev) / (2.0 * ds)
+                ddx_dt = (x_next - 2.0 * x_curr + x_prev) / (ds * ds)
+                ddy_dt = (y_next - 2.0 * y_curr + y_prev) / (ds * ds)
+
+                denom = (dx_dt * dx_dt + dy_dt * dy_dt) ** 1.5
+                if denom <= 1e-9:
+                    kappas[i] = 0.0
+                else:
+                    kappas[i] = abs((dx_dt * ddy_dt - dy_dt * ddx_dt) / denom)
+            kappas[0] = kappas[1]
+            kappas[-1] = kappas[-2]
+
+        # Improved initial velocity profile using cumulative distance
+        # This ensures that when the path is a single long segment (one waypoint),
+        # the profile will ramp up toward `max_linear_vel` using v = sqrt(2*a*s).
+        s = [0.0] * n
+        for i in range(1, n):
+            s[i] = s[i - 1] + max(1e-9, dists[i - 1])
+
+        total_s = s[-1]
+
+        v_forward = [0.0] * n
+        for i in range(n):
+            # from rest: v = sqrt(2 * a * distance)
+            v_f = math.sqrt(max(0.0, 2.0 * max_wheel_accel * s[i]))
+            v_forward[i] = min(v_f, max_linear_vel)
+
+        v_backward = [0.0] * n
+        for i in range(n - 1, -1, -1):
+            dist_to_end = max(0.0, total_s - s[i])
+            v_b = math.sqrt(max(0.0, 2.0 * max_wheel_accel * dist_to_end))
+            v_backward[i] = min(v_b, max_linear_vel)
+
+        velocities = [min(v_forward[i], v_backward[i]) for i in range(n)]
+
+        # Apply curvature-based speed limit
+        for i in range(n):
+            k = kappas[i]
+            if k > 1e-9:
+                v_curv = math.sqrt(max(1e-6, max_lateral_accel / k))
+                velocities[i] = min(velocities[i], v_curv)
+
+        # Helper: wheel linear coefficients for given tangent (tx,ty)
+        def wheel_coeffs_for_tangent(tx: float, ty: float) -> List[float]:
+            # v_w1 = 2/3*vy
+            # v_w2 = -0.5*vy + sqrt(3)/2*vx
+            # v_w3 = -0.5*vy - sqrt(3)/2*vx
+            s1 = (2.0 / 3.0) * ty
+            s2 = (math.sqrt(3) / 2.0) * tx - 0.5 * ty
+            s3 = -(math.sqrt(3) / 2.0) * tx - 0.5 * ty
+            return [s1, s2, s3]
+
+        # Iteratively enforce per-wheel acceleration limits along path
+        # Perform a few passes of forward/backward limiting
+        for _pass in range(3):
+            # Forward (acceleration) pass
+            for i in range(n - 1):
+                v_i = velocities[i]
+                v_j = velocities[i + 1]
+                dist = max(1e-6, dists[i])
+                # tangent for segment i
+                tx, ty = tangents[i]
+                coeffs = wheel_coeffs_for_tangent(tx, ty)
+                max_coeff = max(abs(c) for c in coeffs) if coeffs else 0.0
+                if max_coeff < 1e-9:
+                    continue
+                # estimate dt using average speed
+                avg_speed = max(1e-3, 0.5 * (v_i + v_j))
+                dt = dist / avg_speed
+                allowed_delta = max_wheel_accel * dt / max_coeff
+                if v_j > v_i + allowed_delta:
+                    velocities[i + 1] = v_i + allowed_delta
+
+            # Backward (deceleration) pass
+            for i in range(n - 2, -1, -1):
+                v_i = velocities[i]
+                v_j = velocities[i + 1]
+                dist = max(1e-6, dists[i])
+                tx, ty = tangents[i]
+                coeffs = wheel_coeffs_for_tangent(tx, ty)
+                max_coeff = max(abs(c) for c in coeffs) if coeffs else 0.0
+                if max_coeff < 1e-9:
+                    continue
+                avg_speed = max(1e-3, 0.5 * (v_i + v_j))
+                dt = dist / avg_speed
+                allowed_delta = max_wheel_accel * dt / max_coeff
+                if v_i > v_j + allowed_delta:
+                    velocities[i] = v_j + allowed_delta
+
+        # Final clamp to max linear velocity and non-negative
+        for i in range(n):
+            velocities[i] = max(0.0, min(velocities[i], max_linear_vel))
+
+        xs = [p[0] for p in path]
+        ys = [p[1] for p in path]
+        yaws = [0.0] * n
+        return xs, ys, yaws, velocities
 
     # =======================
     # Publishing
@@ -837,6 +1205,47 @@ class WaypointTrajNode(Node):
         ma.markers.append(m)
         self.wp_marker_pub.publish(ma)
 
+    def publish_velocity_markers(self, xs: List[float], ys: List[float], velocities: List[float]) -> None:
+        """Publish velocity as colored line strip along the path."""
+        ma = MarkerArray()
+        
+        if len(xs) < 2 or len(velocities) != len(xs):
+            self.velocity_marker_pub.publish(ma)
+            return
+        
+        # Create LINE_STRIP marker with thicker width
+        m = Marker()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.frame_id = self.get_parameter("map_frame").value
+        m.ns = "path_velocity"
+        m.id = 0
+        m.type = Marker.LINE_STRIP
+        m.action = Marker.ADD
+        m.scale.x = 0.1  # Thicker line
+        
+        # Find max velocity for normalization
+        vmax = max(velocities) if velocities else 1e-6
+        vmax = max(vmax, 1e-6)
+        
+        # Add all points with gradient coloring based on actual velocity
+        for i in range(len(xs)):
+            x, y = xs[i], ys[i]
+            m.points.append(Point(x=float(x), y=float(y), z=0.02))
+            
+            # Use actual velocity from trajectory
+            v = velocities[i]
+            
+            # Normalize velocity to [0, 1]
+            t = float(v) / float(vmax)
+            t = max(0.0, min(1.0, t))
+            
+            # Color gradient: blue (slow/stopped) to red (fast)
+            c = ColorRGBA(r=t, g=0.0, b=1.0 - t, a=1.0)
+            m.colors.append(c)
+        
+        ma.markers.append(m)
+        self.velocity_marker_pub.publish(ma)
+    
     # =======================
     # Main timer
     # =======================
@@ -891,17 +1300,35 @@ class WaypointTrajNode(Node):
                 stitched.extend(seg[1:])
             start_xy = (gx, gy)
 
+        # Smooth path using cubic spline interpolation (industry standard)
+        stitched_smooth = self.smooth_path_cubic_spline(stitched)
+
+        # Build velocity-constrained trajectory on smoothed path
+        xs, ys, yaws, velocities = self.build_velocity_constrained_trajectory(stitched_smooth)
+        
+        if not xs:
+            return
+        
+        # Publish path with orientation from yaw
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
         path.header.frame_id = frame
-        for (x, y) in stitched:
+        for i in range(len(xs)):
             ps = PoseStamped()
             ps.header = path.header
-            ps.pose.position.x = float(x)
-            ps.pose.position.y = float(y)
+            ps.pose.position.x = float(xs[i])
+            ps.pose.position.y = float(ys[i])
             ps.pose.position.z = 0.0
+            q = yaw_to_quat(yaws[i])
+            ps.pose.orientation.x = q[0]
+            ps.pose.orientation.y = q[1]
+            ps.pose.orientation.z = q[2]
+            ps.pose.orientation.w = q[3]
             path.poses.append(ps)
         self.path_pub.publish(path)
+        
+        # Publish velocity markers using actual trajectory velocities
+        self.publish_velocity_markers(xs, ys, velocities)
 
 
 def main() -> None:
