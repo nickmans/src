@@ -7,6 +7,7 @@ import base64
 import heapq
 import json
 import math
+import os
 import time
 import zlib
 from collections import deque
@@ -1164,7 +1165,120 @@ class WaypointTrajNode(Node):
         xs = [p[0] for p in path]
         ys = [p[1] for p in path]
         yaws = [0.0] * n
-        return xs, ys, yaws, velocities
+        
+        # Resample trajectory at fixed 0.01s timesteps for controller
+        xs_resampled, ys_resampled, yaws_resampled, vels_resampled = self._resample_trajectory_at_dt(
+            xs, ys, yaws, velocities, dists, dt=0.01
+        )
+        
+        return xs_resampled, ys_resampled, yaws_resampled, vels_resampled
+
+    def _resample_trajectory_at_dt(
+        self, 
+        xs: List[float], 
+        ys: List[float], 
+        yaws: List[float], 
+        velocities: List[float],
+        dists: List[float],
+        dt: float = 0.01
+    ) -> Tuple[List[float], List[float], List[float], List[float]]:
+        """
+        Resample trajectory at fixed time intervals (dt) for controller tracking.
+        
+        Takes a path-based trajectory (one point per path segment) and generates
+        a time-based trajectory with points at regular dt intervals, interpolating
+        position based on the velocity profile.
+        
+        Args:
+            xs, ys: Position coordinates of path points
+            yaws: Yaw angles at path points
+            velocities: Velocity at each path point
+            dists: Distances between consecutive path points
+            dt: Time step for resampling (default 0.01s = 100Hz)
+            
+        Returns:
+            Tuple of (xs, ys, yaws, velocities) resampled at dt intervals
+        """
+        if len(xs) < 2:
+            return xs, ys, yaws, velocities
+            
+        n = len(xs)
+        
+        # Build cumulative distance array
+        s = [0.0]
+        for i in range(len(dists)):
+            s.append(s[-1] + max(1e-9, dists[i]))
+        
+        # Build cumulative time array by integrating inverse velocity
+        # t[i] = integral from 0 to s[i] of (1/v(s)) ds
+        t = [0.0]
+        for i in range(n - 1):
+            # Use average velocity over segment for time calculation
+            v_avg = max(1e-3, 0.5 * (velocities[i] + velocities[i + 1]))
+            dist = s[i + 1] - s[i]
+            dt_segment = dist / v_avg
+            t.append(t[-1] + dt_segment)
+        
+        total_time = t[-1]
+        
+        # Generate resampled trajectory at fixed dt intervals
+        xs_new = []
+        ys_new = []
+        yaws_new = []
+        vels_new = []
+        
+        current_time = 0.0
+        segment_idx = 0
+        
+        while current_time <= total_time and segment_idx < n - 1:
+            # Find which segment current_time falls into
+            while segment_idx < n - 1 and current_time > t[segment_idx + 1]:
+                segment_idx += 1
+            
+            if segment_idx >= n - 1:
+                break
+            
+            # Interpolate within segment
+            t0 = t[segment_idx]
+            t1 = t[segment_idx + 1]
+            alpha = (current_time - t0) / max(1e-9, t1 - t0)
+            alpha = max(0.0, min(1.0, alpha))
+            
+            # Linear interpolation of position
+            x_interp = xs[segment_idx] + alpha * (xs[segment_idx + 1] - xs[segment_idx])
+            y_interp = ys[segment_idx] + alpha * (ys[segment_idx + 1] - ys[segment_idx])
+            
+            # Interpolate velocity
+            v_interp = velocities[segment_idx] + alpha * (velocities[segment_idx + 1] - velocities[segment_idx])
+            
+            # Calculate yaw from trajectory direction
+            if segment_idx < n - 1:
+                dx = xs[segment_idx + 1] - xs[segment_idx]
+                dy = ys[segment_idx + 1] - ys[segment_idx]
+                yaw_interp = math.atan2(dy, dx)
+            else:
+                yaw_interp = yaws[segment_idx] if yaws else 0.0
+            
+            xs_new.append(x_interp)
+            ys_new.append(y_interp)
+            yaws_new.append(yaw_interp)
+            vels_new.append(v_interp)
+            
+            current_time += dt
+        
+        # Always include the final point
+        if len(xs_new) == 0 or (xs_new[-1] != xs[-1] or ys_new[-1] != ys[-1]):
+            xs_new.append(xs[-1])
+            ys_new.append(ys[-1])
+            yaws_new.append(yaws[-1] if yaws else 0.0)
+            vels_new.append(velocities[-1])
+        
+        self.get_logger().info(
+            f"Resampled trajectory: {len(xs)} path points -> {len(xs_new)} time points "
+            f"at dt={dt}s (total time: {total_time:.2f}s)"
+        )
+        
+        return xs_new, ys_new, yaws_new, vels_new
 
     # =======================
     # Publishing
@@ -1246,6 +1360,35 @@ class WaypointTrajNode(Node):
         ma.markers.append(m)
         self.velocity_marker_pub.publish(ma)
     
+    def save_trajectory_json(self, xs: List[float], ys: List[float], yaws: List[float], velocities: List[float]) -> None:
+        """Save the trajectory to a JSON file."""
+        try:
+            output_path = "/home/nickolas/Desktop/last_trajectory.json"
+            
+            trajectory_data = {
+                "timestamp": self.get_clock().now().to_msg().sec + self.get_clock().now().to_msg().nanosec * 1e-9,
+                "dt": 0.01,  # Fixed timestep in seconds
+                "points": []
+            }
+            
+            for i in range(len(xs)):
+                point = {
+                    "x": float(xs[i]),
+                    "y": float(ys[i]),
+                    "yaw": float(yaws[i]),
+                    "velocity": float(velocities[i])
+                }
+                trajectory_data["points"].append(point)
+            
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, 'w') as f:
+                json.dump(trajectory_data, f, indent=2)
+            
+            self.get_logger().info(f"Trajectory saved to {output_path} ({len(xs)} points at dt=0.01s)")
+        except Exception as e:
+            self.get_logger().error(f"Failed to save trajectory: {e}")
+    
+    
     # =======================
     # Main timer
     # =======================
@@ -1308,6 +1451,9 @@ class WaypointTrajNode(Node):
         
         if not xs:
             return
+        
+        # Save trajectory to JSON file
+        self.save_trajectory_json(xs, ys, yaws, velocities)
         
         # Publish path with orientation from yaw
         path = Path()

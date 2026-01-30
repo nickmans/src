@@ -35,11 +35,11 @@ def make_traj_from_pose(
     idle: bool,
     dt: float = 0.05,
     horizon: float = 1.2,
-) -> List[Tuple[float, float, float, float, float, float]]:
+) -> List[Tuple[float, float, float, float]]:
     """
     Generate trajectory knots from pose.
 
-    If idle: hold position (all vels = 0)
+    If idle: hold position (velocity = 0)
     Else: constant-velocity rollout using pose velocities
 
     Args:
@@ -49,16 +49,16 @@ def make_traj_from_pose(
         horizon: Total trajectory duration (seconds)
 
     Returns:
-        List of knots: [(x, y, yaw, vx, vy, wz), ...]
+        List of knots: [(x, y, yaw, velocity), ...]
     """
     n_knots = max(2, int(round(horizon / dt)))
 
-    knots: List[Tuple[float, float, float, float, float, float]] = []
+    knots: List[Tuple[float, float, float, float]] = []
 
     if idle:
         # Hold position: constant pose, zero velocity
         for _ in range(n_knots):
-            knots.append((pose.x, pose.y, pose.yaw, 0.0, 0.0, 0.0))
+            knots.append((pose.x, pose.y, pose.yaw, 0.0))
     else:
         # Constant-velocity rollout
         for i in range(n_knots):
@@ -67,9 +67,8 @@ def make_traj_from_pose(
             y = pose.y + pose.vy * t
             yaw = pose.yaw + pose.wz * t
             yaw = wrap_yaw(yaw)
-            vx = pose.vx
-            vy = pose.vy
-            wz = pose.wz
-            knots.append((x, y, yaw, vx, vy, wz))
+            # Compute linear velocity magnitude from (vx, vy)
+            velocity = math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy)
+            knots.append((x, y, yaw, velocity))
 
     return knots

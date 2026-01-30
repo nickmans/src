@@ -122,15 +122,15 @@ class Trajectory:
     reply_to_pose_seq: int
     traj_t0_ms: int
     dt: float
-    knots: list  # list of (x, y, yaw, vx, vy, wz)
+    knots: list  # list of (x, y, yaw, velocity)
     flags: int = 0  # bit0=idle_traj, bit1=has_vel
 
     def pack(self) -> bytes:
         n = len(self.knots)
         payload = struct.pack("<IIHHI", self.reply_to_pose_seq, self.traj_t0_ms, n, self.flags, 0)
         payload += struct.pack("<f", self.dt)
-        for x, y, yaw, vx, vy, wz in self.knots:
-            payload += struct.pack("<ffffff", x, y, yaw, vx, vy, wz)
+        for x, y, yaw, velocity in self.knots:
+            payload += struct.pack("<ffff", x, y, yaw, velocity)
         return payload
 
     @staticmethod
@@ -142,11 +142,11 @@ class Trajectory:
         knots = []
         offset = 14
         for _ in range(n):
-            if offset + 24 > len(data):
+            if offset + 16 > len(data):
                 raise ValueError("Trajectory knot data incomplete")
-            x, y, yaw, vx, vy, wz = struct.unpack("<ffffff", data[offset : offset + 24])
-            knots.append((x, y, yaw, vx, vy, wz))
-            offset += 24
+            x, y, yaw, velocity = struct.unpack("<ffff", data[offset : offset + 16])
+            knots.append((x, y, yaw, velocity))
+            offset += 16
         return Trajectory(reply_to_pose_seq, traj_t0_ms, dt, knots, flags)
 
 
