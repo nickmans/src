@@ -114,7 +114,8 @@ class OMNISystem:
         """Run ROS2 executor (runs in separate thread)."""
         try:
             while self.executor_running:
-                self.executor.spin_once(timeout_sec=0.1)
+                # Spin at 5Hz to reduce CPU usage (was 10Hz)
+                self.executor.spin_once(timeout_sec=0.2)
         except Exception as e:
             logger.error(f"Error in ROS2 executor: {e}")
 
@@ -230,6 +231,14 @@ class OMNISystem:
 
 def main():
     """Main entry point."""
+    # Set process to lower priority to avoid interfering with SSH
+    import os
+    try:
+        os.nice(10)  # Lower priority (higher nice value)
+        logger.info("Process priority lowered to nice +10")
+    except Exception as e:
+        logger.warning(f"Could not set process priority: {e}")
+    
     # Setup logging
     logging.basicConfig(
         level=logging.INFO,
@@ -244,8 +253,8 @@ def main():
     logger.info("OMNI Robot Communication System")
     logger.info("=" * 60)
     
-    # Create system
-    system = OMNISystem(host="192.168.1.100", port=9000)
+    # Create system - bind to all interfaces (0.0.0.0) to ensure STM32 can connect
+    system = OMNISystem(host="0.0.0.0", port=9000)
     
     # Setup signal handler for graceful shutdown
     def signal_handler(sig, frame):
@@ -261,7 +270,7 @@ def main():
         system.start()
         
         logger.info("System running. Press Ctrl+C to stop.")
-        logger.info("Waiting for STM32 connection on 192.168.1.100:9000...")
+        logger.info("Waiting for STM32 connection from 192.168.1.10 on port 9000...")
         
         # Keep main thread alive
         while True:

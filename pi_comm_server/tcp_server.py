@@ -98,6 +98,10 @@ class OMNITCPServer:
 
         # Parser for incoming messages
         self.parser = StreamParser()
+        
+        # Connection backoff
+        self.reconnect_delay = 1.0  # Start with 1 second
+        self.max_reconnect_delay = 10.0
 
         logger.info(f"OMNITCPServer initialized: {self.host}:{self.port}")
 
@@ -114,9 +118,13 @@ class OMNITCPServer:
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(1)
-        self.server_socket.settimeout(1.0)  # Allow periodic checks
+        self.server_socket.settimeout(2.0)  # Reduce wake frequency to save CPU
 
-        logger.info(f"Server listening on {self.host}:{self.port}")
+        bind_msg = f"Server listening on {self.host}:{self.port}"
+        if self.host == "0.0.0.0":
+            bind_msg += " (all interfaces - accessible from 192.168.1.10)"
+        logger.info(bind_msg)
+        logger.info(f"Waiting for STM32 to connect from 192.168.1.10...")
 
         # Start accept thread
         self.accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
@@ -179,7 +187,7 @@ class OMNITCPServer:
                 except socket.timeout:
                     continue  # Check running flag and try again
 
-                logger.info(f"Client connected from {client_address}")
+                logger.info(f"✓ Client connected from {client_address}")
 
                 # Close previous client if any
                 if self.client_socket:
@@ -188,10 +196,14 @@ class OMNITCPServer:
                     except:
                         pass
 
+                # Set socket timeout to prevent blocking forever
+                client_socket.settimeout(1.0)
+
                 self.client_socket = client_socket
                 self.client_address = client_address
                 self.connected = True
                 self.parser.clear()
+                self.reconnect_delay = 1.0  # Reset backoff on successful connection
 
                 # Start receive and send threads
                 self.receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
@@ -203,7 +215,10 @@ class OMNITCPServer:
             except Exception as e:
                 if self.running:
                     logger.error(f"Error in accept loop: {e}")
-                time.sleep(1.0)
+                    logger.info(f"Retrying in {self.reconnect_delay:.1f}s...")
+                    time.sleep(self.reconnect_delay)
+                    # Exponential backoff
+                    self.reconnect_delay = min(self.reconnect_delay * 1.5, self.max_reconnect_delay)
 
     def _receive_loop(self):
         """Receive and parse messages from client (runs in separate thread)."""
@@ -244,6 +259,7 @@ class OMNITCPServer:
     def _send_loop(self):
         """Send TRAJ messages at 5 Hz when trajectory is active (runs in separate thread)."""
         send_interval = 0.2  # 5 Hz = 200ms
+        idle_interval = 5.0  # Check every 5s when inactive to save CPU
 
         while self.running and self.connected:
             try:
@@ -258,9 +274,11 @@ class OMNITCPServer:
                     if traj:
                         # Send TRAJ message
                         self._send_trajectory(traj)
-
-                # Sleep for interval
-                time.sleep(send_interval)
+                    # Sleep for active rate
+                    time.sleep(send_interval)
+                else:
+                    # Sleep longer when inactive to reduce CPU usage
+                    time.sleep(idle_interval)
 
             except Exception as e:
                 if self.running:
