@@ -21,14 +21,21 @@ MAX_PAYLOAD_SIZE = 65535
 class MessageType(IntEnum):
     """Message type IDs."""
     POSE = 1
+    CMD = 2
+    EVENT = 3
     TRAJ = 10
-    CMD = 20
+    CORR = 11
+    ACK = 12
+    NACK = 13
+    STATUS = 15
 
 
 class CommandID(IntEnum):
     """Command IDs for CMD messages."""
-    START_TRAJ = 1
-    STOP_TRAJ = 2
+    SET_IDLE = 1
+    START_ROS2 = 2
+    STOP_ROS2 = 3
+    GET_STATUS = 4
 
 
 @dataclass
@@ -90,38 +97,89 @@ class Pose:
 
 @dataclass
 class Command:
-    """CMD message payload (4 bytes)."""
-    command: int  # uint32: 1=START_TRAJ, 2=STOP_TRAJ
+    """CMD message payload."""
+    cmd_id: int
+    arg: bytes
 
     def pack(self) -> bytes:
-        return struct.pack("<I", self.command)
+        arg_len = len(self.arg)
+        return struct.pack("<HH", self.cmd_id, arg_len) + self.arg
 
     @staticmethod
     def unpack(data: bytes) -> "Command":
         if len(data) < 4:
             raise ValueError(f"Command payload too short: {len(data)}")
-        command = struct.unpack("<I", data[:4])[0]
-        return Command(command)
+        cmd_id, arg_len = struct.unpack("<HH", data[:4])
+        if len(data) < 4 + arg_len:
+            raise ValueError(f"Command arg too short: expected {arg_len}, got {len(data) - 4}")
+        arg = data[4 : 4 + arg_len]
+        return Command(cmd_id, arg)
 
 
 @dataclass
 class Trajectory:
-    """TRAJ message payload (20 bytes)."""
-    x_des: float
-    y_des: float
-    yaw_des: float
-    vx_world: float
-    vy_world: float
+    """TRAJ message payload."""
+    reply_to_pose_seq: int
+    traj_t0_ms: int
+    dt: float
+    knots: list  # list of (x, y, yaw, velocity)
+    flags: int = 0  # bit0=idle_traj, bit1=has_vel
 
     def pack(self) -> bytes:
-        return struct.pack("<fffff", self.x_des, self.y_des, self.yaw_des, self.vx_world, self.vy_world)
+        n = len(self.knots)
+        payload = struct.pack("<IIHHI", self.reply_to_pose_seq, self.traj_t0_ms, n, self.flags, 0)
+        payload += struct.pack("<f", self.dt)
+        for x, y, yaw, velocity in self.knots:
+            payload += struct.pack("<ffff", x, y, yaw, velocity)
+        return payload
 
     @staticmethod
     def unpack(data: bytes) -> "Trajectory":
-        if len(data) < 20:  # 5 floats
+        if len(data) < 14:  # reply_to_pose_seq(4) + traj_t0_ms(4) + n(2) + flags(2) + dt(4)
             raise ValueError(f"Trajectory payload too short: {len(data)}")
-        x_des, y_des, yaw_des, vx_world, vy_world = struct.unpack("<fffff", data[:20])
-        return Trajectory(x_des, y_des, yaw_des, vx_world, vy_world)
+        reply_to_pose_seq, traj_t0_ms, n, flags = struct.unpack("<IIH", data[:10])
+        dt = struct.unpack("<f", data[10:14])[0]
+        knots = []
+        offset = 14
+        for _ in range(n):
+            if offset + 16 > len(data):
+                raise ValueError("Trajectory knot data incomplete")
+            x, y, yaw, velocity = struct.unpack("<ffff", data[offset : offset + 16])
+            knots.append((x, y, yaw, velocity))
+            offset += 16
+        return Trajectory(reply_to_pose_seq, traj_t0_ms, dt, knots, flags)
+
+
+@dataclass
+class Status:
+    """STATUS message payload."""
+    status_t_ms: int
+    idle: bool
+    ros2_running: bool
+    last_pose_seq: int
+    last_traj_seq: int
+    last_pose_latency_ms: float
+
+    def pack(self) -> bytes:
+        return struct.pack(
+            "<IBBHIIf",
+            self.status_t_ms,
+            1 if self.idle else 0,
+            1 if self.ros2_running else 0,
+            0,  # reserved
+            self.last_pose_seq,
+            self.last_traj_seq,
+            self.last_pose_latency_ms,
+        )
+
+    @staticmethod
+    def unpack(data: bytes) -> "Status":
+        if len(data) < 19:  # 4 + 1 + 1 + 2 + 4 + 4 + 4
+            raise ValueError(f"Status payload too short: {len(data)}")
+        status_t_ms, idle, ros2_running, reserved, last_pose_seq, last_traj_seq, last_pose_latency_ms = struct.unpack(
+            "<IBBHIIf", data[:19]
+        )
+        return Status(status_t_ms, bool(idle), bool(ros2_running), last_pose_seq, last_traj_seq, last_pose_latency_ms)
 
 
 def compute_crc32(data: bytes) -> int:

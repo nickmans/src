@@ -1,0 +1,3 @@
+[console_scripts]
+omni-server = pi_comm_server.run_server:main
+omni-test-client = pi_comm_server.run_test_client:main

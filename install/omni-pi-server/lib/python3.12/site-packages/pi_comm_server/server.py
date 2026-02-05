@@ -43,33 +43,17 @@ class ServerState:
     last_pose_latency_ms: float = 0.0
     last_traj_seq: int = 0
     last_pose_received_t_ms: int = 0
-    
-    # Yaw alignment for saved map mode
-    use_saved_map: bool = False
-    yaw_offset: float = 0.0  # Offset from robot frame to map frame (radians)
-    yaw_calibrated: bool = False
-    calibration_yaw_samples: list = None
-    calibration_pose_count: int = 0
-    
-    def __post_init__(self):
-        if self.calibration_yaw_samples is None:
-            self.calibration_yaw_samples = []
 
 
 class OMNIServer:
     """Main TCP server for OMNI communication."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 9000, enable_ros2_cmds: bool = False, use_saved_map: bool = False, map_yaw_offset: float = 0.0):
+    def __init__(self, host: str = "0.0.0.0", port: int = 9000, enable_ros2_cmds: bool = False):
         self.host = host
         self.port = port
         self.enable_ros2_cmds = enable_ros2_cmds
-        self.state = ServerState(use_saved_map=use_saved_map)
+        self.state = ServerState()
         self.ros2_mgr = ROS2Manager()
-        
-        # Saved map configuration
-        self.calibration_pose_threshold = 5  # Number of stationary poses to average for calibration
-        self.calibration_velocity_threshold = 0.05  # Max velocity (m/s) to consider stationary
-        self.map_yaw_offset = map_yaw_offset  # Known offset if provided at launch
 
         # Network
         self.server: Optional[asyncio.Server] = None
@@ -236,8 +220,7 @@ class OMNIServer:
             self.state.last_pose_latency_ms = latency_ms
             self.state.last_pose_received_t_ms = now_ms
 
-            # Raw pose from STM32
-            raw_pose = PoseState(
+            pose_state = PoseState(
                 x=pose_msg.x,
                 y=pose_msg.y,
                 yaw=pose_msg.yaw,
@@ -246,18 +229,11 @@ class OMNIServer:
                 wz=pose_msg.wz,
                 t_ms=pose_msg.pose_t_ms,
             )
-            
-            # Handle yaw calibration for saved map mode
-            if self.state.use_saved_map and not self.state.yaw_calibrated:
-                await self._calibrate_yaw_offset(raw_pose)
-            
-            # Transform pose to map frame if using saved map
-            pose_state = self._transform_pose_to_map_frame(raw_pose)
             self.state.last_pose = pose_state
 
             logger.debug(
-                f"POSE seq={header.seq} x={pose_state.x:.2f} y={pose_state.y:.2f} yaw={pose_state.yaw:.2f} "
-                f"latency={latency_ms:.1f}ms calibrated={self.state.yaw_calibrated}"
+                f"POSE seq={header.seq} x={pose_msg.x:.2f} y={pose_msg.y:.2f} "
+                f"latency={latency_ms:.1f}ms"
             )
 
             # Trigger trajectory planning (latest-wins)
@@ -271,72 +247,6 @@ class OMNIServer:
         except Exception as e:
             logger.error(f"Error handling POSE: {e}")
 
-    async def _calibrate_yaw_offset(self, pose: PoseState) -> None:
-        """Calibrate yaw offset using initial stationary poses."""
-        # Check if robot is stationary (low velocity)
-        velocity = (pose.vx**2 + pose.vy**2)**0.5
-        
-        if velocity < self.calibration_velocity_threshold and abs(pose.wz) < 0.1:
-            # Collect stationary pose yaw samples
-            self.state.calibration_yaw_samples.append(pose.yaw)
-            self.state.calibration_pose_count += 1
-            
-            logger.info(
-                f"Calibration sample {self.state.calibration_pose_count}/{self.calibration_pose_threshold}: "
-                f"yaw={pose.yaw:.3f} rad ({pose.yaw*180/3.14159:.1f}°)"
-            )
-            
-            # Once we have enough samples, compute the average offset
-            if self.state.calibration_pose_count >= self.calibration_pose_threshold:
-                import math
-                
-                # Use circular mean for angles
-                sin_sum = sum(math.sin(yaw) for yaw in self.state.calibration_yaw_samples)
-                cos_sum = sum(math.cos(yaw) for yaw in self.state.calibration_yaw_samples)
-                mean_yaw = math.atan2(sin_sum, cos_sum)
-                
-                # Calculate offset (if map_yaw_offset provided, use it; otherwise assume map is at 0)
-                self.state.yaw_offset = self.map_yaw_offset - mean_yaw
-                self.state.yaw_calibrated = True
-                
-                logger.info(
-                    f"Yaw calibration complete! Robot initial yaw: {mean_yaw:.3f} rad ({mean_yaw*180/3.14159:.1f}°), "
-                    f"Map offset: {self.map_yaw_offset:.3f} rad, "
-                    f"Computed offset: {self.state.yaw_offset:.3f} rad ({self.state.yaw_offset*180/3.14159:.1f}°)"
-                )
-                
-                # Clear samples to free memory
-                self.state.calibration_yaw_samples.clear()
-    
-    def _transform_pose_to_map_frame(self, pose: PoseState) -> PoseState:
-        """Transform pose from robot frame to map frame using yaw offset."""
-        if not self.state.use_saved_map or not self.state.yaw_calibrated:
-            # No transformation needed
-            return pose
-        
-        import math
-        from planner_stub import wrap_yaw
-        
-        # Apply yaw offset
-        new_yaw = wrap_yaw(pose.yaw + self.state.yaw_offset)
-        
-        # Transform velocities to map frame
-        cos_offset = math.cos(self.state.yaw_offset)
-        sin_offset = math.sin(self.state.yaw_offset)
-        
-        new_vx = pose.vx * cos_offset - pose.vy * sin_offset
-        new_vy = pose.vx * sin_offset + pose.vy * cos_offset
-        
-        return PoseState(
-            x=pose.x,
-            y=pose.y,
-            yaw=new_yaw,
-            vx=new_vx,
-            vy=new_vy,
-            wz=pose.wz,
-            t_ms=pose.t_ms,
-        )
-    
     async def _plan_and_send_traj(self, pose: PoseState, reply_to_seq: int) -> None:
         """Plan trajectory asynchronously and send via TX queue."""
         try:
@@ -348,7 +258,7 @@ class OMNIServer:
                 logger.debug(f"Dropping traj for seq {reply_to_seq}, newer seq available")
                 return
 
-            # Generate trajectory (pose is already in map frame if calibrated)
+            # Generate trajectory
             knots = make_traj_from_pose(pose, idle=self.state.idle_mode, dt=0.05, horizon=1.2)
 
             # Create TRAJ message
@@ -449,17 +359,6 @@ async def main():
         help="Enable ROS2 stack control commands (default: disabled)",
     )
     parser.add_argument(
-        "--use-saved-map",
-        action="store_true",
-        help="Enable saved map mode with yaw frame alignment (default: disabled)",
-    )
-    parser.add_argument(
-        "--map-yaw-offset",
-        type=float,
-        default=0.0,
-        help="Known yaw offset of map frame in radians (default: 0.0, assumes map is at 0°)",
-    )
-    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -474,18 +373,7 @@ async def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    server = OMNIServer(
-        host=args.host, 
-        port=args.port, 
-        enable_ros2_cmds=args.enable_ros2_cmds,
-        use_saved_map=args.use_saved_map,
-        map_yaw_offset=args.map_yaw_offset,
-    )
-    
-    if args.use_saved_map:
-        logger.info(f"Saved map mode enabled. Map yaw offset: {args.map_yaw_offset:.3f} rad ({args.map_yaw_offset*180/3.14159:.1f}°)")
-        logger.info("Waiting for initial stationary poses to calibrate robot yaw...")
-    
+    server = OMNIServer(host=args.host, port=args.port, enable_ros2_cmds=args.enable_ros2_cmds)
     try:
         await server.start()
     except KeyboardInterrupt:

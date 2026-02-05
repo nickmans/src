@@ -89,7 +89,7 @@ class WaypointTrajNode(Node):
         self.declare_parameter("waypoint_reached_tol_m", 0.10)
 
         # ===== Global grid =====
-        self.declare_parameter("global_map_res", 0.05)
+        self.declare_parameter("global_map_res", 0.5)  # 1cm resolution
         self.declare_parameter("global_map_width_m", 10.0)
         self.declare_parameter("global_map_height_m", 10.0)
 
@@ -104,7 +104,7 @@ class WaypointTrajNode(Node):
         self.declare_parameter("publish_fused_scan", True)
         self.declare_parameter("fused_angle_min", -math.pi)
         self.declare_parameter("fused_angle_max", math.pi)
-        self.declare_parameter("fused_angle_increment_deg", 1.0)  # 1 degree bins
+        self.declare_parameter("fused_angle_increment_deg", 0.25)  # 1 degree bins
         self.declare_parameter("motion_compensate", False)         # set True if robot moves + you want de-warp
 
         # ===== Inflation =====
@@ -927,9 +927,21 @@ class WaypointTrajNode(Node):
                     continue
                 if grid[self.idx(self.gs_map, nx, ny)] >= 100:  # Hard obstacle blocks
                     continue
+                
                 # Add cell cost to movement cost: soft cells (50) add 0.5, hard cells add 1.0
                 cell_cost = grid[self.idx(self.gs_map, nx, ny)] / 100.0
-                ng = gcur + w + cell_cost
+                
+                # Add direction change penalty to encourage smooth diagonal paths
+                direction_penalty = 0.0
+                if (ix, iy) in came:
+                    px, py = came[(ix, iy)]
+                    prev_dx = ix - px
+                    prev_dy = iy - py
+                    # Penalize direction changes (0.05 cost per 45-degree turn)
+                    if (prev_dx, prev_dy) != (0, 0) and (prev_dx, prev_dy) != (dx, dy):
+                        direction_penalty = 0.05
+                
+                ng = gcur + w + cell_cost + direction_penalty
                 if (nx, ny) not in gscore or ng < gscore[(nx, ny)]:
                     gscore[(nx, ny)] = ng
                     came[(nx, ny)] = (ix, iy)
@@ -953,7 +965,46 @@ class WaypointTrajNode(Node):
             return []
         path[0] = start_xy
         path[-1] = goal_xy
+        
+        # Simplify path to remove unnecessary waypoints (shortcutting)
+        path = self.simplify_path(grid, path)
+        
         return path
+
+    def simplify_path(self, grid: List[int], path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """
+        Simplify path by removing unnecessary intermediate waypoints.
+        Uses line-of-sight checks to shortcut straight segments.
+        This dramatically reduces zig-zag patterns from grid-based A*.
+        
+        Args:
+            grid: Costmap grid
+            path: Original path from A*
+            
+        Returns:
+            Simplified path with fewer waypoints
+        """
+        if len(path) <= 2:
+            return path
+        
+        simplified = [path[0]]
+        current_idx = 0
+        
+        while current_idx < len(path) - 1:
+            # Try to find the farthest point we can reach directly
+            farthest_idx = current_idx + 1
+            
+            for test_idx in range(len(path) - 1, current_idx, -1):
+                if self.line_collision_free(grid, path[current_idx], path[test_idx]):
+                    farthest_idx = test_idx
+                    break
+            
+            # Add the farthest reachable point
+            if farthest_idx < len(path):
+                simplified.append(path[farthest_idx])
+            current_idx = farthest_idx
+        
+        return simplified
 
     def smooth_path_cubic_spline(self, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
@@ -961,7 +1012,7 @@ class WaypointTrajNode(Node):
         Produces smooth, natural-looking curves through waypoints.
         
         Args:
-            path: A* waypoints
+            path: A* waypoints (already simplified)
         
         Returns:
             Densely sampled smooth path
@@ -982,15 +1033,17 @@ class WaypointTrajNode(Node):
             t.append(t[-1] + dist)
         
         # Create cubic splines for x(t) and y(t)
+        # Using 'not-a-knot' boundary condition for smoother paths around obstacles
         try:
-            spline_x = CubicSpline(t, xs, bc_type='natural')
-            spline_y = CubicSpline(t, ys, bc_type='natural')
+            spline_x = CubicSpline(t, xs, bc_type='not-a-knot')
+            spline_y = CubicSpline(t, ys, bc_type='not-a-knot')
         except Exception as e:
             self.get_logger().warn(f"Spline interpolation failed: {e}. Using original path.")
             return path
         
         # Resample smooth path at regular intervals
-        n_samples = max(100, int(t[-1] / 0.05))  # ~5cm spacing
+        # Use finer spacing (3cm) for better smoothness around obstacles
+        n_samples = max(100, int(t[-1] / 0.03))
         t_smooth = [t[0] + (t[-1] - t[0]) * i / max(1, n_samples - 1) for i in range(n_samples)]
         
         smooth_path = []
@@ -1002,7 +1055,7 @@ class WaypointTrajNode(Node):
         return smooth_path
 
 
-    def build_velocity_constrained_trajectory(self, path: List[Tuple[float, float]]) -> Tuple[List[float], List[float], List[float], List[float]]:
+    def build_velocity_constrained_trajectory(self, path: List[Tuple[float, float]]) -> Tuple[List[float], List[float], List[float], List[float], List[float], List[float]]:
         """Generate a velocity profile along the path respecting wheel acceleration
         constraints.
 
@@ -1013,10 +1066,10 @@ class WaypointTrajNode(Node):
             path: List of (x, y) waypoints from A*
 
         Returns:
-            Tuple of (xs, ys, yaws, velocities). Empty lists on failure.
+            Tuple of (xs, ys, yaws, velocities, vxs, vys). Empty lists on failure.
         """
         if len(path) < 2:
-            return [], [], [], []
+            return [], [], [], [], [], []
 
         max_wheel_accel = float(self.get_parameter("max_wheel_acceleration_ms2").value)
         max_linear_vel = float(self.get_parameter("max_linear_velocity_ms").value)
@@ -1166,12 +1219,13 @@ class WaypointTrajNode(Node):
         ys = [p[1] for p in path]
         yaws = [0.0] * n
         
-        # Resample trajectory at fixed 0.01s timesteps for controller
-        xs_resampled, ys_resampled, yaws_resampled, vels_resampled = self._resample_trajectory_at_dt(
+        # Resample trajectory at 0.01s timesteps (100Hz) to match controller dt
+        # Matching dt prevents aliasing and acceleration discontinuities
+        xs_resampled, ys_resampled, yaws_resampled, vels_resampled, vxs_resampled, vys_resampled = self._resample_trajectory_at_dt(
             xs, ys, yaws, velocities, dists, dt=0.01
         )
         
-        return xs_resampled, ys_resampled, yaws_resampled, vels_resampled
+        return xs_resampled, ys_resampled, yaws_resampled, vels_resampled, vxs_resampled, vys_resampled
 
     def _resample_trajectory_at_dt(
         self, 
@@ -1181,13 +1235,11 @@ class WaypointTrajNode(Node):
         velocities: List[float],
         dists: List[float],
         dt: float = 0.01
-    ) -> Tuple[List[float], List[float], List[float], List[float]]:
+    ) -> Tuple[List[float], List[float], List[float], List[float], List[float], List[float]]:
         """
         Resample trajectory at fixed time intervals (dt) for controller tracking.
         
-        Takes a path-based trajectory (one point per path segment) and generates
-        a time-based trajectory with points at regular dt intervals, interpolating
-        position based on the velocity profile.
+        Uses cubic spline interpolation for smooth velocity profiles.
         
         Args:
             xs, ys: Position coordinates of path points
@@ -1197,10 +1249,10 @@ class WaypointTrajNode(Node):
             dt: Time step for resampling (default 0.01s = 100Hz)
             
         Returns:
-            Tuple of (xs, ys, yaws, velocities) resampled at dt intervals
+            Tuple of (xs, ys, yaws, velocities, vxs, vys) resampled at dt intervals
         """
         if len(xs) < 2:
-            return xs, ys, yaws, velocities
+            return xs, ys, yaws, velocities, [0.0]*len(xs), [0.0]*len(xs)
             
         n = len(xs)
         
@@ -1210,10 +1262,8 @@ class WaypointTrajNode(Node):
             s.append(s[-1] + max(1e-9, dists[i]))
         
         # Build cumulative time array by integrating inverse velocity
-        # t[i] = integral from 0 to s[i] of (1/v(s)) ds
         t = [0.0]
         for i in range(n - 1):
-            # Use average velocity over segment for time calculation
             v_avg = max(1e-3, 0.5 * (velocities[i] + velocities[i + 1]))
             dist = s[i + 1] - s[i]
             dt_segment = dist / v_avg
@@ -1221,48 +1271,85 @@ class WaypointTrajNode(Node):
         
         total_time = t[-1]
         
+        # Use cubic spline interpolation if scipy available, otherwise linear
+        if HAS_SCIPY and n >= 4:
+            try:
+                # Create cubic splines for smooth interpolation
+                spline_x = CubicSpline(t, xs, bc_type='not-a-knot')
+                spline_y = CubicSpline(t, ys, bc_type='not-a-knot')
+                spline_v = CubicSpline(t, velocities, bc_type='not-a-knot')
+                use_spline = True
+            except:
+                use_spline = False
+        else:
+            use_spline = False
+        
         # Generate resampled trajectory at fixed dt intervals
         xs_new = []
         ys_new = []
         yaws_new = []
         vels_new = []
+        vxs_new = []
+        vys_new = []
         
         current_time = 0.0
-        segment_idx = 0
         
-        while current_time <= total_time and segment_idx < n - 1:
-            # Find which segment current_time falls into
-            while segment_idx < n - 1 and current_time > t[segment_idx + 1]:
-                segment_idx += 1
-            
-            if segment_idx >= n - 1:
-                break
-            
-            # Interpolate within segment
-            t0 = t[segment_idx]
-            t1 = t[segment_idx + 1]
-            alpha = (current_time - t0) / max(1e-9, t1 - t0)
-            alpha = max(0.0, min(1.0, alpha))
-            
-            # Linear interpolation of position
-            x_interp = xs[segment_idx] + alpha * (xs[segment_idx + 1] - xs[segment_idx])
-            y_interp = ys[segment_idx] + alpha * (ys[segment_idx + 1] - ys[segment_idx])
-            
-            # Interpolate velocity
-            v_interp = velocities[segment_idx] + alpha * (velocities[segment_idx + 1] - velocities[segment_idx])
-            
-            # Calculate yaw from trajectory direction
-            if segment_idx < n - 1:
+        while current_time <= total_time:
+            if use_spline:
+                # Cubic spline interpolation (smooth derivatives)
+                x_interp = float(spline_x(current_time))
+                y_interp = float(spline_y(current_time))
+                v_interp = float(spline_v(current_time))
+                
+                # Compute velocity direction from spline derivatives
+                dx_dt = float(spline_x.derivative()(current_time))
+                dy_dt = float(spline_y.derivative()(current_time))
+                speed = math.hypot(dx_dt, dy_dt)
+                
+                if speed > 1e-6:
+                    vx_interp = dx_dt * (v_interp / speed)
+                    vy_interp = dy_dt * (v_interp / speed)
+                else:
+                    vx_interp = 0.0
+                    vy_interp = 0.0
+                    
+                yaw_interp = yaws[0]  # Keep constant for omnidirectional
+                
+            else:
+                # Linear interpolation fallback
+                segment_idx = 0
+                while segment_idx < n - 1 and current_time > t[segment_idx + 1]:
+                    segment_idx += 1
+                
+                if segment_idx >= n - 1:
+                    break
+                
+                t0 = t[segment_idx]
+                t1 = t[segment_idx + 1]
+                alpha = (current_time - t0) / max(1e-9, t1 - t0)
+                alpha = max(0.0, min(1.0, alpha))
+                
+                x_interp = xs[segment_idx] + alpha * (xs[segment_idx + 1] - xs[segment_idx])
+                y_interp = ys[segment_idx] + alpha * (ys[segment_idx + 1] - ys[segment_idx])
+                v_interp = velocities[segment_idx] + alpha * (velocities[segment_idx + 1] - velocities[segment_idx])
+                yaw_interp = yaws[segment_idx] + alpha * wrap_to_pi(yaws[segment_idx + 1] - yaws[segment_idx])
+                
                 dx = xs[segment_idx + 1] - xs[segment_idx]
                 dy = ys[segment_idx + 1] - ys[segment_idx]
-                yaw_interp = math.atan2(dy, dx)
-            else:
-                yaw_interp = yaws[segment_idx] if yaws else 0.0
+                path_dist = math.hypot(dx, dy)
+                if path_dist > 1e-9:
+                    vx_interp = v_interp * (dx / path_dist)
+                    vy_interp = v_interp * (dy / path_dist)
+                else:
+                    vx_interp = 0.0
+                    vy_interp = 0.0
             
             xs_new.append(x_interp)
             ys_new.append(y_interp)
             yaws_new.append(yaw_interp)
             vels_new.append(v_interp)
+            vxs_new.append(vx_interp)
+            vys_new.append(vy_interp)
             
             current_time += dt
         
@@ -1271,14 +1358,33 @@ class WaypointTrajNode(Node):
             xs_new.append(xs[-1])
             ys_new.append(ys[-1])
             yaws_new.append(yaws[-1] if yaws else 0.0)
-            vels_new.append(velocities[-1])
+            vels_new.append(0.0)
+            vxs_new.append(0.0)
+            vys_new.append(0.0)
+        
+        # Apply gentle smoothing only to remove high-frequency noise
+        # 3-point moving average (lighter than before since spline is already smooth)
+        if len(vxs_new) >= 3:
+            vxs_smoothed = [vxs_new[0]]
+            vys_smoothed = [vys_new[0]]
+            vels_smoothed = [vels_new[0]]
+            for i in range(1, len(vxs_new) - 1):
+                vxs_smoothed.append((vxs_new[i-1] + vxs_new[i] + vxs_new[i+1]) / 3.0)
+                vys_smoothed.append((vys_new[i-1] + vys_new[i] + vys_new[i+1]) / 3.0)
+                vels_smoothed.append((vels_new[i-1] + vels_new[i] + vels_new[i+1]) / 3.0)
+            vxs_smoothed.append(vxs_new[-1])
+            vys_smoothed.append(vys_new[-1])
+            vels_smoothed.append(vels_new[-1])
+            vxs_new = vxs_smoothed
+            vys_new = vys_smoothed
+            vels_new = vels_smoothed
         
         self.get_logger().info(
             f"Resampled trajectory: {len(xs)} path points -> {len(xs_new)} time points "
             f"at dt={dt}s (total time: {total_time:.2f}s)"
         )
         
-        return xs_new, ys_new, yaws_new, vels_new
+        return xs_new, ys_new, yaws_new, vels_new, vxs_new, vys_new
 
     # =======================
     # Publishing
@@ -1360,14 +1466,14 @@ class WaypointTrajNode(Node):
         ma.markers.append(m)
         self.velocity_marker_pub.publish(ma)
     
-    def save_trajectory_json(self, xs: List[float], ys: List[float], yaws: List[float], velocities: List[float]) -> None:
+    def save_trajectory_json(self, xs: List[float], ys: List[float], yaws: List[float], velocities: List[float], vxs: List[float], vys: List[float]) -> None:
         """Save the trajectory to a JSON file."""
         try:
             output_path = "/home/nickolas/Desktop/last_trajectory.json"
             
             trajectory_data = {
                 "timestamp": self.get_clock().now().to_msg().sec + self.get_clock().now().to_msg().nanosec * 1e-9,
-                "dt": 0.01,  # Fixed timestep in seconds
+                "dt": 0.01,  # Timestep in seconds (100Hz) - matches controller
                 "points": []
             }
             
@@ -1376,7 +1482,9 @@ class WaypointTrajNode(Node):
                     "x": float(xs[i]),
                     "y": float(ys[i]),
                     "yaw": float(yaws[i]),
-                    "velocity": float(velocities[i])
+                    "velocity": float(velocities[i]),
+                    "vx": float(vxs[i]),
+                    "vy": float(vys[i])
                 }
                 trajectory_data["points"].append(point)
             
@@ -1447,13 +1555,13 @@ class WaypointTrajNode(Node):
         stitched_smooth = self.smooth_path_cubic_spline(stitched)
 
         # Build velocity-constrained trajectory on smoothed path
-        xs, ys, yaws, velocities = self.build_velocity_constrained_trajectory(stitched_smooth)
+        xs, ys, yaws, velocities, vxs, vys = self.build_velocity_constrained_trajectory(stitched_smooth)
         
         if not xs:
             return
         
         # Save trajectory to JSON file
-        self.save_trajectory_json(xs, ys, yaws, velocities)
+        # self.save_trajectory_json(xs, ys, yaws, velocities, vxs, vys)
         
         # Publish path with orientation from yaw
         path = Path()

@@ -1,52 +1,62 @@
-# Quick Start Guide
+# OMNI TCP Server - Quick Start Guide
 
-## Running the Server and Test Client
+## Quick Start
 
-### Option 1: Using Wrapper Scripts (Recommended - works from any directory)
-
+### Start Server (on Raspberry Pi)
 ```bash
-# Start server (from any directory)
-python3 /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/run_server.py --log-level INFO
-
-# In another terminal, start test client
-python3 /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/run_test_client.py
+cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+./start_server.sh
 ```
 
-### Option 2: From the pi_comm_server Directory
-
+### Start Test Client (for testing without STM32)
 ```bash
 cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
 
-# Start server
-python3 run_server.py --log-level INFO
+# Basic usage (stationary robot)
+./start_test_client.sh
 
-# In another terminal (from same directory)
-python3 run_test_client.py
+# With circular motion
+./start_test_client.sh 192.168.1.100 9000 circle
+
+# With forward motion
+./start_test_client.sh 192.168.1.100 9000 forward
 ```
 
-### Option 3: Direct Script Execution (requires CWD to be pi_comm_server directory)
+## Test Sequence
 
-```bash
-cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+1. **Terminal 1**: Start server
+   ```bash
+   ./start_server.sh
+   ```
 
-# Start server
-python3 server.py --log-level INFO
+2. **Terminal 2**: Start test client
+   ```bash
+   ./start_test_client.sh 192.168.1.100 9000 circle
+   ```
 
-# In another terminal
-python3 test_client.py
-```
+3. **In test client**: Send start command
+   ```
+   > 1
+   ```
+   or
+   ```
+   > start
+   ```
 
-## Test Commands
+4. **Terminal 3**: Monitor ROS2 topics
+   ```bash
+   # Watch pose updates
+   ros2 topic echo /robot/pose
+   
+   # Watch trajectory
+   ros2 topic echo /robot/trajectory
+   ```
 
-Once the test client is running, try:
-
-```
-> status
-> idle true
-> status
-> idle false
-> quit
-```
+5. **In test client**: Send stop command
+   ```
+   > 2
+   ```
+   or
 
 ## Troubleshooting "Files Not Found"
 

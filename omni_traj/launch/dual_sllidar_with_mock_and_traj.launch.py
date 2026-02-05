@@ -65,7 +65,7 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     lidar2_real = TimerAction(
-        period=0.5,
+        period=2.0,
         actions=[lidar2_real_node],
         condition=UnlessCondition(use_mock_lidar),
     )
@@ -109,8 +109,19 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
     )
 
-    # odom -> base_link (published dynamically by the main node, but provide static fallback)
-    # This is overridden by publish_odom_to_base_tf in the main node
+    # odom -> base_link (static fallback for prototyping without pose data)
+    # This is overridden by publish_odom_to_base_tf when pose data is available
+    odom_to_base = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="odom_to_base",
+        arguments=[
+            "0.0", "0.0", "0.0",
+            "0", "0", "0",
+            "odom", "base_link",
+        ],
+        output="screen",
+    )
     
     # base_link -> lidar1 (at y=+0.10m, no z offset)
     base_to_lidar1 = Node(
@@ -163,7 +174,7 @@ def generate_launch_description() -> LaunchDescription:
                 "waypoint_reached_tol_m": 0.10,
 
                 # map/costmap sizing
-                "global_map_res": 0.05,
+                "global_map_res": 0.05,  # 1cm resolution (higher detail)
                 "global_map_width_m": 10.0,
                 "global_map_height_m": 10.0,
 
@@ -172,10 +183,10 @@ def generate_launch_description() -> LaunchDescription:
                 "soft_inflate_radius": 0.44,
 
                 # robot kinematics & constraints
-                "wheel_radius_m": 0.05,
-                "wheelbase_m": 0.20,
+                "wheel_radius_m": 0.09,
+                "wheelbase_m": 0.22,
                 "max_wheel_acceleration_ms2": 1.0,
-                "max_linear_velocity_ms": 1.0,
+                "max_linear_velocity_ms": 0.5,
 
                 # scan
                 "scan_max_age_s": 0.5,
@@ -183,7 +194,7 @@ def generate_launch_description() -> LaunchDescription:
 
                 # fused scan for RViz (display /scan_fused)
                 "publish_fused_scan": True,
-                "fused_angle_increment_deg": 1.0,
+                "fused_angle_increment_deg": 0.25,  # 0.25° = 1440 beams (higher detail than 1.0° = 360 beams)
                 "motion_compensate": False,  # set True if robot moves
 
                 # start pose
@@ -230,6 +241,7 @@ def generate_launch_description() -> LaunchDescription:
             lidar2_mock,
 
             world_to_odom,
+            odom_to_base,
             base_to_lidar1,
             base_to_lidar2,
 
