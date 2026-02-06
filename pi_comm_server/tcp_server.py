@@ -339,11 +339,11 @@ class OMNITCPServer:
         """Handle CMD message."""
         try:
             cmd = Command.unpack(payload)
-            logger.info(f"CMD received: command={cmd.command} (seq={header.seq})")
+            logger.info(f"CMD received: command={cmd.cmd_id} (seq={header.seq})")
 
             # Callback
             if self.on_cmd_callback:
-                self.on_cmd_callback(cmd.command)
+                self.on_cmd_callback(cmd.cmd_id)
 
         except Exception as e:
             logger.error(f"Error parsing CMD message: {e}")

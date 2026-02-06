@@ -474,10 +474,6 @@ class WaypointTrajNode(Node):
             tr = self._lookup_base_from_scan(s.header.frame_id)
             if tr is None:
                 continue
-            
-            # Extract sensor offset
-            sensor_x = float(tr.translation.x)
-            sensor_y = float(tr.translation.y)
 
             # Process each beam in the scan
             rmin = float(s.range_min)
@@ -502,9 +498,8 @@ class WaypointTrajNode(Node):
                 xs = r * math.cos(beam_angle)
                 ys = r * math.sin(beam_angle)
                 
-                # Move to origin frame by subtracting sensor offset
-                x_origin = xs - sensor_x
-                y_origin = ys - sensor_y
+                # Transform from sensor frame to base_link frame (rotation + translation)
+                x_origin, y_origin = self._apply_transform_2d(tr, xs, ys)
 
                 # Apply motion compensation if enabled
                 if motion_comp:

@@ -180,56 +180,29 @@ class TestClient:
         arg = parts[1] if len(parts) > 1 else ""
 
         try:
-            if cmd_name == "idle":
-                value = arg.lower() if arg else "toggle"
-                if value == "true":
-                    arg_bytes = b"true"
-                elif value == "false":
-                    arg_bytes = b"false"
-                else:
-                    arg_bytes = b""
-                cmd_msg = Command(cmd_id=CommandID.SET_IDLE, arg=arg_bytes)
-                payload = cmd_msg.pack()
-                frame = make_message(MessageType.CMD, self.seq_tx, payload)
-                self.writer.write(frame)
-                await self.writer.drain()
-                self.seq_tx += 1
-                logger.info(f"Sent SET_IDLE")
-
-            elif cmd_name == "start_ros2":
+            if cmd_name == "start" or cmd_name == "start_ros2" or cmd_name == "1":
                 cmd_msg = Command(cmd_id=CommandID.START_ROS2, arg=b"")
                 payload = cmd_msg.pack()
                 frame = make_message(MessageType.CMD, self.seq_tx, payload)
                 self.writer.write(frame)
                 await self.writer.drain()
                 self.seq_tx += 1
-                logger.info(f"Sent START_ROS2")
+                logger.info(f"Sent START_ROS2 (cmd=1)")
 
-            elif cmd_name == "stop_ros2":
+            elif cmd_name == "stop" or cmd_name == "stop_ros2" or cmd_name == "0":
                 cmd_msg = Command(cmd_id=CommandID.STOP_ROS2, arg=b"")
                 payload = cmd_msg.pack()
                 frame = make_message(MessageType.CMD, self.seq_tx, payload)
                 self.writer.write(frame)
                 await self.writer.drain()
                 self.seq_tx += 1
-                logger.info(f"Sent STOP_ROS2")
-
-            elif cmd_name == "status":
-                cmd_msg = Command(cmd_id=CommandID.GET_STATUS, arg=b"")
-                payload = cmd_msg.pack()
-                frame = make_message(MessageType.CMD, self.seq_tx, payload)
-                self.writer.write(frame)
-                await self.writer.drain()
-                self.seq_tx += 1
-                logger.info(f"Sent GET_STATUS")
+                logger.info(f"Sent STOP_ROS2 (cmd=0)")
 
             elif cmd_name == "help":
                 print(
                     "\nAvailable commands:\n"
-                    "  idle [true/false]   - Set idle mode\n"
-                    "  start_ros2          - Start ROS2 stack\n"
-                    "  stop_ros2           - Stop ROS2 stack\n"
-                    "  status              - Get server status\n"
+                    "  1 or start          - Start ROS2 stack (launch dual_sllidar)\n"
+                    "  0 or stop           - Stop ROS2 stack\n"
                     "  quit                - Disconnect\n"
                 )
 

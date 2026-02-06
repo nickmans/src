@@ -212,6 +212,7 @@ class OMNIServer:
     async def _handle_message(self, header: Header, payload: bytes) -> None:
         """Handle incoming message."""
         try:
+            logger.debug(f"Received message: type={header.msg_type}, seq={header.seq}, len={len(payload)}")
             if header.msg_type == MessageType.POSE:
                 await self._handle_pose(header, payload)
             elif header.msg_type == MessageType.CMD:
@@ -380,53 +381,30 @@ class OMNIServer:
 
             logger.info(f"CMD seq={header.seq} cmd_id={cmd.cmd_id} arg={arg_str}")
 
-            if cmd.cmd_id == CommandID.SET_IDLE:
-                # Toggle idle mode
-                if arg_str.lower() == "true":
-                    self.state.idle_mode = True
-                elif arg_str.lower() == "false":
-                    self.state.idle_mode = False
+            if cmd.cmd_id == CommandID.START_ROS2:
+                success = await self.ros2_mgr.start()
+                self.state.ros2_running = success
+                if success:
+                    await self.tx_queue.put((MessageType.ACK, header.seq, b""))
                 else:
-                    self.state.idle_mode = not self.state.idle_mode
-
-                logger.info(f"Set idle_mode = {self.state.idle_mode}")
-                await self.tx_queue.put((MessageType.ACK, header.seq, b""))
-
-            elif cmd.cmd_id == CommandID.START_ROS2:
-                if not self.enable_ros2_cmds:
-                    logger.warning("ROS2 commands disabled; NACK")
-                    await self.tx_queue.put((MessageType.NACK, header.seq, b"ROS2 commands disabled"))
-                else:
-                    success = await self.ros2_mgr.start()
-                    self.state.ros2_running = success
-                    if success:
-                        await self.tx_queue.put((MessageType.ACK, header.seq, b""))
-                    else:
-                        await self.tx_queue.put((MessageType.NACK, header.seq, b"Failed to start ROS2"))
+                    await self.tx_queue.put((MessageType.NACK, header.seq, b"Failed to start ROS2"))
 
             elif cmd.cmd_id == CommandID.STOP_ROS2:
-                if not self.enable_ros2_cmds:
-                    logger.warning("ROS2 commands disabled; NACK")
-                    await self.tx_queue.put((MessageType.NACK, header.seq, b"ROS2 commands disabled"))
+                success = await self.ros2_mgr.stop()
+                self.state.ros2_running = False
+                if success:
+                    await self.tx_queue.put((MessageType.ACK, header.seq, b""))
                 else:
-                    success = await self.ros2_mgr.stop()
-                    self.state.ros2_running = False
-                    if success:
-                        await self.tx_queue.put((MessageType.ACK, header.seq, b""))
-                    else:
-                        await self.tx_queue.put((MessageType.NACK, header.seq, b"Failed to stop ROS2"))
+                    await self.tx_queue.put((MessageType.NACK, header.seq, b"Failed to stop ROS2"))
 
-            elif cmd.cmd_id == CommandID.GET_STATUS:
-                status = Status(
-                    status_t_ms=int(time.time() * 1000),
-                    idle=self.state.idle_mode,
-                    ros2_running=self.state.ros2_running,
-                    last_pose_seq=self.state.last_pose_seq,
-                    last_traj_seq=self.state.last_traj_seq,
-                    last_pose_latency_ms=self.state.last_pose_latency_ms,
-                )
-                payload = status.pack()
-                await self.tx_queue.put((MessageType.STATUS, header.seq, payload))
+            elif cmd.cmd_id == CommandID.STOP_TRAJ:
+                logger.info("STOP_TRAJ command received - stopping ROS2")
+                success = await self.ros2_mgr.stop()
+                self.state.ros2_running = False
+                if success:
+                    await self.tx_queue.put((MessageType.ACK, header.seq, b""))
+                else:
+                    await self.tx_queue.put((MessageType.NACK, header.seq, b"Failed to stop ROS2"))
 
             else:
                 logger.warning(f"Unknown command: {cmd.cmd_id}")

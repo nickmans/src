@@ -1,0 +1,20 @@
+[Unit]
+Description=OMNI Communication Server with ROS2 Support
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nickolas
+WorkingDirectory=/home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+Environment="PYTHONUNBUFFERED=1"
+Environment="ROS_DOMAIN_ID=0"
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/bin/python3 /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/run_server.py --enable-ros2-cmds
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
