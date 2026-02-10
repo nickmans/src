@@ -179,12 +179,12 @@ def generate_launch_description() -> LaunchDescription:
                 "global_map_height_m": 10.0,
 
                 # inflation (NOTE: hard inflation now actually works)
-                "hard_inflate_radius": 0.22,
-                "soft_inflate_radius": 0.44,
+                "hard_inflate_radius": 0.225,
+                "soft_inflate_radius": 0.45,
 
                 # robot kinematics & constraints
                 "wheel_radius_m": 0.09,
-                "wheelbase_m": 0.22,
+                "wheelbase_m": 0.200,
                 "max_wheel_acceleration_ms2": 1.0,
                 "max_linear_velocity_ms": 0.5,
 
@@ -194,8 +194,8 @@ def generate_launch_description() -> LaunchDescription:
 
                 # fused scan for RViz (display /scan_fused)
                 "publish_fused_scan": True,
-                "fused_angle_increment_deg": 0.25,  # 0.25° = 1440 beams (higher detail than 1.0° = 360 beams)
-                "motion_compensate": False,  # set True if robot moves
+                "fused_angle_increment_deg": 0.125,  # 0.25° = 1440 beams (higher detail than 1.0° = 360 beams)
+                "motion_compensate": True,  # set True if robot moves
 
                 # start pose
                 "start_pose": [0.0, 0.0, 0.0],

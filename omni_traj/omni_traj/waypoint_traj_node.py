@@ -104,16 +104,16 @@ class WaypointTrajNode(Node):
         self.declare_parameter("publish_fused_scan", True)
         self.declare_parameter("fused_angle_min", -math.pi)
         self.declare_parameter("fused_angle_max", math.pi)
-        self.declare_parameter("fused_angle_increment_deg", 0.25)  # 1 degree bins
+        self.declare_parameter("fused_angle_increment_deg", 0.125)  # 1 degree bins
         self.declare_parameter("motion_compensate", False)         # set True if robot moves + you want de-warp
 
         # ===== Inflation =====
-        self.declare_parameter("hard_inflate_radius", 0.22)  # typical = robot radius
-        self.declare_parameter("soft_inflate_radius", 0.44)
+        self.declare_parameter("hard_inflate_radius", 0.225)  # typical = robot radius
+        self.declare_parameter("soft_inflate_radius", 0.45)
 
         # ===== Robot kinematics & constraints =====
         self.declare_parameter("wheel_radius_m", 0.09)           # Wheel radius in meters
-        self.declare_parameter("wheelbase_m", 0.22)              # Distance from center to wheel (omni) or half-wheelbase
+        self.declare_parameter("wheelbase_m", 0.200)              # Distance from center to wheel (omni) or half-wheelbase
         self.declare_parameter("max_wheel_acceleration_ms2", 1.0) # Max acceleration per wheel (m/s²)
         self.declare_parameter("max_linear_velocity_ms", 0.5)    # Max linear velocity (m/s)
         self.declare_parameter("max_lateral_accel", 1.0)        # Max lateral (centripetal) accel (m/s^2)
@@ -167,6 +167,7 @@ class WaypointTrajNode(Node):
         self.wp_marker_pub = self.create_publisher(MarkerArray, "/waypoint_markers", 1)
         self.path_pub = self.create_publisher(Path, "/planned_path", 1)
         self.velocity_marker_pub = self.create_publisher(MarkerArray, "/path_velocity_markers", 1)
+        self.robot_viz_pub = self.create_publisher(MarkerArray, "/robot_visualization", 1)
 
         # ===== Services =====
         self.srv_clear_all_wp = self.create_service(Empty, "/clear_all_waypoints", self.handle_clear_all_waypoints)
@@ -206,6 +207,73 @@ class WaypointTrajNode(Node):
         x = gs.origin_x + (ix + 0.5) * gs.res
         y = gs.origin_y + (iy + 0.5) * gs.res
         return x, y
+
+    # =======================
+    # Robot Visualization
+    # =======================
+    def _publish_robot_visualization(self, pose: Pose2D) -> None:
+        """Publish robot footprint circle and orientation arrow."""
+        if not self.have_odom_pose:
+            return
+
+        frame = self.get_parameter("map_frame").value
+        wheelbase = float(self.get_parameter("wheelbase_m").value)
+        now = self.get_clock().now().to_msg()
+
+        markers = MarkerArray()
+
+        # Circle marker (robot footprint)
+        circle = Marker()
+        circle.header.frame_id = frame
+        circle.header.stamp = now
+        circle.ns = "robot_footprint"
+        circle.id = 0
+        circle.type = Marker.CYLINDER
+        circle.action = Marker.ADD
+        circle.pose.position.x = pose.x
+        circle.pose.position.y = pose.y
+        circle.pose.position.z = 0.0
+        circle.pose.orientation.w = 1.0
+        circle.scale.x = wheelbase * 2.0  # diameter
+        circle.scale.y = wheelbase * 2.0  # diameter
+        circle.scale.z = 0.01  # thin disc
+        circle.color.r = 0.0
+        circle.color.g = 0.5
+        circle.color.b = 1.0
+        circle.color.a = 0.3  # semi-transparent
+        markers.markers.append(circle)
+
+        # Arrow marker (orientation)
+        arrow = Marker()
+        arrow.header.frame_id = frame
+        arrow.header.stamp = now
+        arrow.ns = "robot_orientation"
+        arrow.id = 1
+        arrow.type = Marker.ARROW
+        arrow.action = Marker.ADD
+        
+        # Arrow from center to edge of wheelbase circle
+        start_point = Point()
+        start_point.x = pose.x
+        start_point.y = pose.y
+        start_point.z = 0.05  # slightly above circle
+        
+        end_point = Point()
+        end_point.x = pose.x + wheelbase * math.cos(pose.yaw)
+        end_point.y = pose.y + wheelbase * math.sin(pose.yaw)
+        end_point.z = 0.05
+        
+        arrow.points = [start_point, end_point]
+        arrow.scale.x = 0.02  # shaft diameter
+        arrow.scale.y = 0.04  # head diameter
+        arrow.scale.z = 0.05  # head length
+        arrow.color.r = 1.0
+        arrow.color.g = 0.0
+        arrow.color.b = 0.0
+        arrow.color.a = 1.0
+        markers.markers.append(arrow)
+
+        self.robot_viz_pub.publish(markers)
 
     # =======================
     # TF / warnings
@@ -1506,6 +1574,9 @@ class WaypointTrajNode(Node):
 
         # publish odom->base tf if requested
         self._publish_odom_to_base_tf()
+
+        # publish robot visualization (footprint circle + orientation arrow)
+        self._publish_robot_visualization(base_pose_now)
 
         # build + publish fused scan (for RViz) and costmap from it
         fused = self._build_fused_scan(base_pose_now)
