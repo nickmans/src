@@ -78,7 +78,7 @@ else
 fi
 
 echo ""
-echo "Step 2: Install System Service"
+echo "Step 2: Install System Services"
 echo "-----------------------------------"
 read -p "Install OMNI TCP server as system service? (y/n) " -n 1 -r
 echo ""
@@ -86,6 +86,15 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     ./install_service.sh
 else
     echo "Skipping service installation"
+fi
+
+echo ""
+read -p "Install OMNI ROS2 stack as system service (auto-start lidars/costmap on boot)? (y/n) " -n 1 -r
+echo ""
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    ./install_ros2_stack_service.sh
+else
+    echo "Skipping ROS2 stack service installation"
 fi
 
 echo ""
@@ -114,6 +123,8 @@ echo ""
 echo "Service Status:"
 systemctl is-active omni_tcp_server.service && echo "✓ Service is running" || echo "✗ Service not running"
 systemctl is-enabled omni_tcp_server.service && echo "✓ Will start on boot" || echo "✗ Will not start on boot"
+systemctl is-active omni_ros2_stack.service && echo "✓ ROS2 stack service is running" || echo "✗ ROS2 stack service not running"
+systemctl is-enabled omni_ros2_stack.service && echo "✓ ROS2 stack will start on boot" || echo "✗ ROS2 stack will not start on boot"
 echo ""
 
 echo "Next Steps:"

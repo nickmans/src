@@ -1,15 +1,24 @@
 [Unit]
 Description=OMNI ROS2 Stack
-After=network-online.target
-Wants=network-online.target
+After=network.target
 
 [Service]
 Type=simple
-ExecStart=bash -c 'source /opt/ros/humble/setup.bash && source /home/nickolas/ros2_ws/install/setup.bash && ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py'
+User=nickolas
+WorkingDirectory=/home/nickolas/ros2_ws
+Environment="PYTHONUNBUFFERED=1"
+Environment="ROS_DOMAIN_ID=0"
+ExecStartPre=-/usr/bin/pkill -f "ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py"
+ExecStartPre=-/usr/bin/pkill -f "/home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj/waypoint_traj"
+ExecStartPre=-/usr/bin/pkill -f "/home/nickolas/ros2_ws/install/sllidar_ros2/lib/sllidar_ros2/sllidar_node"
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/nickolas/ros2_ws/install/setup.bash && ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py use_mock_lidar:=false use_rviz:=false map_frame:=odom publish_odom_to_base_tf:=false publish_world_to_odom_tf:=true rolling_map_enable:=true rolling_map_margin_m:=1.0 persistent_obstacles_enable:=false lidar1_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_2608b4e7586eef118367e9c2c169b110-if00-port0 lidar2_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_420b6b8a586eef11a134e0c2c169b110-if00-port0'
+KillSignal=SIGINT
+TimeoutStartSec=20
+TimeoutStopSec=10
 Restart=on-failure
-RestartSec=5
+RestartSec=2
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

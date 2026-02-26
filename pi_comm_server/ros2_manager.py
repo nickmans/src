@@ -8,6 +8,8 @@ import asyncio
 import logging
 import os
 import signal
+import subprocess
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,19 @@ class ROS2Manager:
         """
         self.launch_file = launch_file
         self.package = package
+        self.launch_args = [
+            "use_mock_lidar:=false",
+            "use_rviz:=false",
+            "map_frame:=odom",
+            "publish_odom_to_base_tf:=true",
+            "publish_world_to_odom_tf:=false",
+            "rolling_map_enable:=true",
+            "rolling_map_margin_m:=1.0",
+            "persistent_obstacles_enable:=true",
+            "lidar1_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_2608b4e7586eef118367e9c2c169b110-if00-port0",
+            "lidar2_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_420b6b8a586eef11a134e0c2c169b110-if00-port0",
+        ]
+        self.launch_match = f"ros2 launch {self.package} {self.launch_file}"
         self.process: Optional[asyncio.subprocess.Process] = None
         self.timeout_sec = 5.0
 
@@ -41,18 +56,16 @@ class ROS2Manager:
             return True
 
         try:
-            # Source ROS2 and launch the file
-            # We need to source the workspace setup and then run ros2 launch
             workspace_setup = os.path.expanduser("~/ros2_ws/install/setup.bash")
-            
-            # Build the command to source setup and launch
+            launch_cmd = " ".join(["ros2", "launch", self.package, self.launch_file, *self.launch_args])
+
             cmd = [
                 "bash",
                 "-c",
-                f"source /opt/ros/jazzy/setup.bash && source {workspace_setup} && ros2 launch {self.package} {self.launch_file}"
+                f"source /opt/ros/jazzy/setup.bash && source {workspace_setup} && exec {launch_cmd}"
             ]
             
-            logger.info(f"Starting ROS2 stack: ros2 launch {self.package} {self.launch_file}")
+            logger.info(f"Starting ROS2 stack: {launch_cmd}")
             
             # Start the process in the background
             self.process = await asyncio.create_subprocess_exec(
@@ -92,40 +105,33 @@ class ROS2Manager:
 
         Returns True if already stopped or successfully stopped, False otherwise.
         """
-        # Check if already stopped
-        if not await self.is_running():
+        launch_pids = self._get_launch_pids()
+        if self.process is None and not launch_pids:
             logger.info(f"ROS2 stack already stopped")
             return True
 
         try:
-            if self.process:
-                logger.info(f"Stopping ROS2 stack (PID: {self.process.pid})")
-                
-                # Try graceful shutdown first (SIGTERM to process group)
-                try:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                except ProcessLookupError:
-                    logger.debug("Process already terminated")
-                    self.process = None
-                    return True
-                
-                # Wait for graceful shutdown
-                try:
-                    await asyncio.wait_for(self.process.wait(), timeout=self.timeout_sec)
-                    logger.info("ROS2 stack stopped gracefully")
-                except asyncio.TimeoutError:
-                    # Force kill if not stopped within timeout
-                    logger.warning("ROS2 stack did not stop gracefully, forcing kill")
-                    try:
-                        os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                        await self.process.wait()
-                    except ProcessLookupError:
-                        pass
-                
-                self.process = None
+            signaled = self._signal_stack(signal.SIGINT)
+            if signaled:
+                logger.info("Sent SIGINT (Ctrl+C) to ROS2 stack")
+
+            stopped = await self._wait_stopped(timeout_sec=self.timeout_sec)
+            if not stopped:
+                logger.warning("ROS2 stack did not stop on SIGINT, escalating to SIGTERM")
+                self._signal_stack(signal.SIGTERM)
+                stopped = await self._wait_stopped(timeout_sec=self.timeout_sec)
+
+            if not stopped:
+                logger.warning("ROS2 stack did not stop on SIGTERM, forcing SIGKILL")
+                self._signal_stack(signal.SIGKILL)
+                stopped = await self._wait_stopped(timeout_sec=self.timeout_sec)
+
+            self.process = None
+            if stopped:
                 logger.info("Stopped ROS2 stack")
                 return True
-                
+            logger.error("ROS2 stack still appears to be running")
+            return False
         except Exception as e:
             logger.error(f"Error stopping ROS2 stack: {e}")
             self.process = None
@@ -133,16 +139,67 @@ class ROS2Manager:
 
     async def is_running(self) -> bool:
         """Check if the ROS2 stack process is running."""
-        if self.process is None:
-            return False
-        
-        # Check if process is still alive
-        if self.process.returncode is not None:
+        if self.process is not None and self.process.returncode is not None:
             logger.debug(f"ROS2 process exited with code {self.process.returncode}")
             self.process = None
+
+        if self.process is not None:
+            return True
+
+        return len(self._get_launch_pids()) > 0
+
+    def _get_launch_pids(self) -> list[int]:
+        """Get PIDs for stack launch parent process(es)."""
+        try:
+            output = subprocess.check_output(
+                ["pgrep", "-f", self.launch_match],
+                text=True,
+            )
+            return [int(pid.strip()) for pid in output.splitlines() if pid.strip()]
+        except subprocess.CalledProcessError:
+            return []
+        except Exception as exc:
+            logger.debug(f"Failed to list ROS2 launch PIDs: {exc}")
+            return []
+
+    def _signal_stack(self, sig: signal.Signals) -> bool:
+        """Signal ROS2 stack process groups (tracked and externally started)."""
+        pids = set(self._get_launch_pids())
+        if self.process and self.process.returncode is None:
+            pids.add(self.process.pid)
+
+        if not pids:
             return False
-        
-        return True
+
+        signaled = False
+        pgids = set()
+        for pid in pids:
+            try:
+                pgids.add(os.getpgid(pid))
+            except ProcessLookupError:
+                continue
+
+        for pgid in pgids:
+            try:
+                os.killpg(pgid, sig)
+                signaled = True
+            except ProcessLookupError:
+                continue
+            except Exception as exc:
+                logger.debug(f"Failed signaling pgid {pgid} with {sig}: {exc}")
+
+        return signaled
+
+    async def _wait_stopped(self, timeout_sec: float) -> bool:
+        """Wait until stack launch process is gone."""
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            if not self._get_launch_pids():
+                if self.process and self.process.returncode is not None:
+                    self.process = None
+                return True
+            await asyncio.sleep(0.2)
+        return len(self._get_launch_pids()) == 0
 
     async def _log_output(self) -> None:
         """Background task to log process output."""

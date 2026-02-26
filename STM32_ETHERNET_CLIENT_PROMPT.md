@@ -1,8 +1,8 @@
-# STM32 Nucleo H755ZI - Ethernet TCP Client Implementation
+# STM32 Nucleo H755ZI - Ethernet UDP Datagram Client Implementation
 
 ## Mission Critical Requirements
 
-**You are implementing a NON-BLOCKING TCP client for the STM32 Nucleo H755ZI that communicates with a Raspberry Pi 5 server. The STM32 is the primary real-time controller and must NEVER block or wait for the Pi5.**
+**You are implementing a NON-BLOCKING UDP datagram client for the STM32 Nucleo H755ZI that communicates with a Raspberry Pi 5 server. The STM32 is the primary real-time controller and must NEVER block or wait for the Pi5.**
 
 ### Core Principles
 1. **Deterministic control loops have absolute priority** - Motor control, safety, and USART command reception cannot be interrupted
@@ -20,18 +20,18 @@
 #define PI5_IP_ADDR    "192.168.1.100"
 #define PI5_PORT       9000
 
-// STM32 Client (YOU configure this)
 #define STM32_IP_ADDR  "192.168.1.10"
 #define NETMASK        "255.255.255.0"
 #define GATEWAY        "192.168.1.1"  // Not used for direct connection
 ```
 
-### LwIP Configuration Requirements
+### LwIP Configuration Requirements (UDP)
 In `lwipopts.h`:
 ```c
 #define LWIP_DHCP              0     // Static IP only
-#define LWIP_TCP               1
-#define LWIP_SOCKET            1     // BSD socket API
+#define LWIP_TCP               0     // Not required for UDP client
+#define LWIP_UDP               1     // Use UDP datagrams
+#define LWIP_SOCKET            1     // BSD socket API (sendto/recvfrom)
 #define SO_REUSE               1
 #define LWIP_SO_RCVTIMEO       1     // Enable receive timeout
 #define LWIP_SO_SNDTIMEO       1     // Enable send timeout
@@ -40,63 +40,19 @@ In `lwipopts.h`:
 
 ---
 
-## Connection State Machine
+## Connection Model (UDP)
 
-### States
-```c
-typedef enum {
-    TCP_DISCONNECTED,      // Not connected, no attempt in progress
-    TCP_CONNECTING,        // Connection attempt in progress
-    TCP_CONNECTED,         // Connected and operational
-    TCP_ERROR              // Error occurred, need backoff
-} TCPState;
-```
+UDP is connectionless so the STM32 does not maintain a TCP-style connection state. Instead:
 
-### Connection Management
-- **Check connection every 10 seconds** when disconnected
-- Use exponential backoff: Start at 1s delay, max 30s
-- Reset backoff on successful connection
-- All connection attempts must be non-blocking
-- Continue normal robot operation regardless of connection state
+- The STM32 sends datagrams to `PI5_IP_ADDR:PI5_PORT` with `sendto()` and does not block. If the network is down, `sendto()` may fail or return EWOULDBLOCK — simply drop or retry later.
+- The STM32 listens for incoming datagrams with `recvfrom()`/non-blocking socket or uses the LwIP UDP receive callback to process incoming TRAJ/ACK messages.
+- Maintain a lightweight local state for liveness: send periodic heartbeats or POSE at 5 Hz; the server remembers last-seen client address and replies to it.
 
-### Recommended Implementation
-```c
-// Connection check task (runs every 10s)
-void tcp_connection_task(void) {
-    static uint32_t last_check = 0;
-    static uint32_t backoff_delay_ms = 1000;
-    
-    uint32_t now = HAL_GetTick();
-    
-    switch(tcp_state) {
-        case TCP_DISCONNECTED:
-            if (now - last_check >= backoff_delay_ms) {
-                // Attempt non-blocking connection
-                if (tcp_try_connect() == SUCCESS) {
-                    tcp_state = TCP_CONNECTED;
-                    backoff_delay_ms = 1000;  // Reset backoff
-                } else {
-                    tcp_state = TCP_ERROR;
-                    backoff_delay_ms = MIN(backoff_delay_ms * 2, 30000);
-                }
-                last_check = now;
-            }
-            break;
-            
-        case TCP_CONNECTED:
-            // Wait in between checks (idle)
-            // Connection maintenance happens in separate receive task
-            break;
-            
-        case TCP_ERROR:
-            if (now - last_check >= 10000) {  // Try again in 10s
-                tcp_state = TCP_DISCONNECTED;
-                last_check = now;
-            }
-            break;
-    }
-}
-```
+Recommended behaviors:
+
+- Send POSE at 5 Hz with `sendto()`; if `sendto()` would block, drop the packet (prefer fresh telemetry).
+- For critical `CMD` messages, implement a tiny reliable-UDP (seq numbers + ACK + retransmit with limited retries) — do not block the control loop while waiting for ACKs.
+- Use short non-blocking recv timeouts (or callbacks) to process incoming TRAJ/ACK frames.
 
 ---
 
@@ -155,12 +111,10 @@ typedef struct __attribute__((packed)) {
     float wz;              // Angular velocity rad/s
 } PosePayload;
 
-// Example: Sending POSE
-void send_pose_to_pi5(void) {
+// Example: Sending POSE over UDP (non-blocking, no ACK required)
+void send_pose_to_pi5_udp(void) {
     static uint32_t pose_seq = 0;
-    
-    if (tcp_state != TCP_CONNECTED) return;
-    
+
     // Prepare payload
     PosePayload pose;
     pose.pose_t_ms = HAL_GetTick();
@@ -170,13 +124,14 @@ void send_pose_to_pi5(void) {
     pose.vx = current_state.vx;
     pose.vy = current_state.vy;
     pose.wz = current_state.wz;
-    
+
     // Pack message
     uint8_t buffer[HEADER_SIZE + sizeof(PosePayload)];
     pack_message(MSG_TYPE_POSE, pose_seq++, &pose, sizeof(pose), buffer);
-    
-    // Non-blocking send (do NOT wait if fails)
-    tcp_send_nonblocking(buffer, sizeof(buffer));
+
+    // Non-blocking UDP send; use sendto() with MSG_DONTWAIT if available
+    // If sendto fails with EWOULDBLOCK/EAGAIN, drop the packet and continue
+    udp_send_nonblocking(buffer, sizeof(buffer), PI5_IP_ADDR, PI5_PORT);
 }
 ```
 
@@ -227,9 +182,9 @@ void handle_traj_message(uint8_t *payload, uint32_t payload_len) {
 
 ```c
 typedef enum {
-    CMD_STOP_ROS2  = 0,   // Stop ROS2 stack (unused by phone)
-    CMD_START_TRAJ = 1,   // START trajectory generation ← Phone sends this
-    CMD_STOP_TRAJ  = 2    // STOP trajectory generation  ← Phone sends this
+    CMD_STOP_ROS2  = 0,   // Stop ROS2 stack (phone sends this)
+    CMD_START_TRAJ = 1,   // START ROS2 stack ← Phone sends this
+    CMD_STOP_TRAJ  = 2    // STOP ROS2 stack (also accepted)
 } CommandID;
 
 typedef struct __attribute__((packed)) {
@@ -242,12 +197,9 @@ typedef struct __attribute__((packed)) {
 // This is triggered when cmd.c receives START/STOP from phone
 void forward_phone_command_to_pi5(CommandID cmd) {
     static uint32_t cmd_seq = 0;
-    
-    if (tcp_state != TCP_CONNECTED) {
-        // Pi5 not connected - log warning and continue
-        log_warning("Pi5 disconnected, cannot forward command");
-        return;
-    }
+
+    // UDP is connectionless; send best-effort and continue
+    // If send fails, log and return without blocking
     
     // Pack command payload
     CommandPayload payload;
@@ -258,8 +210,8 @@ void forward_phone_command_to_pi5(CommandID cmd) {
     uint8_t buffer[HEADER_SIZE + sizeof(CommandPayload)];
     pack_message(MSG_TYPE_CMD, cmd_seq++, &payload, sizeof(payload), buffer);
     
-    // Send to Pi5 (non-blocking)
-    tcp_send_nonblocking(buffer, sizeof(buffer));
+    // Send to Pi5 (non-blocking UDP)
+    udp_send_nonblocking(buffer, sizeof(buffer), PI5_IP_ADDR, PI5_PORT);
     
     log_info("Forwarded %s to Pi5", cmd == CMD_START_TRAJ ? "START" : "STOP");
 }
@@ -276,9 +228,9 @@ void forward_phone_command_to_pi5(CommandID cmd) {
 [cmd.c on STM32] 
       ↓ Parse command
 [forward_phone_command_to_pi5()]
-      ↓ Ethernet TCP
-[Pi5 Server]
-      ↓ Starts/stops ROS2 trajectory node
+    ↓ Ethernet UDP
+[Pi5 UDP Server]
+    ↓ Starts/stops ROS2 stack (dual_sllidar_with_mock_and_traj.launch.py)
 [Pi5 sends TRAJ messages back to STM32]
 ```
 
@@ -302,8 +254,9 @@ void on_phone_stop_command(void) {
 ```
 
 **CRITICAL:** The Pi5 START/STOP commands are:
-- **CMD_START_TRAJ = 1** (tells Pi5 to launch trajectory generation)
-- **CMD_STOP_TRAJ = 2** (tells Pi5 to stop trajectory generation)
+- **CMD_START_TRAJ = 1** (tells Pi5 to launch the ROS2 stack)
+- **CMD_STOP_ROS2 = 0** (tells Pi5 to stop the ROS2 stack)
+- **CMD_STOP_TRAJ = 2** (also accepted to stop the ROS2 stack)
 
 These are the ONLY commands the phone should trigger for Pi5 communication.
 
@@ -434,129 +387,71 @@ bool parser_try_parse(StreamParser *p, MessageHeader *out_hdr,
 
 ---
 
-## Non-Blocking Socket Operations
+## Non-Blocking Socket Operations (UDP)
 
-### Setup Non-Blocking Socket
+You will use datagram sockets. Example helpers:
+
+### Setup Non-Blocking UDP Socket
 ```c
-int tcp_setup_nonblocking_socket(void) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
+int udp_setup_nonblocking_socket(void) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) return -1;
-    
+
     // Set non-blocking mode
     int flags = fcntl(sock, F_GETFL, 0);
     fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-    
-    // Set timeouts (100ms max)
+
+    // Optional: set recv/send timeouts
     struct timeval tv;
     tv.tv_sec = 0;
-    tv.tv_usec = 100000;  // 100ms
+    tv.tv_usec = 200000;  // 200ms
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    
+
     return sock;
 }
 ```
 
-### Non-Blocking Connect
+### Non-Blocking Send (UDP)
 ```c
-bool tcp_try_connect(void) {
-    if (tcp_socket < 0) {
-        tcp_socket = tcp_setup_nonblocking_socket();
-        if (tcp_socket < 0) return false;
-    }
-    
-    struct sockaddr_in server_addr;
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PI5_PORT);
-    inet_pton(AF_INET, PI5_IP_ADDR, &server_addr.sin_addr);
-    
-    int result = connect(tcp_socket, (struct sockaddr*)&server_addr, 
-                        sizeof(server_addr));
-    
-    if (result == 0 || (result < 0 && errno == EISCONN)) {
-        // Connected successfully
-        return true;
-    }
-    
-    if (result < 0 && errno == EINPROGRESS) {
-        // Connection in progress - check later
-        // For simplicity, wait briefly with select()
-        fd_set write_fds;
-        FD_ZERO(&write_fds);
-        FD_SET(tcp_socket, &write_fds);
-        
-        struct timeval tv = {0, 50000};  // 50ms timeout
-        if (select(tcp_socket + 1, NULL, &write_fds, NULL, &tv) > 0) {
-            int error = 0;
-            socklen_t len = sizeof(error);
-            getsockopt(tcp_socket, SOL_SOCKET, SO_ERROR, &error, &len);
-            
-            if (error == 0) return true;  // Connected!
-        }
-    }
-    
-    // Connection failed
-    close(tcp_socket);
-    tcp_socket = -1;
-    return false;
-}
-```
+void udp_send_nonblocking(uint8_t *data, uint32_t len, const char *dst_ip, uint16_t dst_port) {
+    if (udp_socket < 0) return;
 
-### Non-Blocking Send
-```c
-void tcp_send_nonblocking(uint8_t *data, uint32_t len) {
-    if (tcp_socket < 0) return;
-    
-    int sent = send(tcp_socket, data, len, MSG_DONTWAIT);
-    
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(dst_port);
+    inet_pton(AF_INET, dst_ip, &addr.sin_addr);
+
+    int sent = sendto(udp_socket, data, len, MSG_DONTWAIT, (struct sockaddr*)&addr, sizeof(addr));
     if (sent < 0) {
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            // Buffer full - drop message (prefer fresh data)
-            log_warning("TCP send buffer full, dropping message");
+            // Send buffer full, drop packet
         } else {
-            // Connection error
-            close(tcp_socket);
-            tcp_socket = -1;
-            tcp_state = TCP_DISCONNECTED;
-            log_error("TCP send error, disconnected");
+            // Log error and continue
         }
     }
 }
 ```
 
-### Non-Blocking Receive
+### Non-Blocking Receive (UDP)
 ```c
-void tcp_receive_nonblocking(StreamParser *parser) {
-    if (tcp_socket < 0) return;
-    
-    uint8_t temp_buf[512];
-    int received = recv(tcp_socket, temp_buf, sizeof(temp_buf), MSG_DONTWAIT);
-    
+void udp_receive_nonblocking(StreamParser *parser) {
+    uint8_t temp_buf[1500];
+    struct sockaddr_in src;
+    socklen_t slen = sizeof(src);
+    int received = recvfrom(udp_socket, temp_buf, sizeof(temp_buf), MSG_DONTWAIT, (struct sockaddr*)&src, &slen);
+
     if (received > 0) {
-        // Feed to parser
+        // Feed parser and process framed message in a single datagram
         parser_feed(parser, temp_buf, received);
-        
-        // Try to parse messages
+
         MessageHeader hdr;
         uint8_t payload[2048];
-        
         while (parser_try_parse(parser, &hdr, payload, sizeof(payload))) {
-            handle_received_message(&hdr, payload);
+            handle_received_message(&hdr, payload, &src);
         }
-        
-    } else if (received == 0) {
-        // Connection closed
-        close(tcp_socket);
-        tcp_socket = -1;
-        tcp_state = TCP_DISCONNECTED;
-        log_info("Pi5 disconnected");
-        
-    } else if (errno != EWOULDBLOCK && errno != EAGAIN) {
-        // Error
-        close(tcp_socket);
-        tcp_socket = -1;
-        tcp_state = TCP_DISCONNECTED;
-        log_error("TCP receive error");
+    } else if (received < 0 && errno != EWOULDBLOCK && errno != EAGAIN) {
+        // Log error
     }
 }
 ```
@@ -565,34 +460,31 @@ void tcp_receive_nonblocking(StreamParser *parser) {
 
 ## Main Task Structure
 
-### Recommended Task Loop
+### Recommended Task Loop (UDP)
 ```c
 void ethernet_task(void *params) {
     StreamParser parser;
     parser_init(&parser);
-    
+
     uint32_t last_pose_send = 0;
-    uint32_t last_conn_check = 0;
-    
+
     while (1) {
         uint32_t now = HAL_GetTick();
-        
-        // 1. Connection management (every 10s when disconnected)
-        tcp_connection_task();
-        
-        // 2. Send POSE at 5 Hz (200ms interval) if connected
-        if (tcp_state == TCP_CONNECTED && now - last_pose_send >= 200) {
-            send_pose_to_pi5();
+
+        // 1. Send POSE at 5 Hz (200ms) unconditionally - UDP is best-effort
+        if (now - last_pose_send >= 200) {
+            send_pose_to_pi5_udp();
             last_pose_send = now;
         }
-        
-        // 3. Receive and process messages (non-blocking)
-        if (tcp_state == TCP_CONNECTED) {
-            tcp_receive_nonblocking(&parser);
-        }
-        
+
+        // 2. Receive and process incoming datagrams (non-blocking)
+        udp_receive_nonblocking(&parser);
+
+        // 3. Handle reliable CMD retransmit state machine (if implemented)
+        cmd_retransmit_task(); // non-blocking, small work
+
         // 4. Small delay to prevent CPU thrashing (DO NOT block control loop)
-        osDelay(10);  // 10ms sleep if using RTOS
+        osDelay(5);  // small sleep
     }
 }
 ```
@@ -621,16 +513,15 @@ void ethernet_task(void *params) {
 
 ## Summary Checklist
 
-✅ Configure STM32 static IP: 192.168.1.10  
-✅ Configure Pi5 server IP: 192.168.1.100:9000  
-✅ Implement non-blocking socket operations (fcntl O_NONBLOCK)  
-✅ Connection check every 10s with exponential backoff  
-✅ Send POSE at 5 Hz when connected  
-✅ Receive and parse TRAJ messages (stream parser)  
-✅ Forward phone START/STOP commands to Pi5 (CMD messages)  
-✅ Handle disconnection gracefully (continue robot operation)  
-✅ Verify control loop is never blocked  
-✅ Test with Pi5 powered off - robot should still function  
+✅ Configure STM32 static IP: 192.168.1.10
+✅ Configure Pi5 server IP: 192.168.1.100:9000
+✅ Implement non-blocking UDP socket operations (sendto/recvfrom)
+✅ Send POSE at 5 Hz (best-effort)
+✅ Receive and parse TRAJ messages (stream parser) from datagrams
+✅ Forward phone START/STOP commands to Pi5 (CMD messages)
+✅ Implement lightweight reliable-UDP for `CMD` (seq+ACK) or require manual retry
+✅ Handle packet loss gracefully; control loop must not block
+✅ Test with Pi5 powered off - robot should still function
 
 **The Pi5 expects:**
 - **CMD_START_TRAJ = 1** (from phone button press)

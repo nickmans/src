@@ -1,0 +1,20 @@
+[Unit]
+Description=OMNI Virtual STM32 UDP Simulator
+After=network.target
+
+[Service]
+Type=simple
+User=nickolas
+WorkingDirectory=/home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/usr/bin/python3 /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/virtual_stm32_udp.py --server-host 127.0.0.1 --server-port 9000
+KillSignal=SIGINT
+TimeoutStartSec=10
+TimeoutStopSec=5
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

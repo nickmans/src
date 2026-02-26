@@ -398,11 +398,21 @@ class OMNIServer:
                     await self.tx_queue.put((MessageType.NACK, header.seq, b"Failed to stop ROS2"))
 
             elif cmd.cmd_id == CommandID.STOP_TRAJ:
-                logger.info("STOP_TRAJ command received - stopping ROS2")
+                logger.info("STOP_TRAJ command received - stopping ROS2 and relaunching")
                 success = await self.ros2_mgr.stop()
                 self.state.ros2_running = False
                 if success:
                     await self.tx_queue.put((MessageType.ACK, header.seq, b""))
+                    # Give the OS/ROS middleware a brief moment to release resources before relaunch.
+                    await asyncio.sleep(0.5)
+
+                    # Relaunch ROS2 stack immediately after stopping
+                    relaunch_success = await self.ros2_mgr.start()
+                    self.state.ros2_running = relaunch_success
+                    if relaunch_success:
+                        logger.info("ROS2 stack relaunched successfully after STOP_TRAJ")
+                    else:
+                        logger.error("Failed to relaunch ROS2 stack after STOP_TRAJ")
                 else:
                     await self.tx_queue.put((MessageType.NACK, header.seq, b"Failed to stop ROS2"))
 

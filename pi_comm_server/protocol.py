@@ -33,9 +33,18 @@ class MessageType(IntEnum):
 class CommandID(IntEnum):
     """Command IDs for CMD messages."""
     STOP_ROS2 = 0
+    # NOTE: STM32 uses these IDs over UDP:
+    #   1 = start trajectory generation
+    #   2 = stop trajectory generation
+    #   3 = start/restart ROS2 stack
+    # Historically, this code used 1 as START_ROS2. Keep the alias for backward
+    # compatibility with existing TCP tooling, but prefer START_TRAJ/STOP_TRAJ
+    # for STM32 command semantics.
     START_ROS2 = 1
-    START_TRAJ = 1  # Alias for START_ROS2 (STM32 compatibility)
+    START_TRAJ = 1
     STOP_TRAJ = 2
+    START_RESTART_ROS2 = 3
+    SHUTDOWN_PI5 = 4
 
 
 @dataclass
@@ -129,15 +138,15 @@ class Trajectory:
     reply_to_pose_seq: int
     traj_t0_ms: int
     dt: float
-    knots: list  # list of (x, y, yaw, velocity)
+    knots: list  # list of (x, y, yaw, vx, vy)
     flags: int = 0  # bit0=idle_traj, bit1=has_vel
 
     def pack(self) -> bytes:
         n = len(self.knots)
         payload = struct.pack("<IIHHI", self.reply_to_pose_seq, self.traj_t0_ms, n, self.flags, 0)
         payload += struct.pack("<f", self.dt)
-        for x, y, yaw, velocity in self.knots:
-            payload += struct.pack("<ffff", x, y, yaw, velocity)
+        for x, y, yaw, vx, vy in self.knots:
+            payload += struct.pack("<fffff", x, y, yaw, vx, vy)
         return payload
 
     @staticmethod
@@ -149,11 +158,11 @@ class Trajectory:
         knots = []
         offset = 16
         for _ in range(n):
-            if offset + 16 > len(data):
+            if offset + 20 > len(data):
                 raise ValueError("Trajectory knot data incomplete")
-            x, y, yaw, velocity = struct.unpack("<ffff", data[offset : offset + 16])
-            knots.append((x, y, yaw, velocity))
-            offset += 16
+            x, y, yaw, vx, vy = struct.unpack("<fffff", data[offset : offset + 20])
+            knots.append((x, y, yaw, vx, vy))
+            offset += 20
         return Trajectory(reply_to_pose_seq, traj_t0_ms, dt, knots, flags)
 
 

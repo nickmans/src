@@ -15,6 +15,13 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description() -> LaunchDescription:
     use_mock_lidar = LaunchConfiguration("use_mock_lidar")
     use_rviz = LaunchConfiguration("use_rviz")
+    rviz_config = LaunchConfiguration("rviz_config")
+    map_frame = LaunchConfiguration("map_frame")
+    publish_odom_to_base_tf = LaunchConfiguration("publish_odom_to_base_tf")
+    publish_world_to_odom_tf = LaunchConfiguration("publish_world_to_odom_tf")
+    rolling_map_enable = LaunchConfiguration("rolling_map_enable")
+    rolling_map_margin_m = LaunchConfiguration("rolling_map_margin_m")
+    persistent_obstacles_enable = LaunchConfiguration("persistent_obstacles_enable")
 
     channel_type = LaunchConfiguration("channel_type")
     serial_baudrate = LaunchConfiguration("serial_baudrate")
@@ -107,6 +114,7 @@ def generate_launch_description() -> LaunchDescription:
             "world", "odom",
         ],
         output="screen",
+        condition=IfCondition(publish_world_to_odom_tf),
     )
 
     # odom -> base_link (static fallback for prototyping without pose data)
@@ -121,6 +129,7 @@ def generate_launch_description() -> LaunchDescription:
             "odom", "base_link",
         ],
         output="screen",
+        condition=UnlessCondition(publish_odom_to_base_tf),
     )
     
     # base_link -> lidar1 (at y=+0.10m, no z offset)
@@ -160,11 +169,11 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[
             {
                 # frames
-                "map_frame": "odom",
+                "map_frame": map_frame,
                 "base_frame": "base_link",
 
                 # publish odom->base from /odom (set false if something else already publishes it)
-                "publish_odom_to_base_tf": True,
+                "publish_odom_to_base_tf": ParameterValue(publish_odom_to_base_tf, value_type=bool),
 
                 # robot footprint exclusion
                 "robot_exclusion_enable": True,
@@ -172,18 +181,27 @@ def generate_launch_description() -> LaunchDescription:
 
                 # waypoint removal
                 "waypoint_reached_tol_m": 0.10,
+                "remove_waypoint_radius_m": 0.50,
 
                 # map/costmap sizing
                 "global_map_res": 0.05,  # 1cm resolution (higher detail)
-                "global_map_width_m": 10.0,
-                "global_map_height_m": 10.0,
+                "global_map_width_m": 6.0,
+                "global_map_height_m": 6.0,
+                "rolling_map_enable": ParameterValue(rolling_map_enable, value_type=bool),
+                "rolling_map_margin_m": ParameterValue(rolling_map_margin_m, value_type=float),
+                "persistent_obstacles_enable": ParameterValue(persistent_obstacles_enable, value_type=bool),
+                "persistent_confirm_time_s": 1.2,
+                "persistent_clear_time_s": 1.2,
+                "persistent_evidence_cap": 20,
+                "persistent_inf_clearing_enable": True,
+                "persistent_inf_clearing_ratio": 0.95,
 
                 # inflation (NOTE: hard inflation now actually works)
-                "hard_inflate_radius": 0.225,
-                "soft_inflate_radius": 0.45,
+                "hard_inflate_radius": 0.222,
+                "soft_inflate_radius": 0.444,
 
                 # robot kinematics & constraints
-                "wheel_radius_m": 0.09,
+                "wheel_radius_m": 0.075,
                 "wheelbase_m": 0.200,
                 "max_wheel_acceleration_ms2": 1.0,
                 "max_linear_velocity_ms": 0.5,
@@ -194,16 +212,16 @@ def generate_launch_description() -> LaunchDescription:
 
                 # fused scan for RViz (display /scan_fused)
                 "publish_fused_scan": True,
-                "fused_angle_increment_deg": 0.125,  # 0.25° = 1440 beams (higher detail than 1.0° = 360 beams)
-                "motion_compensate": True,  # set True if robot moves
+                "fused_angle_increment_deg": 0.1,
+                "motion_compensate": False,
 
                 # start pose
                 "start_pose": [0.0, 0.0, 0.0],
 
-                # waypoints
+                # waypoints (start with none; enable/populate at runtime)
                 "wp_n": 0,
                 "waypoints": [float("nan"), float("nan")],
-                "add_wp": [float("nan"), float("nan")],
+                "add_wp": [float("nan"), float("nan"), float("nan")],
 
                 # lidar topics
                 "lidar1_topic": "/lidar1/scan",
@@ -216,7 +234,7 @@ def generate_launch_description() -> LaunchDescription:
         package="rviz2",
         executable="rviz2",
         name="rviz2",
-        arguments=["-d", rviz_config_path],
+        arguments=["-d", rviz_config],
         output="screen",
         condition=IfCondition(use_rviz),
     )
@@ -225,6 +243,13 @@ def generate_launch_description() -> LaunchDescription:
         [
             DeclareLaunchArgument("use_mock_lidar", default_value="false"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
+            DeclareLaunchArgument("rviz_config", default_value=rviz_config_path),
+            DeclareLaunchArgument("map_frame", default_value="odom"),
+            DeclareLaunchArgument("publish_odom_to_base_tf", default_value="true"),
+            DeclareLaunchArgument("publish_world_to_odom_tf", default_value="false"),
+            DeclareLaunchArgument("rolling_map_enable", default_value="true"),
+            DeclareLaunchArgument("rolling_map_margin_m", default_value="1.0"),
+            DeclareLaunchArgument("persistent_obstacles_enable", default_value="true"),
             DeclareLaunchArgument("channel_type", default_value="serial"),
             DeclareLaunchArgument("serial_baudrate", default_value="460800"),
             DeclareLaunchArgument("inverted", default_value="false"),

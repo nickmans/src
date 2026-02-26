@@ -445,6 +445,24 @@ python3 ros2_pose_node.py
 
 **Symptoms:**
 - Sending START_ROS2 command has no effect
+
+### Pi5 Boot/Shutdown Is Slow
+
+If boot or poweroff takes a long time, the common causes are:
+- Services that `After=Wants=network-online.target` (waits for the network “online” target, which can be slow)
+- Artificial delays like `ExecStartPre=/bin/sleep 5`
+- Long default shutdown timeouts (systemd can wait ~90s per service)
+
+This repo’s service files are tuned to avoid those delays:
+- Use `After=network.target` (no online wait)
+- Remove `ExecStartPre` sleeps
+- Set `KillSignal=SIGINT` and shorter `TimeoutStopSec` so `ros2 launch` exits quickly
+
+After updating service files, apply on the Pi5:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart omni_ros2_stack.service omni_udp_server.service
+```
 - NACK response received
 
 **Diagnosis:**

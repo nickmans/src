@@ -28,6 +28,7 @@ class PosePublisherNode(Node):
         self.pose_pub = self.create_publisher(PoseStamped, '/robot/pose', 10)
         self.twist_pub = self.create_publisher(TwistStamped, '/robot/twist', 10)
         self.odom_pub = self.create_publisher(Odometry, '/robot/odom', 10)
+        self.odom_pub_global = self.create_publisher(Odometry, '/odom', 10)
         
         # For initial pose (useful for AMCL, etc.)
         self.initial_pose_pub = self.create_publisher(
@@ -107,6 +108,9 @@ class PosePublisherNode(Node):
             odom_msg.twist.covariance = [0.01] * 36
             
             self.odom_pub.publish(odom_msg)
+
+            # Also publish to /odom so downstream planners (e.g., waypoint_traj) receive odometry
+            self.odom_pub_global.publish(odom_msg)
             
             # Publish initial pose once for localization nodes
             if not self.initial_pose_published:

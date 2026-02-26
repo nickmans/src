@@ -102,6 +102,51 @@ ros2 topic hz /robot/pose
 
 ---
 
+## 🤖 Closed-Loop UDP Simulation (CM7-style)
+
+Use this mode when you want to exercise the real UDP ROS2 bridge with a virtual STM32 that:
+- receives `TRAJ`
+- runs CM7-like control + estimator logic
+- feeds wheel commands into simulated encoder measurements
+- sends `POSE` back at 5 Hz
+
+### Terminal 1: Start UDP server
+
+```bash
+cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+python3 run_udp_server.py
+```
+
+### Terminal 2: Start virtual STM32
+
+```bash
+cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+python3 virtual_stm32_udp.py --server-host 127.0.0.1 --server-port 9000
+```
+
+The simulator automatically sends:
+- `CMD_START_RESTART_ROS2` (3)
+- `CMD_START_TRAJ` (1)
+
+### Terminal 3: Verify ROS2 data flow
+
+```bash
+ros2 topic hz /robot/odom
+ros2 topic echo /robot/odom
+ros2 topic echo /planned_path
+```
+
+### Optional: run simulator as a service
+
+```bash
+sudo cp /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/omni_virtual_stm32.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now omni_virtual_stm32.service
+sudo systemctl status omni_virtual_stm32.service
+```
+
+---
+
 ## 🎮 Common Operations
 
 ### Service Management
@@ -153,6 +198,20 @@ python3 run_server.py --log-level DEBUG
 # Monitor resources
 ./monitor_resources.sh
 ```
+
+### Safe Shutdown (Pi5 + LIDARs)
+
+```bash
+cd /home/nickolas/ros2_ws/src/omni_src
+
+# Interactive confirmation
+./pi_comm_server/safe_shutdown.sh
+
+# Non-interactive (no prompt)
+./pi_comm_server/safe_shutdown.sh --yes
+```
+
+This script safely stops OMNI/ROS2 services first (including the ROS2 stack that drives LIDAR nodes), then powers off the Pi.
 
 ---
 
