@@ -372,7 +372,7 @@ class VirtualSTM32UDP:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(self.local_addr)
-        self.sock.settimeout(0.05)
+        self.sock.settimeout(0.5)  # Increased from 0.05 to reduce CPU wake-ups
 
         self.running = True
         self.recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
@@ -439,6 +439,13 @@ class VirtualSTM32UDP:
                     self.latest_traj = traj
                 if seq % 20 == 0:
                     logger.info("TRAJ rx: seq=%s knots=%s dt=%.3f", seq, len(traj.knots), traj.dt)
+                    # Log first, middle, and last knots to verify trajectory content
+                    if len(traj.knots) > 0:
+                        logger.info("  knot[0]:  x=%.3f y=%.3f yaw=%.3f vx=%.3f vy=%.3f", *traj.knots[0])
+                        if len(traj.knots) > 1:
+                            mid = len(traj.knots) // 2
+                            logger.info("  knot[%d]: x=%.3f y=%.3f yaw=%.3f vx=%.3f vy=%.3f", mid, *traj.knots[mid])
+                            logger.info("  knot[%d]: x=%.3f y=%.3f yaw=%.3f vx=%.3f vy=%.3f", len(traj.knots)-1, *traj.knots[-1])
             return
 
         if msg_type == MessageType.CMD:
@@ -482,8 +489,13 @@ class VirtualSTM32UDP:
         if traj is None or traj.dt <= 0.0 or not traj.knots:
             return xd, vd, 1
 
-        now_ms = int(time.time() * 1000)
-        elapsed_ms = max(0, now_ms - traj.traj_t0_ms)
+        # Mask to 32-bit to match the traj_t0_ms from server
+        now_ms = int(time.time() * 1000) & 0xFFFFFFFF
+        # Handle 32-bit wraparound and potential future timestamps
+        elapsed_ms = (now_ms - traj.traj_t0_ms) & 0xFFFFFFFF
+        # Guard against future timestamps (>1 hour in future indicates wraparound issue)
+        if elapsed_ms > 3600000:  # More than 1 hour suggests negative time
+            elapsed_ms = 0
         dt_ms = max(1, int(traj.dt * 1000.0))
         idx = min(len(traj.knots) - 1, elapsed_ms // dt_ms)
 
@@ -494,6 +506,14 @@ class VirtualSTM32UDP:
         # Use feedforward velocities directly from trajectory
         xd[3] = vx
         xd[4] = vy
+
+        # Debug logging every 5 seconds (reduced from 1s to lower CPU overhead)
+        if hasattr(self, '_last_debug_log'):
+            if time.time() - self._last_debug_log > 5.0:
+                logger.debug(f"TRAJ: idx={idx}/{len(traj.knots)-1} pos=({x:.2f},{y:.2f},{yaw:.2f}) vel=({vx:.2f},{vy:.2f})")
+                self._last_debug_log = time.time()
+        else:
+            self._last_debug_log = time.time()
 
         return xd, vd, 1
 
@@ -521,16 +541,22 @@ class VirtualSTM32UDP:
         last_t = time.monotonic()
         self.last_pose_send_t = last_t
         imu_zeroed = False
+        next_control_t = last_t + self.control_dt
 
         while self.running:
             now_t = time.monotonic()
-            dt = now_t - last_t
-            if dt < self.control_dt:
-                time.sleep(max(0.0005, self.control_dt - dt))
+            # Sleep until next control cycle (more efficient than tight polling)
+            sleep_time = next_control_t - now_t
+            if sleep_time > 0.001:  # Only sleep if >1ms remains
+                time.sleep(sleep_time * 0.95)  # Sleep 95% to avoid overshooting
                 continue
+            
+            # Execute control step
+            dt = now_t - last_t
             if dt > 0.1:
                 dt = self.control_dt
             last_t = now_t
+            next_control_t = now_t + self.control_dt
 
             xd, vd, selector = self._select_desired_state()
 

@@ -34,6 +34,14 @@ def generate_launch_description() -> LaunchDescription:
     lidar1_frame_id = LaunchConfiguration("lidar1_frame_id")
     lidar2_frame_id = LaunchConfiguration("lidar2_frame_id")
 
+    traj_params_file = LaunchConfiguration("traj_params_file")
+
+    traj_params_path = os.path.join(
+        get_package_share_directory("omni_traj"),
+        "config",
+        "waypoint_traj.yaml",
+    )
+
     rviz_config_path = os.path.join(
         get_package_share_directory("sllidar_ros2"),
         "rviz",
@@ -167,65 +175,16 @@ def generate_launch_description() -> LaunchDescription:
         name="waypoint_traj",
         output="screen",
         parameters=[
+            traj_params_file,
             {
                 # frames
                 "map_frame": map_frame,
-                "base_frame": "base_link",
 
                 # publish odom->base from /odom (set false if something else already publishes it)
                 "publish_odom_to_base_tf": ParameterValue(publish_odom_to_base_tf, value_type=bool),
-
-                # robot footprint exclusion
-                "robot_exclusion_enable": True,
-                "robot_exclusion_radius_m": 0.22,
-
-                # waypoint removal
-                "waypoint_reached_tol_m": 0.10,
-                "remove_waypoint_radius_m": 0.50,
-
-                # map/costmap sizing
-                "global_map_res": 0.05,  # 1cm resolution (higher detail)
-                "global_map_width_m": 6.0,
-                "global_map_height_m": 6.0,
                 "rolling_map_enable": ParameterValue(rolling_map_enable, value_type=bool),
                 "rolling_map_margin_m": ParameterValue(rolling_map_margin_m, value_type=float),
                 "persistent_obstacles_enable": ParameterValue(persistent_obstacles_enable, value_type=bool),
-                "persistent_confirm_time_s": 1.8,
-                "persistent_clear_time_s": 2.2,
-                "persistent_evidence_cap": 30,
-                "persistent_inf_clearing_enable": False,
-                "persistent_inf_clearing_ratio": 0.90,
-
-                # inflation (NOTE: hard inflation now actually works)
-                "hard_inflate_radius": 0.222,
-                "soft_inflate_radius": 0.444,
-
-                # robot kinematics & constraints
-                "wheel_radius_m": 0.075,
-                "wheelbase_m": 0.200,
-                "max_wheel_acceleration_ms2": 1.0,
-                "max_linear_velocity_ms": 0.5,
-
-                # scan
-                "scan_max_age_s": 0.5,
-                "scan_beam_stride": 1,
-
-                # fused scan for RViz (display /scan_fused)
-                "publish_fused_scan": True,
-                "fused_angle_increment_deg": 0.1,
-                "motion_compensate": False,
-
-                # start pose
-                "start_pose": [0.0, 0.0, 0.0],
-
-                # waypoints (start with none; enable/populate at runtime)
-                "wp_n": 0,
-                "waypoints": [float("nan"), float("nan")],
-                "add_wp": [float("nan"), float("nan"), float("nan")],
-
-                # lidar topics
-                "lidar1_topic": "/lidar1/scan",
-                "lidar2_topic": "/lidar2/scan",
             }
         ],
     )
@@ -244,6 +203,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("use_mock_lidar", default_value="false"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("rviz_config", default_value=rviz_config_path),
+            DeclareLaunchArgument("traj_params_file", default_value=traj_params_path),
             DeclareLaunchArgument("map_frame", default_value="odom"),
             DeclareLaunchArgument("publish_odom_to_base_tf", default_value="true"),
             DeclareLaunchArgument("publish_world_to_odom_tf", default_value="false"),

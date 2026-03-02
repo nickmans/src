@@ -21,21 +21,30 @@ MAX_PAYLOAD_SIZE = 65535
 class MessageType(IntEnum):
     """Message type IDs."""
     POSE = 1
-    CMD = 2
     EVENT = 3
     TRAJ = 10
     CORR = 11
     ACK = 12
     NACK = 13
     STATUS = 15
+    CMD = 20
 
 
 class CommandID(IntEnum):
     """Command IDs for CMD messages."""
-    SET_IDLE = 1
-    START_ROS2 = 2
-    STOP_ROS2 = 3
-    GET_STATUS = 4
+    STOP_ROS2 = 0
+    # NOTE: STM32 uses these IDs over UDP:
+    #   1 = start trajectory generation
+    #   2 = stop trajectory generation
+    #   3 = start/restart ROS2 stack
+    # Historically, this code used 1 as START_ROS2. Keep the alias for backward
+    # compatibility with existing TCP tooling, but prefer START_TRAJ/STOP_TRAJ
+    # for STM32 command semantics.
+    START_ROS2 = 1
+    START_TRAJ = 1
+    STOP_TRAJ = 2
+    START_RESTART_ROS2 = 3
+    SHUTDOWN_PI5 = 4
 
 
 @dataclass
@@ -109,6 +118,13 @@ class Command:
     def unpack(data: bytes) -> "Command":
         if len(data) < 4:
             raise ValueError(f"Command payload too short: {len(data)}")
+        
+        # Support old STM32 protocol: if payload is exactly 4 bytes, treat as uint32 command
+        if len(data) == 4:
+            cmd_id = struct.unpack("<I", data[:4])[0]
+            return Command(cmd_id, b"")
+        
+        # New protocol: cmd_id (uint16) + arg_len (uint16) + arg
         cmd_id, arg_len = struct.unpack("<HH", data[:4])
         if len(data) < 4 + arg_len:
             raise ValueError(f"Command arg too short: expected {arg_len}, got {len(data) - 4}")
@@ -122,31 +138,31 @@ class Trajectory:
     reply_to_pose_seq: int
     traj_t0_ms: int
     dt: float
-    knots: list  # list of (x, y, yaw, velocity)
+    knots: list  # list of (x, y, yaw, vx, vy)
     flags: int = 0  # bit0=idle_traj, bit1=has_vel
 
     def pack(self) -> bytes:
         n = len(self.knots)
         payload = struct.pack("<IIHHI", self.reply_to_pose_seq, self.traj_t0_ms, n, self.flags, 0)
         payload += struct.pack("<f", self.dt)
-        for x, y, yaw, velocity in self.knots:
-            payload += struct.pack("<ffff", x, y, yaw, velocity)
+        for x, y, yaw, vx, vy in self.knots:
+            payload += struct.pack("<fffff", x, y, yaw, vx, vy)
         return payload
 
     @staticmethod
     def unpack(data: bytes) -> "Trajectory":
         if len(data) < 14:  # reply_to_pose_seq(4) + traj_t0_ms(4) + n(2) + flags(2) + dt(4)
             raise ValueError(f"Trajectory payload too short: {len(data)}")
-        reply_to_pose_seq, traj_t0_ms, n, flags = struct.unpack("<IIH", data[:10])
-        dt = struct.unpack("<f", data[10:14])[0]
+        reply_to_pose_seq, traj_t0_ms, n, flags = struct.unpack("<IIHH", data[:12])
+        dt = struct.unpack("<f", data[12:16])[0]
         knots = []
-        offset = 14
+        offset = 16
         for _ in range(n):
-            if offset + 16 > len(data):
+            if offset + 20 > len(data):
                 raise ValueError("Trajectory knot data incomplete")
-            x, y, yaw, velocity = struct.unpack("<ffff", data[offset : offset + 16])
-            knots.append((x, y, yaw, velocity))
-            offset += 16
+            x, y, yaw, vx, vy = struct.unpack("<fffff", data[offset : offset + 20])
+            knots.append((x, y, yaw, vx, vy))
+            offset += 20
         return Trajectory(reply_to_pose_seq, traj_t0_ms, dt, knots, flags)
 
 

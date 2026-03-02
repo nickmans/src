@@ -32,6 +32,7 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from ros2_pose_node import PosePublisherNode
 from nav_msgs.msg import Path
+from std_msgs.msg import Float64MultiArray
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ class OMNIUDPServer:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((self.host, self.port))
-        self.sock.settimeout(1.0)
+        self.sock.settimeout(2.0)  # Increased from 1.0 to reduce CPU wake-ups
 
         logger.info(f"UDP server listening on {self.host}:{self.port}")
 
@@ -465,7 +466,20 @@ class OMNIUDPServer:
             else:
                 # Fallback: calculate from position difference
                 if prev_x is None:
-                    vx, vy = 0.0, 0.0
+                    # For first knot, look ahead to calculate initial velocity
+                    if idx + 1 < len(path_points):
+                        next_x, next_y, _ = path_points[idx + 1]
+                        dx = next_x - x
+                        dy = next_y - y
+                        dist = math.hypot(dx, dy)
+                        velocity = min(0.6, dist / dt)
+                        if dist > 1e-9:
+                            vx = velocity * (dx / dist)
+                            vy = velocity * (dy / dist)
+                        else:
+                            vx, vy = 0.0, 0.0
+                    else:
+                        vx, vy = 0.0, 0.0
                 else:
                     dx = x - prev_x
                     dy = y - prev_y
@@ -482,7 +496,7 @@ class OMNIUDPServer:
 
         return Trajectory(
             reply_to_pose_seq=self._last_pose_seq,
-            traj_t0_ms=int(time.time() * 1000),
+            traj_t0_ms=int(time.time() * 1000) & 0xFFFFFFFF,
             dt=dt,
             knots=knots,
             flags=0,

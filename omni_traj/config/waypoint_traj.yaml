@@ -1,0 +1,48 @@
+waypoint_traj:
+  ros__parameters:
+    map_frame: odom
+    base_frame: base_link
+    publish_odom_to_base_tf: true
+
+    robot_exclusion_enable: true
+    robot_exclusion_radius_m: 0.22
+
+    waypoint_reached_tol_m: 0.10
+    remove_waypoint_radius_m: 0.50
+
+    global_map_res: 0.025
+    global_map_width_m: 4.0
+    global_map_height_m: 4.0
+    rolling_map_enable: true
+    rolling_map_margin_m: 1.0
+    persistent_obstacles_enable: false
+    persistent_confirm_time_s: 1.2
+    persistent_clear_time_s: 1.2
+    persistent_evidence_cap: 20
+    persistent_inf_clearing_enable: true
+    persistent_inf_clearing_ratio: 0.95
+
+    hard_inflate_radius: 0.222
+    soft_inflate_radius: 0.444
+
+    wheel_radius_m: 0.075
+    wheelbase_m: 0.200
+    max_wheel_acceleration_ms2: 1.0
+    max_linear_velocity_ms: 0.5
+
+    scan_max_age_s: 0.5
+    scan_beam_stride: 1
+    max_lidar_range_m: 5.0
+
+    publish_fused_scan: true
+    fused_angle_increment_deg: 0.25
+    motion_compensate: true
+
+    start_pose: [0.0, 0.0, 0.0]
+
+    wp_n: 0
+    waypoints: [.nan, .nan]
+    add_wp: [.nan, .nan, .nan]
+
+    lidar1_topic: /lidar1/scan
+    lidar2_topic: /lidar2/scan

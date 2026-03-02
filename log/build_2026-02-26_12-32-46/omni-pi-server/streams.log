@@ -1,0 +1,75 @@
+[1.776s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build
+[2.364s] running develop
+[2.729s] Removing /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/omni-pi-server.egg-link (link to .)
+[2.910s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build
+[2.913s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni-pi-server build --build-base /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build install --record /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/install.log --single-version-externally-managed
+[3.427s] running egg_info
+[3.463s] writing build/omni-pi-server/omni_pi_server.egg-info/PKG-INFO
+[3.463s] writing dependency_links to build/omni-pi-server/omni_pi_server.egg-info/dependency_links.txt
+[3.465s] writing entry points to build/omni-pi-server/omni_pi_server.egg-info/entry_points.txt
+[3.466s] writing top-level names to build/omni-pi-server/omni_pi_server.egg-info/top_level.txt
+[3.540s] reading manifest file 'build/omni-pi-server/omni_pi_server.egg-info/SOURCES.txt'
+[3.541s] writing manifest file 'build/omni-pi-server/omni_pi_server.egg-info/SOURCES.txt'
+[3.542s] running build
+[3.542s] running build_py
+[3.543s] copying pi_comm_server/protocol.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.543s] copying pi_comm_server/planner_stub.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.543s] copying pi_comm_server/ros2_manager.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.543s] copying pi_comm_server/server.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.544s] copying pi_comm_server/test_client.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.544s] copying pi_comm_server/test_simple_server.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.544s] copying pi_comm_server/omni_main.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.545s] copying pi_comm_server/virtual_stm32_udp.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.547s] copying pi_comm_server/udp_server.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.547s] copying pi_comm_server/tcp_server.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.547s] copying pi_comm_server/demo_udp_client.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.547s] copying pi_comm_server/run_udp_server.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.547s] copying pi_comm_server/ros2_pose_node.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.547s] copying pi_comm_server/ros2_trajectory_node.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.547s] copying pi_comm_server/test_stm32_client.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server
+[3.548s] running install
+[3.558s] running install_lib
+[3.595s] creating /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.596s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/test_simple_server.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.599s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/server.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.599s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/omni_main.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.599s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/ros2_manager.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.599s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/test_client.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.599s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/virtual_stm32_udp.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.600s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/planner_stub.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.600s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/udp_server.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.600s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/run_server.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.600s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/tcp_server.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.600s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/run_test_client.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.600s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/__init__.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.602s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/demo_udp_client.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.602s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/run_udp_server.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.602s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/ros2_pose_node.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.603s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/ros2_trajectory_node.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.603s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/test_stm32_client.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.604s] copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/protocol.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server
+[3.604s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/test_simple_server.py to test_simple_server.cpython-312.pyc
+[3.604s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/server.py to server.cpython-312.pyc
+[3.612s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/omni_main.py to omni_main.cpython-312.pyc
+[3.616s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/ros2_manager.py to ros2_manager.cpython-312.pyc
+[3.619s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/test_client.py to test_client.cpython-312.pyc
+[3.623s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/virtual_stm32_udp.py to virtual_stm32_udp.cpython-312.pyc
+[3.635s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/planner_stub.py to planner_stub.cpython-312.pyc
+[3.637s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/udp_server.py to udp_server.cpython-312.pyc
+[3.649s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/run_server.py to run_server.cpython-312.pyc
+[3.649s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/tcp_server.py to tcp_server.cpython-312.pyc
+[3.653s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/run_test_client.py to run_test_client.cpython-312.pyc
+[3.654s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/__init__.py to __init__.cpython-312.pyc
+[3.655s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/demo_udp_client.py to demo_udp_client.cpython-312.pyc
+[3.656s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/run_udp_server.py to run_udp_server.cpython-312.pyc
+[3.656s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/ros2_pose_node.py to ros2_pose_node.cpython-312.pyc
+[3.658s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/ros2_trajectory_node.py to ros2_trajectory_node.cpython-312.pyc
+[3.664s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/test_stm32_client.py to test_stm32_client.cpython-312.pyc
+[3.668s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/protocol.py to protocol.cpython-312.pyc
+[3.672s] running install_egg_info
+[3.713s] Copying build/omni-pi-server/omni_pi_server.egg-info to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/omni_pi_server-1.0.0-py3.12.egg-info
+[3.716s] running install_scripts
+[3.989s] Installing omni-server script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin
+[3.990s] Installing omni-test-client script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin
+[3.993s] writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/install.log'
+[4.160s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni-pi-server build --build-base /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build install --record /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/install.log --single-version-externally-managed

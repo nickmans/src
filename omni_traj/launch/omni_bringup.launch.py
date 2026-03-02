@@ -1,8 +1,17 @@
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import TimerAction
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    traj_params_path = os.path.join(
+        get_package_share_directory('omni_traj'),
+        'config',
+        'waypoint_traj.yaml',
+    )
+
     # Use stable by-id paths (recommended)
     lidar1_port = '/dev/serial/by-id/USB_ID_FOR_LIDAR1'
     lidar2_port = '/dev/serial/by-id/USB_ID_FOR_LIDAR2'
@@ -64,11 +73,13 @@ def generate_launch_description():
         executable='waypoint_traj',
         name='waypoint_traj',
         output='screen',
-        parameters=[{
-            'lidar1_topic': '/lidar1/scan',
-            'lidar2_topic': '/lidar2/scan',
-            # keep the rest of your params...
-        }]
+        parameters=[
+            traj_params_path,
+            {
+                'lidar1_topic': '/lidar1/scan',
+                'lidar2_topic': '/lidar2/scan',
+            },
+        ]
     )
 
     return LaunchDescription([
