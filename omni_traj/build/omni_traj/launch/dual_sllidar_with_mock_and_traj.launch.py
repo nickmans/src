@@ -1,0 +1,1 @@
+/home/nickolas/ros2_ws/src/omni_src/omni_traj/launch/dual_sllidar_with_mock_and_traj.launch.py

@@ -1,0 +1,3 @@
+[console_scripts]
+empty_scan_pub = omni_traj.empty_scan_pub:main
+waypoint_traj = omni_traj.waypoint_traj_node:main

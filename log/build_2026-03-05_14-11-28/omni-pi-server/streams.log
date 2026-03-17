@@ -1,0 +1,16 @@
+[1.601s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build --no-deps
+[2.151s] running develop
+[2.498s] running egg_info
+[2.528s] writing omni_pi_server.egg-info/PKG-INFO
+[2.528s] writing dependency_links to omni_pi_server.egg-info/dependency_links.txt
+[2.529s] writing entry points to omni_pi_server.egg-info/entry_points.txt
+[2.530s] writing top-level names to omni_pi_server.egg-info/top_level.txt
+[2.648s] reading manifest file 'omni_pi_server.egg-info/SOURCES.txt'
+[2.650s] writing manifest file 'omni_pi_server.egg-info/SOURCES.txt'
+[2.683s] running build_ext
+[2.683s] Creating /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/omni-pi-server.egg-link (link to .)
+[2.684s] Installing omni-server script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin
+[2.685s] Installing omni-test-client script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin
+[2.685s] 
+[2.685s] Installed /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server
+[2.848s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build --no-deps

@@ -1,0 +1,46 @@
+amcl:
+  ros__parameters:
+    use_sim_time: false
+
+    # Frames and topics are overridden in launch, these are safe defaults.
+    global_frame_id: map
+    odom_frame_id: odom
+    base_frame_id: base_link
+    scan_topic: /scan_fused
+
+    tf_broadcast: true
+    transform_tolerance: 0.2
+    save_pose_rate: 1.0
+
+    # Motion model noise (tune for your drivetrain/odom quality).
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.1
+
+    # Particle filter sizing.
+    min_particles: 300
+    max_particles: 2000
+    pf_err: 0.02
+    pf_z: 0.99
+    resample_interval: 1
+
+    # Recovery and update thresholds.
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0
+    update_min_d: 0.05
+    update_min_a: 0.10
+
+    # Likelihood field model for robust scan-to-map matching.
+    laser_model_type: likelihood_field
+    laser_max_range: 5.0
+    laser_min_range: 0.05
+    laser_likelihood_max_dist: 1.0
+    z_hit: 0.8
+    z_rand: 0.2
+    sigma_hit: 0.2
+    max_beams: 90
+
+    # Initial pose can be provided from RViz /initialpose.
+    set_initial_pose: false

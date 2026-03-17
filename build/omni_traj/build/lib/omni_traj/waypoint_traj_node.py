@@ -4,28 +4,33 @@
 from __future__ import annotations
 
 import base64
+import glob
 import heapq
 import json
 import math
 import os
+import sys
 import time
 import zlib
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Dict, List, Optional, Tuple
 
+import numpy as np
 import rclpy
 import tf2_ros
+from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Point, PointStamped, PoseStamped, PoseWithCovarianceStamped, TransformStamped
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import ColorRGBA
-from std_srvs.srv import Empty
+from std_msgs.msg import ColorRGBA, Float64MultiArray
+from std_srvs.srv import Empty, Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
 try:
@@ -33,6 +38,11 @@ try:
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 
 def wrap_to_pi(a: float) -> float:
@@ -71,82 +81,109 @@ class WaypointTrajNode(Node):
     - Pop reached waypoints within 0.10m
     """
 
-    def __init__(self) -> None:
-        super().__init__("waypoint_traj")
+    def __init__(self, parameter_overrides: Optional[List[Parameter]] = None) -> None:
+        super().__init__("waypoint_traj", parameter_overrides=parameter_overrides or [])
+
+        yaml_param_defaults = self._load_yaml_param_defaults()
+
+        def cfg(name: str):
+            if name in yaml_param_defaults:
+                return yaml_param_defaults[name]
+            raise RuntimeError(f"Missing required parameter '{name}' in waypoint_traj.yaml")
 
         # ===== Frames =====
-        self.declare_parameter("map_frame", "odom")      # publish costmap in odom so RViz fixed frame "odom" works
-        self.declare_parameter("base_frame", "base_link")
+        self.declare_parameter("map_frame", cfg("map_frame"))
+        self.declare_parameter("odom_frame", cfg("odom_frame"))
+        self.declare_parameter("base_frame", cfg("base_frame"))
+        self.declare_parameter("prefer_tf_pose", cfg("prefer_tf_pose"))
+        self.declare_parameter("pose_tf_timeout_s", cfg("pose_tf_timeout_s"))
 
         # If YOU already publish odom->base_link elsewhere, keep this false
-        self.declare_parameter("publish_odom_to_base_tf", True)
+        self.declare_parameter("publish_odom_to_base_tf", cfg("publish_odom_to_base_tf"))
 
         # ===== Robot exclusion =====
-        self.declare_parameter("robot_exclusion_enable", True)
-        self.declare_parameter("robot_exclusion_radius_m", 0.22)  # diameter 0.44m
+        self.declare_parameter("robot_exclusion_enable", cfg("robot_exclusion_enable"))
+        self.declare_parameter("robot_exclusion_radius_m", cfg("robot_exclusion_radius_m"))  # diameter 0.44m
 
         # ===== Waypoint removal =====
-        self.declare_parameter("waypoint_reached_tol_m", 0.10)
-        self.declare_parameter("remove_waypoint_radius_m", 0.35)
+        self.declare_parameter("waypoint_reached_tol_m", cfg("waypoint_reached_tol_m"))
+        self.declare_parameter("remove_waypoint_radius_m", cfg("remove_waypoint_radius_m"))
 
         # ===== Global grid =====
-        self.declare_parameter("global_map_res", 0.05)  # 5cm resolution
-        self.declare_parameter("global_map_width_m", 6.0)
-        self.declare_parameter("global_map_height_m", 6.0)
-        self.declare_parameter("rolling_map_enable", True)
-        self.declare_parameter("rolling_map_margin_m", 1.0)
-        self.declare_parameter("persistent_obstacles_enable", True)
-        self.declare_parameter("persistent_confirm_time_s", 1.2)
-        self.declare_parameter("persistent_clear_time_s", 1.2)
-        self.declare_parameter("persistent_evidence_cap", 20)
-        self.declare_parameter("persistent_inf_clearing_enable", True)
-        self.declare_parameter("persistent_inf_clearing_ratio", 0.95)
+        self.declare_parameter("global_map_res", cfg("global_map_res"))  # 5cm resolution
+        self.declare_parameter("global_map_width_m", cfg("global_map_width_m"))
+        self.declare_parameter("global_map_height_m", cfg("global_map_height_m"))
+        self.declare_parameter("rolling_map_enable", cfg("rolling_map_enable"))
+        self.declare_parameter("rolling_map_margin_m", cfg("rolling_map_margin_m"))
+        self.declare_parameter("persistent_obstacles_enable", cfg("persistent_obstacles_enable"))
+        self.declare_parameter("persistent_confirm_time_s", cfg("persistent_confirm_time_s"))
+        self.declare_parameter("persistent_clear_time_s", cfg("persistent_clear_time_s"))
+        self.declare_parameter("persistent_evidence_cap", cfg("persistent_evidence_cap"))
+        self.declare_parameter("persistent_inf_clearing_enable", cfg("persistent_inf_clearing_enable"))
+        self.declare_parameter("persistent_inf_clearing_ratio", cfg("persistent_inf_clearing_ratio"))
+        self.declare_parameter("mapping_save_path", cfg("mapping_save_path"))
+        self.declare_parameter("auto_load_saved_map", cfg("auto_load_saved_map"))
+        self.declare_parameter("default_frozen_map_mode", cfg("default_frozen_map_mode"))
+        self.declare_parameter("mapping_area_size_m", cfg("mapping_area_size_m"))
+        self.declare_parameter("mapping_res_m", cfg("mapping_res_m"))
+        self.declare_parameter("mapping_hit_logodd_inc", cfg("mapping_hit_logodd_inc"))
+        self.declare_parameter("mapping_free_logodd_dec", cfg("mapping_free_logodd_dec"))
+        self.declare_parameter("mapping_logodd_min", cfg("mapping_logodd_min"))
+        self.declare_parameter("mapping_logodd_max", cfg("mapping_logodd_max"))
+        self.declare_parameter("mapping_occ_threshold", cfg("mapping_occ_threshold"))
 
         # ===== Scans =====
-        self.declare_parameter("lidar1_topic", "/lidar1/scan")
-        self.declare_parameter("lidar2_topic", "/lidar2/scan")
-        self.declare_parameter("scan_max_age_s", 0.5)
-        self.declare_parameter("scan_beam_stride", 1)
-        self.declare_parameter("scan_no_hit_eps_m", 1e-3)
+        self.declare_parameter("lidar1_topic", cfg("lidar1_topic"))
+        self.declare_parameter("lidar2_topic", cfg("lidar2_topic"))
+        self.declare_parameter("scan_max_age_s", cfg("scan_max_age_s"))
+        self.declare_parameter("scan_beam_stride", cfg("scan_beam_stride"))
+        self.declare_parameter("scan_no_hit_eps_m", cfg("scan_no_hit_eps_m"))
+        self.declare_parameter("max_lidar_range_m", cfg("max_lidar_range_m"))  # Max range for lidar processing (reduces CPU load)
 
         # ===== Fused scan output =====
-        self.declare_parameter("publish_fused_scan", True)
-        self.declare_parameter("fused_angle_min", -math.pi)
-        self.declare_parameter("fused_angle_max", math.pi)
-        self.declare_parameter("fused_angle_increment_deg", 0.1)  # 0.1 degree bins
-        self.declare_parameter("motion_compensate", False)         # set True if robot moves + you want de-warp
+        self.declare_parameter("publish_fused_scan", cfg("publish_fused_scan"))
+        self.declare_parameter("fused_angle_min", cfg("fused_angle_min"))
+        self.declare_parameter("fused_angle_max", cfg("fused_angle_max"))
+        self.declare_parameter("fused_angle_increment_deg", cfg("fused_angle_increment_deg"))  # 0.5 degree bins
+        self.declare_parameter("motion_compensate", cfg("motion_compensate"))         # set True if robot moves + you want de-warp
 
         # ===== Inflation =====
-        self.declare_parameter("hard_inflate_radius", 0.222)  # typical = robot radius
-        self.declare_parameter("soft_inflate_radius", 0.444)
+        self.declare_parameter("hard_inflate_radius", cfg("hard_inflate_radius"))  # typical = robot radius
+        self.declare_parameter("soft_inflate_radius", cfg("soft_inflate_radius"))
 
         # ===== Robot kinematics & constraints =====
-        self.declare_parameter("wheel_radius_m", 0.075)           # Wheel radius in meters
-        self.declare_parameter("wheelbase_m", 0.200)              # Distance from center to wheel (omni) or half-wheelbase
-        self.declare_parameter("max_wheel_acceleration_ms2", 1.0) # Max acceleration per wheel (m/s²)
-        self.declare_parameter("max_linear_velocity_ms", 0.5)    # Max linear velocity (m/s)
-        self.declare_parameter("max_lateral_accel", 1.0)        # Max lateral (centripetal) accel (m/s^2)
-        self.declare_parameter("spline_sample_spacing_m", 0.03)  # Sampling distance along smoothed spline
-        self.declare_parameter("spline_max_curvature", 3.0)      # 1/m; <=0 disables curvature limiting
-        self.declare_parameter("spline_curvature_blend_step", 0.15)  # Blend step toward polyline per iteration
-        self.declare_parameter("spline_curvature_max_iters", 6)   # Max iterations for curvature-limiting pass
+        self.declare_parameter("wheel_radius_m", cfg("wheel_radius_m"))           # Wheel radius in meters
+        self.declare_parameter("wheelbase_m", cfg("wheelbase_m"))              # Distance from center to wheel (omni) or half-wheelbase
+        self.declare_parameter("max_wheel_acceleration_ms2", cfg("max_wheel_acceleration_ms2")) # Max acceleration per wheel (m/s²)
+        self.declare_parameter("max_linear_velocity_ms", cfg("max_linear_velocity_ms"))    # Max linear velocity (m/s)
+        self.declare_parameter("max_lateral_accel", cfg("max_lateral_accel"))        # Max lateral (centripetal) accel (m/s^2)
+        self.declare_parameter("trajectory_replan_hz", cfg("trajectory_replan_hz"))     # Limit heavy trajectory re-generation frequency
+        self.declare_parameter("trajectory_replan_min_move_m", cfg("trajectory_replan_min_move_m"))  # Replan sooner when robot moves this far
+        self.declare_parameter("trajectory_replan_min_yaw_rad", cfg("trajectory_replan_min_yaw_rad"))  # Replan sooner when heading changes this much
+        # Spline tuning knobs:
+        # - For tighter turns / faster response: increase max_curvature, reduce blend_step, or reduce max_iters
+        # - For gentler turns / less corner-cutting: decrease max_curvature, increase blend_step and/or max_iters
+        self.declare_parameter("spline_sample_spacing_m", cfg("spline_sample_spacing_m"))  # [0.02-0.06] m; smaller = smoother/denser, larger = lighter CPU
+        self.declare_parameter("spline_max_curvature", cfg("spline_max_curvature"))      # [~1.5-5.0] 1/m; lower = wider turns, <=0 disables curvature limiting
+        self.declare_parameter("spline_curvature_blend_step", cfg("spline_curvature_blend_step"))  # [0.05-0.35]; higher = stronger pull toward polyline each iteration
+        self.declare_parameter("spline_curvature_max_iters", cfg("spline_curvature_max_iters"))   # [2-12]; higher = more chances to satisfy curvature cap
 
         # ===== Odom history =====
-        self.declare_parameter("odom_history_s", 2.0)
+        self.declare_parameter("odom_history_s", cfg("odom_history_s"))
 
         # ===== Waypoints =====
         self.declare_parameter(
             "waypoints",
-            [float("nan"), float("nan")],
+            cfg("waypoints"),
             ParameterDescriptor(description="Flat list [x1,y1,(ignored), x2,y2,(ignored), ...]"),
         )
         self.declare_parameter(
             "add_wp",
-            [float("nan"), float("nan"), float("nan")],
+            cfg("add_wp"),
             ParameterDescriptor(description="Set to [x,y] or [x,y,_] to append; node clears after consuming"),
         )
-        self.declare_parameter("start_pose", [0.0, 0.0, 0.0])
-        self.declare_parameter("wp_n", 0)
+        self.declare_parameter("start_pose", cfg("start_pose"))
+        self.declare_parameter("wp_n", cfg("wp_n"))
 
         # ===== TF =====
         self.tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
@@ -157,14 +194,16 @@ class WaypointTrajNode(Node):
         # ===== Odom =====
         self.odom_sub = self.create_subscription(Odometry, "/odom", self.on_odom, 50)
         self.odom_pose_latest = Pose2D(0.0, 0.0, 0.0)
+        self.odom_vel_body_latest: Tuple[float, float] = (0.0, 0.0)
+        self.odom_vel_map_latest: Tuple[float, float] = (0.0, 0.0)
         self.have_odom_pose = False
         self._odom_hist: Deque[Tuple[int, Pose2D]] = deque()
 
         # ===== LiDAR subs =====
         t1 = self.get_parameter("lidar1_topic").value
         t2 = self.get_parameter("lidar2_topic").value
-        self.sub1 = self.create_subscription(LaserScan, t1, self.on_scan1, 20)
-        self.sub2 = self.create_subscription(LaserScan, t2, self.on_scan2, 20)
+        self.sub1 = self.create_subscription(LaserScan, t1, self.on_scan1, qos_profile_sensor_data)
+        self.sub2 = self.create_subscription(LaserScan, t2, self.on_scan2, qos_profile_sensor_data)
         self.clicked_point_sub = self.create_subscription(PointStamped, "/clicked_point", self.on_clicked_point, 20)
         self.nav_goal_sub = self.create_subscription(PoseStamped, "/move_base_simple/goal", self.on_nav_goal, 20)
         self.nav2_goal_sub = self.create_subscription(PoseStamped, "/goal_pose", self.on_nav_goal, 20)
@@ -179,22 +218,55 @@ class WaypointTrajNode(Node):
 
         # ===== Grid =====
         self.gs_map = self._make_global_grid_spec()
-        self.static_occ: List[int] = [0] * (self.gs_map.width * self.gs_map.height)
-        self.persistent_evidence: List[int] = [0] * (self.gs_map.width * self.gs_map.height)
+        # Use NumPy arrays for 50-80% faster grid operations
+        self.static_occ = np.zeros((self.gs_map.height, self.gs_map.width), dtype=np.int8)
+        self.persistent_evidence = np.zeros((self.gs_map.height, self.gs_map.width), dtype=np.int16)
+        self.mapping_active = False
+        self.use_saved_map_only = False
+        self.mapping_grid_spec: Optional[GridSpec] = None
+        self.mapping_logodds: Optional[np.ndarray] = None
+
+        self._init_mapping_grid(Pose2D(0.0, 0.0, 0.0))
+
+        if bool(self.get_parameter("auto_load_saved_map").value):
+            map_path = str(self.get_parameter("mapping_save_path").value)
+            load_path, fallback_note = self._resolve_map_load_path(map_path)
+            loaded, message = self._load_static_map(load_path)
+            if fallback_note is not None:
+                self.get_logger().warn(fallback_note)
+            if loaded:
+                self.get_logger().info(message)
+            else:
+                self.get_logger().warn(message)
+
+        self.use_saved_map_only = bool(self.get_parameter("default_frozen_map_mode").value)
+        if self.use_saved_map_only:
+            self.get_logger().info("Default mode: frozen map only (live LiDAR ignored for planning/costmap updates).")
 
         # ===== Publishers =====
-        self.map_pub = self.create_publisher(OccupancyGrid, "/map", 1)
+        # Use transient_local for /map so RViz2 can receive it even after subscribing
+        map_qos = QoSProfile(
+            depth=1,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE
+        )
+        self.map_pub = self.create_publisher(OccupancyGrid, "/map", map_qos)
         self.costmap_pub = self.create_publisher(OccupancyGrid, "/costmap", 1)
         self.scan_fused_pub = self.create_publisher(LaserScan, "/scan_fused", 10)
 
         self.wp_marker_pub = self.create_publisher(MarkerArray, "/waypoint_markers", 1)
         self.path_pub = self.create_publisher(Path, "/planned_path", 1)
+        self.path_velocities_pub = self.create_publisher(Float64MultiArray, "/planned_path_velocities", 1)
         self.velocity_marker_pub = self.create_publisher(MarkerArray, "/path_velocity_markers", 1)
         self.robot_viz_pub = self.create_publisher(MarkerArray, "/robot_visualization", 1)
 
         # ===== Services =====
         self.srv_clear_all_wp = self.create_service(Empty, "/clear_all_waypoints", self.handle_clear_all_waypoints)
         self.srv_pop_next_wp = self.create_service(Empty, "/pop_next_waypoint", self.handle_pop_next_waypoint)
+        self.srv_mapping_start = self.create_service(Trigger, "/mapping/start", self.handle_mapping_start)
+        self.srv_mapping_finish = self.create_service(Trigger, "/mapping/finish", self.handle_mapping_finish)
+        self.srv_mapping_use_live = self.create_service(Trigger, "/mapping/use_live", self.handle_mapping_use_live)
+        self.srv_mapping_use_frozen = self.create_service(Trigger, "/mapping/use_frozen", self.handle_mapping_use_frozen)
 
         # Main loop at 5 Hz
         self._main_loop_hz = 5.0
@@ -208,6 +280,29 @@ class WaypointTrajNode(Node):
 
         # Track consecutive iterations each waypoint sits in a hard cell
         self._wp_hard_cell_iters: Dict[Tuple[int, int], int] = {}
+
+        # Trajectory planning cache (keeps publishers responsive under heavy planning load)
+        self._cached_traj: Optional[Tuple[List[float], List[float], List[float], List[float], List[float], List[float]]] = None
+        self._last_plan_ns: int = 0
+        self._last_plan_pose: Optional[Pose2D] = None
+        self._last_plan_wps_sig: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._last_pose_for_waypoint_pop: Optional[Pose2D] = None
+
+    def _load_yaml_param_defaults(self) -> Dict[str, object]:
+        if yaml is None:
+            raise RuntimeError("PyYAML is required to load waypoint_traj.yaml parameter defaults")
+
+        try:
+            pkg_share = get_package_share_directory("omni_traj")
+            yaml_path = os.path.join(pkg_share, "config", "waypoint_traj.yaml")
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            ros_params = cfg.get("waypoint_traj", {}).get("ros__parameters", {})
+            if not isinstance(ros_params, dict):
+                raise RuntimeError("Invalid waypoint_traj.yaml format: ros__parameters must be a mapping")
+            return ros_params
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load waypoint_traj.yaml defaults: {exc}") from exc
 
     # =======================
     # Grid helpers
@@ -223,26 +318,31 @@ class WaypointTrajNode(Node):
         return GridSpec(res=res, width=width, height=height, origin_x=origin_x, origin_y=origin_y)
 
     @staticmethod
-    def _shift_grid(grid: List[int], width: int, height: int, shift_x: int, shift_y: int) -> List[int]:
+    def _shift_grid(grid: np.ndarray, width: int, height: int, shift_x: int, shift_y: int) -> np.ndarray:
         """
-        Shift occupancy grid content into a new same-sized grid.
+        Shift occupancy grid content into a new same-sized grid using NumPy slicing.
         Positive shift_x means world window moved +x, so old content appears at lower x indices.
         """
         if shift_x == 0 and shift_y == 0:
-            return list(grid)
+            return grid.copy()
 
-        out = [0] * (width * height)
-        for iy_new in range(height):
-            iy_old = iy_new + shift_y
-            if iy_old < 0 or iy_old >= height:
-                continue
-            row_new = iy_new * width
-            row_old = iy_old * width
-            for ix_new in range(width):
-                ix_old = ix_new + shift_x
-                if ix_old < 0 or ix_old >= width:
-                    continue
-                out[row_new + ix_new] = int(grid[row_old + ix_old])
+        out = np.zeros((height, width), dtype=grid.dtype)
+        
+        # Compute valid source and destination regions for efficient array slicing
+        y_src_start = max(0, shift_y)
+        y_src_end = min(height, height + shift_y)
+        y_dst_start = max(0, -shift_y)
+        y_dst_end = min(height, height - shift_y)
+        
+        x_src_start = max(0, shift_x)
+        x_src_end = min(width, width + shift_x)
+        x_dst_start = max(0, -shift_x)
+        x_dst_end = min(width, width - shift_x)
+        
+        # Single vectorized assignment instead of nested loops
+        out[y_dst_start:y_dst_end, x_dst_start:x_dst_end] = \
+            grid[y_src_start:y_src_end, x_src_start:x_src_end]
+        
         return out
 
     def _maybe_roll_map(self, base_pose_now: Pose2D) -> None:
@@ -299,8 +399,9 @@ class WaypointTrajNode(Node):
             origin_y=float(new_origin_y),
         )
 
-    def idx(self, gs: GridSpec, ix: int, iy: int) -> int:
-        return iy * gs.width + ix
+    def idx(self, gs: GridSpec, ix: int, iy: int) -> Tuple[int, int]:
+        """Return (row, col) for NumPy 2D array indexing."""
+        return (iy, ix)
 
     def in_bounds(self, gs: GridSpec, ix: int, iy: int) -> bool:
         return 0 <= ix < gs.width and 0 <= iy < gs.height
@@ -403,6 +504,17 @@ class WaypointTrajNode(Node):
 
         pose = Pose2D(float(p.x), float(p.y), float(yaw))
         self.odom_pose_latest = pose
+
+        # Odometry linear twist is expressed in the child/body frame; rotate to map frame.
+        vx_body = float(msg.twist.twist.linear.x)
+        vy_body = float(msg.twist.twist.linear.y)
+        self.odom_vel_body_latest = (vx_body, vy_body)
+        c = math.cos(yaw)
+        s = math.sin(yaw)
+        vx_map = c * vx_body - s * vy_body
+        vy_map = s * vx_body + c * vy_body
+        self.odom_vel_map_latest = (vx_map, vy_map)
+
         self.have_odom_pose = True
 
         t_ns = Time.from_msg(msg.header.stamp).nanoseconds
@@ -444,6 +556,33 @@ class WaypointTrajNode(Node):
         return self.odom_pose_latest
 
     def _base_pose_now(self) -> Pose2D:
+        if bool(self.get_parameter("prefer_tf_pose").value):
+            map_frame = str(self.get_parameter("map_frame").value).lstrip("/")
+            base_frame = str(self.get_parameter("base_frame").value).lstrip("/")
+            timeout_s = max(0.0, float(self.get_parameter("pose_tf_timeout_s").value))
+
+            if map_frame and base_frame:
+                try:
+                    tf = self.tf_buffer.lookup_transform(
+                        map_frame,
+                        base_frame,
+                        Time(),
+                        timeout=Duration(seconds=timeout_s),
+                    )
+
+                    tx = float(tf.transform.translation.x)
+                    ty = float(tf.transform.translation.y)
+                    qx = float(tf.transform.rotation.x)
+                    qy = float(tf.transform.rotation.y)
+                    qz = float(tf.transform.rotation.z)
+                    qw = float(tf.transform.rotation.w)
+                    siny_cosp = 2.0 * (qw * qz + qx * qy)
+                    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+                    yaw = math.atan2(siny_cosp, cosy_cosp)
+                    return Pose2D(tx, ty, yaw)
+                except Exception:
+                    pass
+
         if self.have_odom_pose:
             return self.odom_pose_latest
         sp = self.get_parameter("start_pose").value
@@ -458,7 +597,7 @@ class WaypointTrajNode(Node):
         if not self.have_odom_pose:
             return
 
-        odom_frame = self.get_parameter("map_frame").value  # we treat map_frame as odom frame here
+        odom_frame = self.get_parameter("odom_frame").value
         base_frame = self.get_parameter("base_frame").value
 
         now = self.get_clock().now().to_msg()
@@ -569,6 +708,10 @@ class WaypointTrajNode(Node):
         rmax = float(scan.range_max)
         no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
         stride = max(1, int(self.get_parameter("scan_beam_stride").value))
+        max_range = float(self.get_parameter("max_lidar_range_m").value)
+        
+        # Clamp rmax to max_range to reduce processing
+        rmax = min(rmax, max_range)
 
         pts: List[Tuple[float, float]] = []
         ang = float(scan.angle_min)
@@ -580,7 +723,7 @@ class WaypointTrajNode(Node):
                 continue
 
             r = float(rr)
-            if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps):
+            if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps) or r > max_range:
                 ang += inc
                 continue
 
@@ -630,9 +773,10 @@ class WaypointTrajNode(Node):
         excl_r2 = excl_r * excl_r
 
         motion_comp = bool(self.get_parameter("motion_compensate").value)
+        max_range = float(self.get_parameter("max_lidar_range_m").value)
 
-        # Use conservative range_max across sensors
-        range_max = min(float(s.range_max) for s in scans)
+        # Use conservative range_max across sensors, clamped to max_lidar_range
+        range_max = min(min(float(s.range_max) for s in scans), max_range)
         range_min = max(0.0, min(float(s.range_min) for s in scans))
 
         # Process each scan and fuse
@@ -665,7 +809,7 @@ class WaypointTrajNode(Node):
                     continue
 
                 r = float(rr)
-                if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps):
+                if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps) or r > max_range:
                     beam_angle += beam_inc
                     continue
 
@@ -726,9 +870,9 @@ class WaypointTrajNode(Node):
     # =======================
     # Costmap building
     # =======================
-    def _inflate(self, grid: List[int], hard_r: float, soft_r: float) -> None:
+    def _inflate(self, grid: np.ndarray, hard_r: float, soft_r: float) -> None:
         """
-        FIXED: previously you only iterated out to soft_r.
+        Inflate obstacles in grid using NumPy operations for performance.
         Now we iterate out to max(hard_r, soft_r), so hard inflation works even if soft=0.
         """
         hard_r = max(0.0, hard_r)
@@ -742,31 +886,32 @@ class WaypointTrajNode(Node):
         if rad_cells <= 0:
             return
 
-        hard_cells: List[Tuple[int, int]] = []
-        for iy in range(self.gs_map.height):
-            row = iy * self.gs_map.width
-            for ix in range(self.gs_map.width):
-                if grid[row + ix] >= 100:
-                    hard_cells.append((ix, iy))
-
-        if not hard_cells:
+        # Find all hard obstacle cells using NumPy (vectorized)
+        hard_cells_mask = grid >= 100
+        hard_ys, hard_xs = np.where(hard_cells_mask)
+        
+        if len(hard_xs) == 0:
             return
 
-        for (hx, hy) in hard_cells:
-            for dy in range(-rad_cells, rad_cells + 1):
-                for dx in range(-rad_cells, rad_cells + 1):
-                    ix = hx + dx
-                    iy = hy + dy
-                    if not self.in_bounds(self.gs_map, ix, iy):
-                        continue
+        # For each obstacle cell, inflate around it
+        for hx, hy in zip(hard_xs, hard_ys):
+            y_min = max(0, hy - rad_cells)
+            y_max = min(self.gs_map.height, hy + rad_cells + 1)
+            x_min = max(0, hx - rad_cells)
+            x_max = min(self.gs_map.width, hx + rad_cells + 1)
+            
+            for iy in range(y_min, y_max):
+                for ix in range(x_min, x_max):
+                    dx = ix - hx
+                    dy = iy - hy
                     d = math.hypot(dx, dy) * self.gs_map.res
-                    k = self.idx(self.gs_map, ix, iy)
+                    
                     if hard_r > 0 and d <= hard_r:
-                        grid[k] = 100
-                    elif soft_r > 0 and d <= soft_r and grid[k] < 100:
-                        grid[k] = max(grid[k], 50)
+                        grid[iy, ix] = 100
+                    elif soft_r > 0 and d <= soft_r and grid[iy, ix] < 100:
+                        grid[iy, ix] = max(grid[iy, ix], 50)
 
-    def _clear_robot_circle_in_costmap(self, grid: List[int], base_pose_now: Pose2D) -> None:
+    def _clear_robot_circle_in_costmap(self, grid: np.ndarray, base_pose_now: Pose2D) -> None:
         if not bool(self.get_parameter("robot_exclusion_enable").value):
             return
         r = float(self.get_parameter("robot_exclusion_radius_m").value)
@@ -777,18 +922,19 @@ class WaypointTrajNode(Node):
         cx_i, cy_i = self.world_to_grid(self.gs_map, base_pose_now.x, base_pose_now.y)
         r2 = r * r
 
-        for dy in range(-rad_cells, rad_cells + 1):
-            for dx in range(-rad_cells, rad_cells + 1):
-                ix = cx_i + dx
-                iy = cy_i + dy
-                if not self.in_bounds(self.gs_map, ix, iy):
-                    continue
+        y_min = max(0, cy_i - rad_cells)
+        y_max = min(self.gs_map.height, cy_i + rad_cells + 1)
+        x_min = max(0, cx_i - rad_cells)
+        x_max = min(self.gs_map.width, cx_i + rad_cells + 1)
+
+        for iy in range(y_min, y_max):
+            for ix in range(x_min, x_max):
                 wx, wy = self.grid_to_world(self.gs_map, ix, iy)
                 if (wx - base_pose_now.x) ** 2 + (wy - base_pose_now.y) ** 2 <= r2:
-                    grid[self.idx(self.gs_map, ix, iy)] = 0
+                    grid[iy, ix] = 0
 
-    def _build_costmap_from_fused_scan(self, fused: LaserScan, base_pose_now: Pose2D) -> List[int]:
-        dynamic = [0] * (self.gs_map.width * self.gs_map.height)
+    def _build_costmap_from_fused_scan(self, fused: LaserScan, base_pose_now: Pose2D) -> np.ndarray:
+        dynamic = np.zeros((self.gs_map.height, self.gs_map.width), dtype=np.int8)
         persist_obs = bool(self.get_parameter("persistent_obstacles_enable").value)
 
         a = float(fused.angle_min)
@@ -807,15 +953,18 @@ class WaypointTrajNode(Node):
 
             ix, iy = self.world_to_grid(self.gs_map, xm, ym)
             if self.in_bounds(self.gs_map, ix, iy):
-                k = self.idx(self.gs_map, ix, iy)
-                dynamic[k] = 100
+                dynamic[iy, ix] = 100
 
             a += inc
 
-        if persist_obs:
+        if self.mapping_active:
+            self._update_mapping_logodds_from_fused_scan(fused, base_pose_now)
+            self.static_occ = np.maximum(self.static_occ, dynamic)
+        elif persist_obs:
             self._update_persistent_map_from_fused_scan(fused, base_pose_now)
 
-        combined = [max(int(self.static_occ[i]), int(dynamic[i])) for i in range(len(dynamic))]
+        # Use NumPy maximum for vectorized operation (much faster)
+        combined = np.maximum(self.static_occ, dynamic)
 
         hard_r = float(self.get_parameter("hard_inflate_radius").value)
         soft_r = float(self.get_parameter("soft_inflate_radius").value)
@@ -823,6 +972,248 @@ class WaypointTrajNode(Node):
 
         self._clear_robot_circle_in_costmap(combined, base_pose_now)
         return combined
+
+    def _build_costmap_from_static_map(self, base_pose_now: Pose2D) -> np.ndarray:
+        combined = self.static_occ.copy()
+
+        hard_r = float(self.get_parameter("hard_inflate_radius").value)
+        soft_r = float(self.get_parameter("soft_inflate_radius").value)
+        self._inflate(combined, hard_r=hard_r, soft_r=soft_r)
+
+        self._clear_robot_circle_in_costmap(combined, base_pose_now)
+        return combined
+
+    def _reset_mapping_buffers(self) -> None:
+        self.static_occ.fill(0)
+        self.persistent_evidence.fill(0)
+        if self.mapping_logodds is not None:
+            self.mapping_logodds.fill(0)
+
+    def _init_mapping_grid(self, center_pose: Pose2D) -> None:
+        area_m = max(1.0, float(self.get_parameter("mapping_area_size_m").value))
+        res_m = max(0.01, float(self.get_parameter("mapping_res_m").value))
+        width = int(round(area_m / res_m))
+        height = int(round(area_m / res_m))
+
+        origin_x = float(center_pose.x) - 0.5 * width * res_m
+        origin_y = float(center_pose.y) - 0.5 * height * res_m
+
+        self.mapping_grid_spec = GridSpec(
+            res=res_m,
+            width=width,
+            height=height,
+            origin_x=origin_x,
+            origin_y=origin_y,
+        )
+        self.mapping_logodds = np.zeros((height, width), dtype=np.int16)
+
+    def _mapping_world_to_grid(self, x: float, y: float) -> Tuple[int, int]:
+        if self.mapping_grid_spec is None:
+            return (-1, -1)
+        gs = self.mapping_grid_spec
+        ix = int((x - gs.origin_x) / gs.res)
+        iy = int((y - gs.origin_y) / gs.res)
+        return ix, iy
+
+    def _mapping_in_bounds(self, ix: int, iy: int) -> bool:
+        if self.mapping_grid_spec is None:
+            return False
+        gs = self.mapping_grid_spec
+        return (0 <= ix < gs.width) and (0 <= iy < gs.height)
+
+    def _mapping_update_cell(self, iy: int, ix: int, delta: int, lo_min: int, lo_max: int) -> None:
+        if self.mapping_logodds is None:
+            return
+        cur = int(self.mapping_logodds[iy, ix])
+        cur = max(lo_min, min(lo_max, cur + delta))
+        self.mapping_logodds[iy, ix] = cur
+
+    def _update_mapping_logodds_from_fused_scan(self, fused: LaserScan, base_pose_now: Pose2D) -> None:
+        if self.mapping_grid_spec is None or self.mapping_logodds is None:
+            return
+
+        lo_hit = max(1, int(self.get_parameter("mapping_hit_logodd_inc").value))
+        lo_free = max(1, int(self.get_parameter("mapping_free_logodd_dec").value))
+        lo_min = int(self.get_parameter("mapping_logodd_min").value)
+        lo_max = int(self.get_parameter("mapping_logodd_max").value)
+        range_max = float(fused.range_max)
+        step_m = max(self.mapping_grid_spec.res * 0.8, 0.02)
+
+        a = float(fused.angle_min)
+        inc = float(fused.angle_increment)
+
+        for r in fused.ranges:
+            rr = float(r)
+            finite_hit = math.isfinite(rr)
+            free_to = max(0.0, rr - 0.5 * self.mapping_grid_spec.res) if finite_hit else max(0.0, range_max)
+
+            if free_to > 1e-6:
+                n_steps = max(1, int(math.floor(free_to / step_m)))
+                for j in range(1, n_steps + 1):
+                    d = min(free_to, j * step_m)
+                    xb = d * math.cos(a)
+                    yb = d * math.sin(a)
+                    xm, ym = self._se2_apply(base_pose_now, xb, yb)
+                    ix, iy = self._mapping_world_to_grid(xm, ym)
+                    if not self._mapping_in_bounds(ix, iy):
+                        break
+                    self._mapping_update_cell(iy, ix, -lo_free, lo_min, lo_max)
+
+            if finite_hit:
+                xb = rr * math.cos(a)
+                yb = rr * math.sin(a)
+                xm, ym = self._se2_apply(base_pose_now, xb, yb)
+                ix, iy = self._mapping_world_to_grid(xm, ym)
+                if self._mapping_in_bounds(ix, iy):
+                    self._mapping_update_cell(iy, ix, lo_hit, lo_min, lo_max)
+
+            a += inc
+
+    def _mapping_occ_grid(self) -> np.ndarray:
+        if self.mapping_logodds is None:
+            return np.zeros((1, 1), dtype=np.int8)
+        occ_thresh = int(self.get_parameter("mapping_occ_threshold").value)
+        occ = np.zeros(self.mapping_logodds.shape, dtype=np.int8)
+        occ[self.mapping_logodds >= occ_thresh] = 100
+        return occ
+
+    def _project_saved_map_to_static(self, saved_occ: np.ndarray, saved_meta: Dict[str, float]) -> None:
+        out = np.zeros((self.gs_map.height, self.gs_map.width), dtype=np.int8)
+        ys, xs = np.where(saved_occ >= 100)
+        if len(xs) == 0:
+            self.static_occ = out
+            self.persistent_evidence.fill(0)
+            return
+
+        s_res = float(saved_meta["resolution_m"])
+        s_ox = float(saved_meta["origin_x"])
+        s_oy = float(saved_meta["origin_y"])
+
+        wx = s_ox + (xs.astype(np.float64) + 0.5) * s_res
+        wy = s_oy + (ys.astype(np.float64) + 0.5) * s_res
+
+        gx = ((wx - self.gs_map.origin_x) / self.gs_map.res).astype(np.int32)
+        gy = ((wy - self.gs_map.origin_y) / self.gs_map.res).astype(np.int32)
+        valid = (
+            (gx >= 0)
+            & (gx < self.gs_map.width)
+            & (gy >= 0)
+            & (gy < self.gs_map.height)
+        )
+        out[gy[valid], gx[valid]] = 100
+
+        self.static_occ = out
+        self.persistent_evidence.fill(0)
+
+    def _save_static_map(self, output_path: str) -> None:
+        if self.mapping_grid_spec is None:
+            raise RuntimeError("Mapping grid not initialized")
+
+        mapping_occ = self._mapping_occ_grid()
+        gs = self.mapping_grid_spec
+        meta = {
+            "frame": self.get_parameter("map_frame").value,
+            "format": "occupancy_logodds_v1",
+            "resolution_m": float(gs.res),
+            "width": int(gs.width),
+            "height": int(gs.height),
+            "origin_x": float(gs.origin_x),
+            "origin_y": float(gs.origin_y),
+            "saved_unix_s": time.time(),
+        }
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        np.savez_compressed(
+            output_path,
+            occ=mapping_occ.astype(np.int8),
+            logodds=self.mapping_logodds.astype(np.int16) if self.mapping_logodds is not None else np.zeros((1, 1), dtype=np.int16),
+            meta=json.dumps(meta),
+        )
+
+        self._project_saved_map_to_static(mapping_occ, meta)
+
+    def _load_static_map(self, input_path: str) -> Tuple[bool, str]:
+        if not os.path.isfile(input_path):
+            return False, f"Saved map not found: {input_path}"
+
+        try:
+            with np.load(input_path, allow_pickle=False) as data:
+                occ = data["occ"]
+                meta_raw = data["meta"] if "meta" in data else None
+                logodds_raw = np.asarray(data["logodds"], dtype=np.int16) if "logodds" in data else None
+
+            meta: Dict[str, float] = {}
+            if meta_raw is not None:
+                if hasattr(meta_raw, "item"):
+                    meta_json = meta_raw.item()
+                else:
+                    meta_json = str(meta_raw)
+                meta = json.loads(meta_json)
+
+            if (
+                "resolution_m" in meta
+                and "origin_x" in meta
+                and "origin_y" in meta
+                and "width" in meta
+                and "height" in meta
+                and int(meta["width"]) == int(occ.shape[1])
+                and int(meta["height"]) == int(occ.shape[0])
+            ):
+                self._project_saved_map_to_static(np.asarray(occ, dtype=np.int8), meta)
+                self.mapping_grid_spec = GridSpec(
+                    res=float(meta["resolution_m"]),
+                    width=int(meta["width"]),
+                    height=int(meta["height"]),
+                    origin_x=float(meta["origin_x"]),
+                    origin_y=float(meta["origin_y"]),
+                )
+                if logodds_raw is not None:
+                    if logodds_raw.shape == occ.shape:
+                        self.mapping_logodds = logodds_raw.copy()
+                    else:
+                        self.mapping_logodds = np.zeros((self.mapping_grid_spec.height, self.mapping_grid_spec.width), dtype=np.int16)
+                else:
+                    self.mapping_logodds = np.zeros((self.mapping_grid_spec.height, self.mapping_grid_spec.width), dtype=np.int16)
+
+                return True, f"Loaded saved map and projected to runtime grid: {input_path}"
+
+            if occ.shape == (self.gs_map.height, self.gs_map.width):
+                self.static_occ = np.asarray(occ, dtype=np.int8)
+                self.persistent_evidence.fill(0)
+                return True, f"Loaded legacy saved static map: {input_path}"
+
+            return (
+                False,
+                f"Saved map shape mismatch: got {occ.shape}, expected {(self.gs_map.height, self.gs_map.width)} or metadata-backed map",
+            )
+        except Exception as e:
+            return False, f"Failed loading saved map {input_path}: {e}"
+
+    def _resolve_map_load_path(self, input_path: str) -> Tuple[str, Optional[str]]:
+        if os.path.isfile(input_path):
+            return input_path, None
+
+        map_dir = os.path.dirname(input_path)
+        if not map_dir or not os.path.isdir(map_dir):
+            return input_path, None
+
+        patterns = ["*costmap*.npz", "*map*.npz", "*.npz"]
+        candidates: List[str] = []
+        for pattern in patterns:
+            matches = [p for p in glob.glob(os.path.join(map_dir, pattern)) if os.path.isfile(p)]
+            if matches:
+                candidates = sorted(matches, key=os.path.getmtime, reverse=True)
+                break
+
+        if not candidates:
+            return input_path, None
+
+        selected = candidates[0]
+        note = (
+            f"Configured saved map missing ({input_path}). "
+            f"Falling back to newest map candidate: {selected}"
+        )
+        return selected, note
 
     def _persistent_threshold_scans(self, sec_param: str) -> int:
         t_s = max(0.0, float(self.get_parameter(sec_param).value))
@@ -836,8 +1227,8 @@ class WaypointTrajNode(Node):
         inf_ratio = float(self.get_parameter("persistent_inf_clearing_ratio").value)
         inf_ratio = min(1.0, max(0.0, inf_ratio))
 
-        occ_cells: set[int] = set()
-        free_cells: set[int] = set()
+        occ_cells: set[Tuple[int, int]] = set()
+        free_cells: set[Tuple[int, int]] = set()
 
         use_excl = bool(self.get_parameter("robot_exclusion_enable").value)
         excl_r = float(self.get_parameter("robot_exclusion_radius_m").value)
@@ -875,7 +1266,7 @@ class WaypointTrajNode(Node):
                     ix, iy = self.world_to_grid(self.gs_map, xm, ym)
                     if not self.in_bounds(self.gs_map, ix, iy):
                         break
-                    free_cells.add(self.idx(self.gs_map, ix, iy))
+                    free_cells.add((iy, ix))
 
             if finite_hit and occ_range >= 0.0:
                 xb = occ_range * math.cos(a)
@@ -884,7 +1275,7 @@ class WaypointTrajNode(Node):
                     xm, ym = self._se2_apply(base_pose_now, xb, yb)
                     ix, iy = self.world_to_grid(self.gs_map, xm, ym)
                     if self.in_bounds(self.gs_map, ix, iy):
-                        occ_cells.add(self.idx(self.gs_map, ix, iy))
+                        occ_cells.add((iy, ix))
 
             a += inc
 
@@ -1083,7 +1474,7 @@ class WaypointTrajNode(Node):
 
     def _find_relocation_for_waypoint(
         self,
-        costmap: List[int],
+        costmap: np.ndarray,
         waypoint_xy: Tuple[float, float],
         base_pose_now: Pose2D,
         max_search_m: float,
@@ -1104,7 +1495,7 @@ class WaypointTrajNode(Node):
                 iy = w_iy + dy
                 if not self.in_bounds(self.gs_map, ix, iy):
                     continue
-                cell_val = costmap[self.idx(self.gs_map, ix, iy)]
+                cell_val = costmap[iy, ix]
                 if cell_val >= 50:
                     continue
                 d2 = dx * dx + dy * dy
@@ -1128,7 +1519,7 @@ class WaypointTrajNode(Node):
                 iy = w_iy + dy
                 if not self.in_bounds(self.gs_map, ix, iy):
                     continue
-                cell_val = costmap[self.idx(self.gs_map, ix, iy)]
+                cell_val = costmap[iy, ix]
                 if cell_val < 50 or cell_val >= 100:
                     continue
 
@@ -1148,7 +1539,7 @@ class WaypointTrajNode(Node):
 
         return None
 
-    def _relocate_stuck_waypoints(self, costmap: List[int], base_pose_now: Pose2D) -> Optional[List[Tuple[float, float]]]:
+    def _relocate_stuck_waypoints(self, costmap: np.ndarray, base_pose_now: Pose2D) -> Optional[List[Tuple[float, float]]]:
         wp_n = int(self.get_parameter("wp_n").value)
         if wp_n <= 0:
             self._wp_hard_cell_iters.clear()
@@ -1177,7 +1568,7 @@ class WaypointTrajNode(Node):
             active_keys.add(key)
 
             ix, iy = self.world_to_grid(self.gs_map, wx, wy)
-            in_hard = self.in_bounds(self.gs_map, ix, iy) and costmap[self.idx(self.gs_map, ix, iy)] >= 100
+            in_hard = self.in_bounds(self.gs_map, ix, iy) and costmap[iy, ix] >= 100
 
             if not in_hard:
                 self._wp_hard_cell_iters.pop(key, None)
@@ -1226,10 +1617,12 @@ class WaypointTrajNode(Node):
     def _pop_reached_waypoints(self, base_pose_now: Pose2D) -> None:
         tol = float(self.get_parameter("waypoint_reached_tol_m").value)
         if tol <= 0.0:
+            self._last_pose_for_waypoint_pop = base_pose_now
             return
 
         wp_n = int(self.get_parameter("wp_n").value)
         if wp_n <= 0:
+            self._last_pose_for_waypoint_pop = base_pose_now
             return
 
         wp_flat = list(self.get_parameter("waypoints").value)
@@ -1238,14 +1631,22 @@ class WaypointTrajNode(Node):
         elif len(wp_flat) == 3 * wp_n:
             stride = 3
         else:
+            self._last_pose_for_waypoint_pop = base_pose_now
             return
 
+        prev_pose = self._last_pose_for_waypoint_pop
         removed = 0
         while wp_n > 0:
             wx = float(wp_flat[0])
             wy = float(wp_flat[1])
-            if math.hypot(wx - base_pose_now.x, wy - base_pose_now.y) > tol:
+
+            reached = math.hypot(wx - base_pose_now.x, wy - base_pose_now.y) <= tol
+            if (not reached) and (prev_pose is not None):
+                reached = self._segment_passes_near_waypoint(prev_pose, base_pose_now, wx, wy, tol)
+
+            if not reached:
                 break
+
             wp_flat = wp_flat[stride:]
             wp_n -= 1
             removed += 1
@@ -1258,6 +1659,30 @@ class WaypointTrajNode(Node):
                     Parameter("wp_n", Parameter.Type.INTEGER, wp_n),
                 ]
             )
+
+        self._last_pose_for_waypoint_pop = base_pose_now
+
+    @staticmethod
+    def _segment_passes_near_waypoint(
+        p0: Pose2D,
+        p1: Pose2D,
+        wx: float,
+        wy: float,
+        tol: float,
+    ) -> bool:
+        """Return true if motion segment p0->p1 passes within tol of waypoint."""
+        dx = p1.x - p0.x
+        dy = p1.y - p0.y
+        seg_len2 = dx * dx + dy * dy
+        if seg_len2 <= 1e-12:
+            return False
+
+        t = ((wx - p0.x) * dx + (wy - p0.y) * dy) / seg_len2
+        t = max(0.0, min(1.0, t))
+
+        cx = p0.x + t * dx
+        cy = p0.y + t * dy
+        return math.hypot(wx - cx, wy - cy) <= tol
 
     def handle_clear_all_waypoints(self, request, response):
         """Clear all waypoints."""
@@ -1300,10 +1725,78 @@ class WaypointTrajNode(Node):
         self.get_logger().info(f"Popped next waypoint. {wp_n} remaining.")
         return response
 
+    def handle_mapping_start(self, request, response):
+        base_pose_now = self._base_pose_now()
+        self._init_mapping_grid(base_pose_now)
+        self._reset_mapping_buffers()
+        self.mapping_active = True
+        self.use_saved_map_only = False
+        self._cached_traj = None
+        self._last_plan_wps_sig = None
+        response.success = True
+        response.message = "Mapping started: accumulating robust 10x10m occupancy (log-odds) from fused LiDAR."
+        self.get_logger().info(response.message)
+        return response
+
+    def handle_mapping_finish(self, request, response):
+        if not self.mapping_active:
+            response.success = False
+            response.message = "Mapping is not active."
+            self.get_logger().warn(response.message)
+            return response
+
+        output_path = str(self.get_parameter("mapping_save_path").value)
+        try:
+            self._save_static_map(output_path)
+            self.mapping_active = False
+            self.use_saved_map_only = True
+            self._cached_traj = None
+            self._last_plan_wps_sig = None
+            response.success = True
+            response.message = f"Mapping finished and saved: {output_path}. Using saved map only (live LiDAR ignored)."
+            self.get_logger().info(response.message)
+            return response
+        except Exception as e:
+            response.success = False
+            response.message = f"Failed to save map: {e}"
+            self.get_logger().error(response.message)
+            return response
+
+    def handle_mapping_use_live(self, request, response):
+        self.mapping_active = False
+        self.use_saved_map_only = False
+        self._cached_traj = None
+        self._last_plan_wps_sig = None
+        response.success = True
+        response.message = "Switched to live LiDAR map mode."
+        self.get_logger().info(response.message)
+        return response
+
+    def handle_mapping_use_frozen(self, request, response):
+        map_path = str(self.get_parameter("mapping_save_path").value)
+        load_path, fallback_note = self._resolve_map_load_path(map_path)
+        loaded, message = self._load_static_map(load_path)
+        if fallback_note is not None:
+            self.get_logger().warn(fallback_note)
+        if not loaded:
+            response.success = False
+            response.message = message
+            self.get_logger().warn(response.message)
+            return response
+
+        self.mapping_active = False
+        self.use_saved_map_only = True
+        self._cached_traj = None
+        self._last_plan_wps_sig = None
+        response.success = True
+        response.message = "Switched to frozen saved map mode."
+        self.get_logger().info(response.message)
+        return response
+
     # =======================
     # Planning (A*) — unchanged / minimal
     # =======================
-    def line_collision_free(self, grid: List[int], a_xy: Tuple[float, float], b_xy: Tuple[float, float]) -> bool:
+    def line_collision_free(self, grid: np.ndarray, a_xy: Tuple[float, float], b_xy: Tuple[float, float]) -> bool:
         ax, ay = a_xy
         bx, by = b_xy
         dist = math.hypot(bx - ax, by - ay)
@@ -1319,7 +1812,7 @@ class WaypointTrajNode(Node):
             ix, iy = self.world_to_grid(self.gs_map, x, y)
             if not self.in_bounds(self.gs_map, ix, iy):
                 return False
-            if grid[self.idx(self.gs_map, ix, iy)] >= 100:  # Only block hard obstacles
+            if grid[iy, ix] >= 100:  # Only block hard obstacles
                 return False
         return True
 
@@ -1416,7 +1909,7 @@ class WaypointTrajNode(Node):
         
         return vx, vy
 
-    def astar(self, grid: List[int], start_xy: Tuple[float, float], goal_xy: Tuple[float, float]) -> List[Tuple[float, float]]:
+    def astar(self, grid: np.ndarray, start_xy: Tuple[float, float], goal_xy: Tuple[float, float]) -> List[Tuple[float, float]]:
         sx, sy = start_xy
         gx, gy = goal_xy
         sxi, syi = self.world_to_grid(self.gs_map, sx, sy)
@@ -1424,7 +1917,7 @@ class WaypointTrajNode(Node):
 
         if not self.in_bounds(self.gs_map, sxi, syi) or not self.in_bounds(self.gs_map, gxi, gyi):
             return []
-        if grid[self.idx(self.gs_map, gxi, gyi)] >= 100:
+        if grid[gyi, gxi] >= 100:
             return []
 
         def h(ix: int, iy: int) -> float:
@@ -1450,11 +1943,11 @@ class WaypointTrajNode(Node):
                 nx, ny = ix + dx, iy + dy
                 if not self.in_bounds(self.gs_map, nx, ny):
                     continue
-                if grid[self.idx(self.gs_map, nx, ny)] >= 100:  # Hard obstacle blocks
+                if grid[ny, nx] >= 100:  # Hard obstacle blocks
                     continue
                 
                 # Add cell cost to movement cost: soft cells (50) add 0.5, hard cells add 1.0
-                cell_cost = grid[self.idx(self.gs_map, nx, ny)] / 100.0
+                cell_cost = grid[ny, nx] / 100.0
                 
                 # Add direction change penalty to encourage smooth diagonal paths
                 direction_penalty = 0.0
@@ -1482,7 +1975,7 @@ class WaypointTrajNode(Node):
         path_ij.reverse()
         return [self.grid_to_world(self.gs_map, ix, iy) for (ix, iy) in path_ij]
 
-    def plan_segment_path(self, grid: List[int], start_xy: Tuple[float, float], goal_xy: Tuple[float, float]) -> List[Tuple[float, float]]:
+    def plan_segment_path(self, grid: np.ndarray, start_xy: Tuple[float, float], goal_xy: Tuple[float, float]) -> List[Tuple[float, float]]:
         if self.line_collision_free(grid, start_xy, goal_xy):
             return [start_xy, goal_xy]
         path = self.astar(grid, start_xy, goal_xy)
@@ -1496,7 +1989,7 @@ class WaypointTrajNode(Node):
         
         return path
 
-    def simplify_path(self, grid: List[int], path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    def simplify_path(self, grid: np.ndarray, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
         Simplify path by removing unnecessary intermediate waypoints.
         Uses line-of-sight checks to shortcut straight segments.
@@ -1531,7 +2024,7 @@ class WaypointTrajNode(Node):
         
         return simplified
 
-    def _path_collision_free(self, grid: List[int], path: List[Tuple[float, float]]) -> bool:
+    def _path_collision_free(self, grid: np.ndarray, path: List[Tuple[float, float]]) -> bool:
         """Check that all path points and segments stay out of hard obstacle cells."""
         if len(path) < 2:
             return True
@@ -1540,7 +2033,7 @@ class WaypointTrajNode(Node):
             ix, iy = self.world_to_grid(self.gs_map, x, y)
             if not self.in_bounds(self.gs_map, ix, iy):
                 return False
-            if grid[self.idx(self.gs_map, ix, iy)] >= 100:
+            if grid[iy, ix] >= 100:
                 return False
 
             if i > 0 and not self.line_collision_free(grid, path[i - 1], path[i]):
@@ -1616,7 +2109,7 @@ class WaypointTrajNode(Node):
 
         return out
 
-    def smooth_path_cubic_spline(self, grid: List[int], path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    def smooth_path_cubic_spline(self, grid: np.ndarray, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
         Smooth path using cubic spline interpolation (industry standard).
         Produces smooth, natural-looking curves through waypoints.
@@ -1783,10 +2276,16 @@ class WaypointTrajNode(Node):
 
         total_s = s[-1]
 
+        # Seed acceleration profile from measured STM32 body velocity magnitude
+        # so planning starts from the robot's true current motion.
+        vx_body_now, vy_body_now = self.odom_vel_body_latest
+        v_initial = math.hypot(vx_body_now, vy_body_now)
+        v_initial = min(v_initial, max_linear_vel)
+
         v_forward = [0.0] * n
         for i in range(n):
-            # from rest: v = sqrt(2 * a * distance)
-            v_f = math.sqrt(max(0.0, 2.0 * max_wheel_accel * s[i]))
+            # from current speed: v = sqrt(v0^2 + 2 * a * distance)
+            v_f = math.sqrt(max(0.0, v_initial * v_initial + 2.0 * max_wheel_accel * s[i]))
             v_forward[i] = min(v_f, max_linear_vel)
 
         v_backward = [0.0] * n
@@ -1864,6 +2363,22 @@ class WaypointTrajNode(Node):
         xs_resampled, ys_resampled, yaws_resampled, vels_resampled, vxs_resampled, vys_resampled = self._resample_trajectory_at_dt(
             xs, ys, yaws, velocities, dists, dt=0.01
         )
+
+        # Preserve STM32-reported body velocity at the first knot, converted to map frame.
+        if xs_resampled:
+            vx_body_start, vy_body_start = self.odom_vel_body_latest
+            speed_start = math.hypot(vx_body_start, vy_body_start)
+            if speed_start > max_linear_vel and speed_start > 1e-9:
+                scale = max_linear_vel / speed_start
+                vx_body_start *= scale
+                vy_body_start *= scale
+
+            yaw_start = self.odom_pose_latest.yaw if self.have_odom_pose else 0.0
+            c0 = math.cos(yaw_start)
+            s0 = math.sin(yaw_start)
+            vxs_resampled[0] = c0 * vx_body_start - s0 * vy_body_start
+            vys_resampled[0] = s0 * vx_body_start + c0 * vy_body_start
+            vels_resampled[0] = math.hypot(vx_body_start, vy_body_start)
         
         return xs_resampled, ys_resampled, yaws_resampled, vels_resampled, vxs_resampled, vys_resampled
 
@@ -2029,7 +2544,7 @@ class WaypointTrajNode(Node):
     # =======================
     # Publishing
     # =======================
-    def _publish_grid(self, pub, frame_id: str, grid: List[int]) -> None:
+    def _publish_grid(self, pub, frame_id: str, grid: np.ndarray) -> None:
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = frame_id
@@ -2044,7 +2559,8 @@ class WaypointTrajNode(Node):
         msg.info.origin.orientation.y = q[1]
         msg.info.origin.orientation.z = q[2]
         msg.info.origin.orientation.w = q[3]
-        msg.data = [int(v) for v in grid]
+        # Flatten NumPy array to list for ROS message (row-major order)
+        msg.data = grid.flatten().astype(np.int8).tolist()
         pub.publish(msg)
 
     def publish_waypoints(self, wps: List[Tuple[float, float]]) -> None:
@@ -2105,6 +2621,84 @@ class WaypointTrajNode(Node):
         
         ma.markers.append(m)
         self.velocity_marker_pub.publish(ma)
+
+    def _publish_trajectory(
+        self,
+        frame: str,
+        xs: List[float],
+        ys: List[float],
+        yaws: List[float],
+        velocities: List[float],
+        vxs: Optional[List[float]] = None,
+        vys: Optional[List[float]] = None,
+    ) -> None:
+        """Publish a trajectory path and corresponding velocity markers."""
+        if not xs:
+            return
+
+        path = Path()
+        path.header.stamp = self.get_clock().now().to_msg()
+        path.header.frame_id = frame
+        for i in range(len(xs)):
+            ps = PoseStamped()
+            ps.header = path.header
+            ps.pose.position.x = float(xs[i])
+            ps.pose.position.y = float(ys[i])
+            ps.pose.position.z = 0.0
+            q = yaw_to_quat(yaws[i])
+            ps.pose.orientation.x = q[0]
+            ps.pose.orientation.y = q[1]
+            ps.pose.orientation.z = q[2]
+            ps.pose.orientation.w = q[3]
+            path.poses.append(ps)
+        self.path_pub.publish(path)
+
+        # Publish velocities for UDP trajectory server
+        if vxs is not None and vys is not None:
+            vel_msg = Float64MultiArray()
+            # Interleave vx and vy: [vx0, vy0, vx1, vy1, ...]
+            vel_msg.data = []
+            for i in range(min(len(vxs), len(vys))):
+                vel_msg.data.append(float(vxs[i]))
+                vel_msg.data.append(float(vys[i]))
+            self.path_velocities_pub.publish(vel_msg)
+
+        self.publish_velocity_markers(xs, ys, velocities)
+
+    def _waypoint_signature(self, wps: List[Tuple[float, float]]) -> Tuple[Tuple[int, int], ...]:
+        """Grid-quantized signature of waypoints for replan-change detection."""
+        res = max(self.gs_map.res, 1e-3)
+        return tuple((int(round(x / res)), int(round(y / res))) for (x, y) in wps)
+
+    def _should_replan_trajectory(self, base_pose_now: Pose2D, wps: List[Tuple[float, float]]) -> bool:
+        """Decide whether heavy planning should run this cycle."""
+        if not wps:
+            return False
+
+        if self._cached_traj is None or self._last_plan_wps_sig is None:
+            return True
+
+        wps_sig = self._waypoint_signature(wps)
+        if wps_sig != self._last_plan_wps_sig:
+            return True
+
+        if self._last_plan_pose is not None:
+            dx = base_pose_now.x - self._last_plan_pose.x
+            dy = base_pose_now.y - self._last_plan_pose.y
+            moved = math.hypot(dx, dy)
+            yaw_delta = abs(wrap_to_pi(base_pose_now.yaw - self._last_plan_pose.yaw))
+            if moved >= float(self.get_parameter("trajectory_replan_min_move_m").value):
+                return True
+            if yaw_delta >= float(self.get_parameter("trajectory_replan_min_yaw_rad").value):
+                return True
+
+        replan_hz = max(0.05, float(self.get_parameter("trajectory_replan_hz").value))
+        period_ns = int(1e9 / replan_hz)
+        now_ns = self.get_clock().now().nanoseconds
+        if now_ns - self._last_plan_ns >= period_ns:
+            return True
+
+        return False
     
     def save_trajectory_json(self, xs: List[float], ys: List[float], yaws: List[float], velocities: List[float], vxs: List[float], vys: List[float]) -> None:
         """Save the trajectory to a JSON file."""
@@ -2147,7 +2741,9 @@ class WaypointTrajNode(Node):
         base_pose_now = self._base_pose_now()
 
         # Keep a rolling bounded map centered around robot while preserving in-window memory
-        self._maybe_roll_map(base_pose_now)
+        # Disabled in saved-map-only mode to keep map stable for deterministic tests.
+        if not self.use_saved_map_only:
+            self._maybe_roll_map(base_pose_now)
 
         # remove reached waypoints
         self._pop_reached_waypoints(base_pose_now)
@@ -2159,9 +2755,11 @@ class WaypointTrajNode(Node):
         self._publish_robot_visualization(base_pose_now)
 
         # build + publish fused scan (for RViz) and costmap from it
-        fused = self._build_fused_scan(base_pose_now)
-        if fused is not None:
-            self.scan_fused_pub.publish(fused)
+        fused = None
+        if not self.use_saved_map_only:
+            fused = self._build_fused_scan(base_pose_now)
+            if fused is not None:
+                self.scan_fused_pub.publish(fused)
 
         frame = self.get_parameter("map_frame").value
 
@@ -2173,12 +2771,15 @@ class WaypointTrajNode(Node):
         if wps:
             self.publish_waypoints(wps)
 
-        if fused is None:
+        if fused is None and not self.use_saved_map_only:
             # no scans yet => empty costmap
             self._publish_grid(self.costmap_pub, frame, self.static_occ)
             return
 
-        costmap = self._build_costmap_from_fused_scan(fused, base_pose_now)
+        if self.use_saved_map_only:
+            costmap = self._build_costmap_from_static_map(base_pose_now)
+        else:
+            costmap = self._build_costmap_from_fused_scan(fused, base_pose_now)
         self._publish_grid(self.costmap_pub, frame, costmap)
 
         moved_wps = self._relocate_stuck_waypoints(costmap, base_pose_now)
@@ -2188,6 +2789,14 @@ class WaypointTrajNode(Node):
 
         # plan if waypoints exist
         if not wps:
+            self._cached_traj = None
+            self._last_plan_wps_sig = None
+            return
+
+        should_replan = self._should_replan_trajectory(base_pose_now, wps)
+        if not should_replan and self._cached_traj is not None:
+            xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
+            self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
             return
 
         stitched: List[Tuple[float, float]] = []
@@ -2197,6 +2806,9 @@ class WaypointTrajNode(Node):
             seg = self.plan_segment_path(costmap, start_xy, (gx, gy))
             if not seg:
                 self.get_logger().warn(f"Planning failed start={start_xy} goal={(gx, gy)}")
+                if self._cached_traj is not None:
+                    xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
+                    self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
                 return
             if not stitched:
                 stitched.extend(seg)
@@ -2211,31 +2823,20 @@ class WaypointTrajNode(Node):
         xs, ys, yaws, velocities, vxs, vys = self.build_velocity_constrained_trajectory(stitched_smooth)
         
         if not xs:
+            if self._cached_traj is not None:
+                xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
+                self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
             return
+
+        self._cached_traj = (xs, ys, yaws, velocities, vxs, vys)
+        self._last_plan_ns = self.get_clock().now().nanoseconds
+        self._last_plan_pose = Pose2D(base_pose_now.x, base_pose_now.y, base_pose_now.yaw)
+        self._last_plan_wps_sig = self._waypoint_signature(wps)
         
         # Save trajectory to JSON file
         # self.save_trajectory_json(xs, ys, yaws, velocities, vxs, vys)
-        
-        # Publish path with orientation from yaw
-        path = Path()
-        path.header.stamp = self.get_clock().now().to_msg()
-        path.header.frame_id = frame
-        for i in range(len(xs)):
-            ps = PoseStamped()
-            ps.header = path.header
-            ps.pose.position.x = float(xs[i])
-            ps.pose.position.y = float(ys[i])
-            ps.pose.position.z = 0.0
-            q = yaw_to_quat(yaws[i])
-            ps.pose.orientation.x = q[0]
-            ps.pose.orientation.y = q[1]
-            ps.pose.orientation.z = q[2]
-            ps.pose.orientation.w = q[3]
-            path.poses.append(ps)
-        self.path_pub.publish(path)
-        
-        # Publish velocity markers using actual trajectory velocities
-        self.publish_velocity_markers(xs, ys, velocities)
+
+        self._publish_trajectory(frame, xs, ys, yaws, velocities, vxs, vys)
 
 
 def main() -> None:

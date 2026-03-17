@@ -45,6 +45,10 @@ class CommandID(IntEnum):
     STOP_TRAJ = 2
     START_RESTART_ROS2 = 3
     SHUTDOWN_PI5 = 4
+    START_MAPPING = 5
+    FINISH_MAPPING = 6
+    USE_LIVE_MAP = 7
+    USE_FROZEN_MAP = 8
 
 
 @dataclass

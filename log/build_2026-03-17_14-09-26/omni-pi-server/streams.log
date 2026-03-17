@@ -1,0 +1,20 @@
+[2.243s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni-pi-server build --build-base /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build install --record /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/install.log --single-version-externally-managed
+[2.698s] running egg_info
+[2.730s] writing build/omni-pi-server/omni_pi_server.egg-info/PKG-INFO
+[2.730s] writing dependency_links to build/omni-pi-server/omni_pi_server.egg-info/dependency_links.txt
+[2.731s] writing entry points to build/omni-pi-server/omni_pi_server.egg-info/entry_points.txt
+[2.732s] writing top-level names to build/omni-pi-server/omni_pi_server.egg-info/top_level.txt
+[2.808s] reading manifest file 'build/omni-pi-server/omni_pi_server.egg-info/SOURCES.txt'
+[2.811s] writing manifest file 'build/omni-pi-server/omni_pi_server.egg-info/SOURCES.txt'
+[2.811s] running build
+[2.811s] running build_py
+[2.813s] running install
+[2.825s] running install_lib
+[2.860s] running install_egg_info
+[2.905s] removing '/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/omni_pi_server-1.0.0-py3.12.egg-info' (and everything under it)
+[2.905s] Copying build/omni-pi-server/omni_pi_server.egg-info to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/omni_pi_server-1.0.0-py3.12.egg-info
+[2.907s] running install_scripts
+[3.161s] Installing omni-server script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin
+[3.166s] Installing omni-test-client script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin
+[3.166s] writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/install.log'
+[3.313s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni-pi-server build --build-base /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build install --record /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/install.log --single-version-externally-managed

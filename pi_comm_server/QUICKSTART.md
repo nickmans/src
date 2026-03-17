@@ -320,6 +320,9 @@ systemctl --user status omni_ros2_stack.service
 # Restart ROS2 stack
 systemctl --user restart omni_ros2_stack.service
 
+# Ensure it starts on every boot
+systemctl --user enable omni_ros2_stack.service
+
 # Check nodes
 ros2 node list
 ```
@@ -373,6 +376,14 @@ python3 test_client.py
 | POSE | 5 Hz | STM32 → Pi |
 | TRAJ | 5 Hz | Pi → STM32 |
 | CMD | On-demand | STM32 → Pi |
+
+### Frame Conventions
+
+| Signal | Frame in current implementation |
+|--------|----------------------------------|
+| POSE `x,y,yaw` | `odom` |
+| POSE `vx,vy,wz` | `base_link` (body twist) |
+| TRAJ `vx_world,vy_world` | world/odom frame |
 
 ### ROS2 Topics
 

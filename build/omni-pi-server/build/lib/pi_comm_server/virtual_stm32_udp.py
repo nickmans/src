@@ -62,12 +62,13 @@ class CM7Controller:
         self.k_p = 0.5
         self.umax = 11.0
         self.aumax = 1.0 / 0.075
-        self.jerkmax = 200 * 0.01
+        self.jerkmax = 200.0
         self.wmax = 2.0
         self.dwmax = 1.0
 
         self.du_prev = [0.0, 0.0, 0.0]
         self.u_prev = [0.0, 0.0, 0.0]
+        self.u_trans_prev = [0.0, 0.0, 0.0]
         self.yawrate_prev = 0.0
 
     def _inverse_kinematics(self, vx_body: float, vy_body: float, omega: float) -> List[float]:
@@ -143,6 +144,12 @@ class CM7Controller:
         u_rot = self._inverse_kinematics(0.0, 0.0, omega)
         u_trans = self._inverse_kinematics(vx_body, vy_body, 0.0)
 
+        du_trans_max = self.aumax * dt
+        for idx in range(3):
+            du_i = u_trans[idx] - self.u_trans_prev[idx]
+            du_i_limited = clamp(du_i, -du_trans_max, du_trans_max)
+            u_trans[idx] = self.u_trans_prev[idx] + du_i_limited
+
         s_lo = 0.0
         s_hi = 1.0
         for idx in range(3):
@@ -186,7 +193,7 @@ class CM7Controller:
             du_acc[1] - self.du_prev[1],
             du_acc[2] - self.du_prev[2],
         ]
-        ddu_max = self.jerkmax * dt
+        ddu_max = self.jerkmax * dt * dt
         ddu_inf = self._maxabs3(ddu)
         if ddu_inf > ddu_max and ddu_inf > 0.0:
             scale = ddu_max / ddu_inf
@@ -205,6 +212,7 @@ class CM7Controller:
 
         self.du_prev = du
         self.u_prev = u_cmd
+        self.u_trans_prev = [u_cmd[0] - u_rot[0], u_cmd[1] - u_rot[1], u_cmd[2] - u_rot[2]]
         return u_cmd
 
 
@@ -367,12 +375,18 @@ class VirtualSTM32UDP:
         self.pose_state = [0.0, 0.0, 0.0]
         self.prev_pose_state = [0.0, 0.0, 0.0]
         self.last_pose_send_t = 0.0
+        self.hal_tick_ms = 0
+        self._last_selector = 0
+        self._last_traj_idx = -1
+
+        control_tick_ms = int(round(self.control_dt * 1000.0))
+        self.control_tick_ms = max(1, control_tick_ms)
 
     def start(self, auto_start_ros2: bool = True, auto_start_traj: bool = True) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(self.local_addr)
-        self.sock.settimeout(0.05)
+        self.sock.settimeout(0.5)  # Increased from 0.05 to reduce CPU wake-ups
 
         self.running = True
         self.recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
@@ -439,6 +453,13 @@ class VirtualSTM32UDP:
                     self.latest_traj = traj
                 if seq % 20 == 0:
                     logger.info("TRAJ rx: seq=%s knots=%s dt=%.3f", seq, len(traj.knots), traj.dt)
+                    # Log first, middle, and last knots to verify trajectory content
+                    if len(traj.knots) > 0:
+                        logger.info("  knot[0]:  x=%.3f y=%.3f yaw=%.3f vx=%.3f vy=%.3f", *traj.knots[0])
+                        if len(traj.knots) > 1:
+                            mid = len(traj.knots) // 2
+                            logger.info("  knot[%d]: x=%.3f y=%.3f yaw=%.3f vx=%.3f vy=%.3f", mid, *traj.knots[mid])
+                            logger.info("  knot[%d]: x=%.3f y=%.3f yaw=%.3f vx=%.3f vy=%.3f", len(traj.knots)-1, *traj.knots[-1])
             return
 
         if msg_type == MessageType.CMD:
@@ -482,8 +503,11 @@ class VirtualSTM32UDP:
         if traj is None or traj.dt <= 0.0 or not traj.knots:
             return xd, vd, 1
 
-        now_ms = int(time.time() * 1000)
-        elapsed_ms = max(0, now_ms - traj.traj_t0_ms)
+        # Match CM7 logic exactly:
+        #   now_ms = HAL_GetTick()
+        #   elapsed_ms = (now_ms >= traj_t0_ms) ? (now_ms - traj_t0_ms) : 0
+        now_ms = self.hal_tick_ms
+        elapsed_ms = (now_ms - traj.traj_t0_ms) if now_ms >= traj.traj_t0_ms else 0
         dt_ms = max(1, int(traj.dt * 1000.0))
         idx = min(len(traj.knots) - 1, elapsed_ms // dt_ms)
 
@@ -494,6 +518,17 @@ class VirtualSTM32UDP:
         # Use feedforward velocities directly from trajectory
         xd[3] = vx
         xd[4] = vy
+
+        if idx != self._last_traj_idx:
+            logger.debug(
+                "TRAJ consume: hal_tick_ms=%d t0=%d dt_ms=%d idx=%d/%d",
+                now_ms,
+                traj.traj_t0_ms,
+                dt_ms,
+                idx,
+                len(traj.knots) - 1,
+            )
+            self._last_traj_idx = idx
 
         return xd, vd, 1
 
@@ -521,18 +556,35 @@ class VirtualSTM32UDP:
         last_t = time.monotonic()
         self.last_pose_send_t = last_t
         imu_zeroed = False
+        next_control_t = last_t + self.control_dt
 
         while self.running:
             now_t = time.monotonic()
-            dt = now_t - last_t
-            if dt < self.control_dt:
-                time.sleep(max(0.0005, self.control_dt - dt))
+            # Sleep until next control cycle (more efficient than tight polling)
+            sleep_time = next_control_t - now_t
+            if sleep_time > 0.001:  # Only sleep if >1ms remains
+                time.sleep(sleep_time * 0.95)  # Sleep 95% to avoid overshooting
                 continue
-            if dt > 0.1:
-                dt = self.control_dt
+            
+            # Match CM7 fixed-step scheduler semantics.
+            dt = self.control_dt
             last_t = now_t
+            next_control_t += self.control_dt
+            if (now_t - next_control_t) > 0.5:
+                next_control_t = now_t + self.control_dt
+
+            self.hal_tick_ms = (self.hal_tick_ms + self.control_tick_ms) & 0xFFFFFFFF
 
             xd, vd, selector = self._select_desired_state()
+
+            if self._last_selector == 0 and selector == 1:
+                # CM7 rising edge behavior when entering traj mode.
+                self.estimator.reset(0.0, 0.0, 0.0)
+                if imu_zeroed:
+                    self.estimator.zero_imu_yaw(self.plant.true_yaw)
+                xd = [0.0, 0.0, 0.0, 0.0, 0.0]
+                self._last_traj_idx = -1
+            self._last_selector = selector
 
             wheel_cmd = self.controller.step(self.pose_state, xd, vd, selector, dt)
 

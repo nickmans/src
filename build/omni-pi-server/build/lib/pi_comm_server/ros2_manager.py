@@ -57,12 +57,18 @@ class ROS2Manager:
 
         try:
             workspace_setup = os.path.expanduser("~/ros2_ws/install/setup.bash")
+            stty_cmd = (
+                "stty -F /dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_2608b4e7586eef118367e9c2c169b110-if00-port0 "
+                "460800 raw -echo -crtscts -ixon -ixoff && "
+                "stty -F /dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_420b6b8a586eef11a134e0c2c169b110-if00-port0 "
+                "460800 raw -echo -crtscts -ixon -ixoff"
+            )
             launch_cmd = " ".join(["ros2", "launch", self.package, self.launch_file, *self.launch_args])
 
             cmd = [
                 "bash",
                 "-c",
-                f"source /opt/ros/jazzy/setup.bash && source {workspace_setup} && exec {launch_cmd}"
+                f"source /opt/ros/jazzy/setup.bash && source {workspace_setup} && {stty_cmd} && exec {launch_cmd}"
             ]
             
             logger.info(f"Starting ROS2 stack: {launch_cmd}")

@@ -101,12 +101,12 @@ typedef enum {
 ```c
 typedef struct {
     uint32_t pose_t_ms;    // Timestamp of pose measurement
-    float x;               // X position (meters)
-    float y;               // Y position (meters)
-    float yaw;             // Yaw angle (radians)
-    float vx;              // X velocity (m/s, world frame)
-    float vy;              // Y velocity (m/s, world frame)
-    float wz;              // Angular velocity (rad/s)
+    float x;               // X position (meters, odom frame)
+    float y;               // Y position (meters, odom frame)
+    float yaw;             // Yaw angle (radians, odom->base_link)
+    float vx;              // X velocity (m/s, base_link/body frame)
+    float vy;              // Y velocity (m/s, base_link/body frame)
+    float wz;              // Angular velocity (rad/s, base_link/body frame)
 } __attribute__((packed)) PosePayload;
 ```
 
@@ -143,8 +143,8 @@ typedef struct {
     float x_des;       // Desired X position (meters)
     float y_des;       // Desired Y position (meters)
     float yaw_des;     // Desired yaw angle (radians)
-    float vx_world;    // Desired X velocity (m/s, world frame)
-    float vy_world;    // Desired Y velocity (m/s, world frame)
+    float vx_world;    // Desired X velocity (m/s, world/odom frame)
+    float vy_world;    // Desired Y velocity (m/s, world/odom frame)
 } __attribute__((packed)) TrajectoryPayload;
 ```
 

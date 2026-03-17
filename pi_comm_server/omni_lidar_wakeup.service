@@ -1,0 +1,15 @@
+[Unit]
+Description=OMNI LiDAR Motor Wakeup
+After=omni_ros2_stack.service
+Requires=omni_ros2_stack.service
+
+[Service]
+Type=oneshot
+User=nickolas
+WorkingDirectory=/home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+ExecStart=/bin/bash /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/wakeup_lidars.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

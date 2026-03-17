@@ -4,24 +4,10 @@
 
 set -euo pipefail
 
-WS_ROOT="/home/nickolas/ros2_ws"
-LAUNCH_FILE="dual_sllidar_with_mock_and_traj.launch.py"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+START_SCRIPT="$SCRIPT_DIR/start_ros2_stack.sh"
 LOG_FILE="/tmp/ros2_stack.log"
-LAUNCH_MATCH="ros2 launch omni_traj ${LAUNCH_FILE}"
-
-source_env() {
-	if [ -f "/opt/ros/jazzy/setup.bash" ]; then
-		set +u
-		source /opt/ros/jazzy/setup.bash
-		set -u
-	fi
-
-	if [ -f "$WS_ROOT/install/setup.bash" ]; then
-		set +u
-		source "$WS_ROOT/install/setup.bash"
-		set -u
-	fi
-}
+LAUNCH_MATCH="ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py"
 
 stop_stack_sigint() {
 	local pids
@@ -61,25 +47,12 @@ stop_stack_sigint() {
 	done <<< "$pids"
 }
 
-source_env
 stop_stack_sigint
 
-LAUNCH_CMD=(
-	ros2 launch omni_traj "$LAUNCH_FILE"
-	use_mock_lidar:=false
-	use_rviz:=false
-	map_frame:=odom
-	publish_odom_to_base_tf:=false
-	publish_world_to_odom_tf:=true
-	rolling_map_enable:=true
-	rolling_map_margin_m:=1.0
-	persistent_obstacles_enable:=false
-	lidar1_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_2608b4e7586eef118367e9c2c169b110-if00-port0
-	lidar2_serial_port:=/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_420b6b8a586eef11a134e0c2c169b110-if00-port0
-)
+if [ ! -x "$START_SCRIPT" ]; then
+	chmod +x "$START_SCRIPT"
+fi
 
-printf -v LAUNCH_CMD_STR '%q ' "${LAUNCH_CMD[@]}"
-
-nohup bash -lc "source /opt/ros/jazzy/setup.bash && source ${WS_ROOT}/install/setup.bash && exec ${LAUNCH_CMD_STR}" > "$LOG_FILE" 2>&1 &
+nohup "$START_SCRIPT" > "$LOG_FILE" 2>&1 &
 
 echo "ROS2 stack launched/relaunched using startup-equivalent command."

@@ -1,0 +1,70 @@
+[0.000000] (-) TimerEvent: {}
+[0.000759] (omni_traj) JobQueued: {'identifier': 'omni_traj', 'dependencies': OrderedDict()}
+[0.000934] (omni_traj) JobStarted: {'identifier': 'omni_traj'}
+[0.099447] (-) TimerEvent: {}
+[0.199827] (-) TimerEvent: {}
+[0.300183] (-) TimerEvent: {}
+[0.400696] (-) TimerEvent: {}
+[0.501688] (-) TimerEvent: {}
+[0.602479] (-) TimerEvent: {}
+[0.702979] (-) TimerEvent: {}
+[0.803345] (-) TimerEvent: {}
+[0.903653] (-) TimerEvent: {}
+[1.003983] (-) TimerEvent: {}
+[1.104522] (-) TimerEvent: {}
+[1.205548] (-) TimerEvent: {}
+[1.306229] (-) TimerEvent: {}
+[1.406711] (-) TimerEvent: {}
+[1.506987] (-) TimerEvent: {}
+[1.607311] (-) TimerEvent: {}
+[1.707645] (-) TimerEvent: {}
+[1.808194] (-) TimerEvent: {}
+[1.909134] (-) TimerEvent: {}
+[2.009960] (-) TimerEvent: {}
+[2.110415] (-) TimerEvent: {}
+[2.210763] (-) TimerEvent: {}
+[2.311204] (-) TimerEvent: {}
+[2.342776] (omni_traj) Command: {'cmd': ['/usr/bin/python3', '-W', 'ignore:setup.py install is deprecated', '-W', 'ignore:easy_install command is deprecated', 'setup.py', 'egg_info', '--egg-base', '../build/omni_traj', 'build', '--build-base', '/home/nickolas/ros2_ws/src/omni_src/build/omni_traj/build', 'install', '--record', '/home/nickolas/ros2_ws/src/omni_src/build/omni_traj/install.log', '--single-version-externally-managed', 'install_data'], 'cwd': '/home/nickolas/ros2_ws/src/omni_src/omni_traj', 'env': {'LESSOPEN': '| /usr/bin/lesspipe %s', 'USER': 'nickolas', 'SSH_CLIENT': 'fe80::ec65:5d88:13ab:4a6c%wlan0 55812 22', 'GZ_CONFIG_PATH': '/opt/ros/jazzy/opt/gz_sim_vendor/share/gz:/opt/ros/jazzy/opt/sdformat_vendor/share/gz:/opt/ros/jazzy/opt/gz_gui_vendor/share/gz:/opt/ros/jazzy/opt/gz_transport_vendor/share/gz:/opt/ros/jazzy/opt/gz_rendering_vendor/share/gz:/opt/ros/jazzy/opt/gz_plugin_vendor/share/gz:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/share/gz:/opt/ros/jazzy/opt/gz_msgs_vendor/share/gz:/opt/ros/jazzy/opt/gz_common_vendor/share/gz', 'GIT_EDITOR': ':', 'XDG_SESSION_TYPE': 'tty', 'GIT_ASKPASS': '/home/nickolas/.vscode-server/cli/servers/Stable-0870c2a0c7c0564e7631bfed2675573a94ba4455/server/extensions/git/dist/askpass.sh', 'SHLVL': '1', 'LD_LIBRARY_PATH': '/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/aarch64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib', 'BROWSER': '/home/nickolas/.vscode-server/cli/servers/Stable-0870c2a0c7c0564e7631bfed2675573a94ba4455/server/bin/helpers/browser.sh', 'HOME': '/home/nickolas', 'OLDPWD': '/home/nickolas/ros2_ws/src/omni_src', 'TERM_PROGRAM_VERSION': '1.110.0', 'VSCODE_IPC_HOOK_CLI': '/run/user/1000/vscode-ipc-f0cd5801-1915-4d92-b4a0-40e864b38965.sock', 'ROS_PYTHON_VERSION': '3', 'VSCODE_GIT_ASKPASS_MAIN': '/home/nickolas/.vscode-server/cli/servers/Stable-0870c2a0c7c0564e7631bfed2675573a94ba4455/server/extensions/git/dist/askpass-main.js', 'VSCODE_GIT_ASKPASS_NODE': '/home/nickolas/.vscode-server/cli/servers/Stable-0870c2a0c7c0564e7631bfed2675573a94ba4455/server/node', 'VSCODE_PYTHON_AUTOACTIVATE_GUARD': '1', 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus', 'COLORTERM': 'truecolor', 'DEBUGINFOD_URLS': 'https://debuginfod.ubuntu.com', 'COLCON_PREFIX_PATH': '/home/nickolas/ros2_ws/install:/home/nickolas/ros2_ws/src/omni_src/install', 'ROS_DISTRO': 'jazzy', 'LOGNAME': 'nickolas', '_': '/usr/bin/colcon', 'ROS_VERSION': '2', 'XDG_SESSION_CLASS': 'user', 'TERM': 'xterm-256color', 'XDG_SESSION_ID': '3', 'HISTCONTROL': 'ignorespace', 'PATH': '/home/nickolas/.local/bin:/home/nickolas/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/home/nickolas/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/home/nickolas/.vscode-server/cli/servers/Stable-0870c2a0c7c0564e7631bfed2675573a94ba4455/server/bin/remote-cli:/home/nickolas/.local/bin:/home/nickolas/.local/bin:/home/nickolas/ros2_ws/install/omni-pi-server/bin:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin:/opt/ros/jazzy/opt/gz_msgs_vendor/bin:/opt/ros/jazzy/opt/gz_tools_vendor/bin:/opt/ros/jazzy/opt/gz_ogre_next_vendor/bin:/opt/ros/jazzy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin', 'XDG_RUNTIME_DIR': '/run/user/1000', 'DISPLAY': ':10', 'LANG': 'en_US.UTF-8', 'LS_COLORS': 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.avif=01;35:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:*~=00;90:*#=00;90:*.bak=00;90:*.crdownload=00;90:*.dpkg-dist=00;90:*.dpkg-new=00;90:*.dpkg-old=00;90:*.dpkg-tmp=00;90:*.old=00;90:*.orig=00;90:*.part=00;90:*.rej=00;90:*.rpmnew=00;90:*.rpmorig=00;90:*.rpmsave=00;90:*.swp=00;90:*.tmp=00;90:*.ucf-dist=00;90:*.ucf-new=00;90:*.ucf-old=00;90:', 'VSCODE_GIT_IPC_HANDLE': '/run/user/1000/vscode-git-15e8a6e913.sock', 'TERM_PROGRAM': 'vscode', 'AMENT_PREFIX_PATH': '/home/nickolas/ros2_ws/install/sllidar_ros2:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy', 'SHELL': '/bin/bash', 'LESSCLOSE': '/usr/bin/lesspipe %s %s', 'ROS_AUTOMATIC_DISCOVERY_RANGE': 'SUBNET', 'VSCODE_GIT_ASKPASS_EXTRA_ARGS': '', 'GIT_PAGER': 'cat', 'PWD': '/home/nickolas/ros2_ws/src/omni_src/build/omni_traj', 'GIT_MERGE_AUTOEDIT': 'no', 'LC_ALL': 'en_US.UTF-8', 'SSH_CONNECTION': 'fe80::ec65:5d88:13ab:4a6c%wlan0 55812 fe80::8aa2:9eff:fe29:ba68%wlan0 22', 'XDG_DATA_DIRS': '/usr/local/share:/usr/share:/var/lib/snapd/desktop', 'PYTHONPATH': '/home/nickolas/ros2_ws/src/omni_src/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/build/omni-pi-server:/home/nickolas/ros2_ws/install/omni-pi-server/lib/python3.12/site-packages:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages', 'COLCON': '1', 'CMAKE_PREFIX_PATH': '/home/nickolas/ros2_ws/install/sllidar_ros2:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor'}, 'shell': False}
+[2.411304] (-) TimerEvent: {}
+[2.511749] (-) TimerEvent: {}
+[2.612549] (-) TimerEvent: {}
+[2.713407] (-) TimerEvent: {}
+[2.813988] (-) TimerEvent: {}
+[2.861488] (omni_traj) StdoutLine: {'line': b'running egg_info\n'}
+[2.900432] (omni_traj) StdoutLine: {'line': b'writing ../build/omni_traj/omni_traj.egg-info/PKG-INFO\n'}
+[2.901201] (omni_traj) StdoutLine: {'line': b'writing dependency_links to ../build/omni_traj/omni_traj.egg-info/dependency_links.txt\n'}
+[2.902639] (omni_traj) StdoutLine: {'line': b'writing entry points to ../build/omni_traj/omni_traj.egg-info/entry_points.txt\n'}
+[2.903113] (omni_traj) StdoutLine: {'line': b'writing requirements to ../build/omni_traj/omni_traj.egg-info/requires.txt\n'}
+[2.903807] (omni_traj) StdoutLine: {'line': b'writing top-level names to ../build/omni_traj/omni_traj.egg-info/top_level.txt\n'}
+[2.914083] (-) TimerEvent: {}
+[2.975493] (omni_traj) StdoutLine: {'line': b"reading manifest file '../build/omni_traj/omni_traj.egg-info/SOURCES.txt'\n"}
+[2.977141] (omni_traj) StdoutLine: {'line': b"writing manifest file '../build/omni_traj/omni_traj.egg-info/SOURCES.txt'\n"}
+[2.977487] (omni_traj) StdoutLine: {'line': b'running build\n'}
+[2.977607] (omni_traj) StdoutLine: {'line': b'running build_py\n'}
+[2.978500] (omni_traj) StdoutLine: {'line': b'copying omni_traj/waypoint_traj_node.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni_traj/build/lib/omni_traj\n'}
+[2.978633] (omni_traj) StdoutLine: {'line': b'running install\n'}
+[2.988217] (omni_traj) StdoutLine: {'line': b'running install_lib\n'}
+[3.014181] (-) TimerEvent: {}
+[3.019662] (omni_traj) StdoutLine: {'line': b'copying /home/nickolas/ros2_ws/src/omni_src/build/omni_traj/build/lib/omni_traj/waypoint_traj_node.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages/omni_traj\n'}
+[3.023309] (omni_traj) StdoutLine: {'line': b'byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages/omni_traj/waypoint_traj_node.py to waypoint_traj_node.cpython-312.pyc\n'}
+[3.086638] (omni_traj) StdoutLine: {'line': b'running install_data\n'}
+[3.087725] (omni_traj) StdoutLine: {'line': b'copying package.xml -> /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/share/omni_traj\n'}
+[3.088619] (omni_traj) StdoutLine: {'line': b'copying launch/dual_sllidar_with_mock_and_traj.launch.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/share/omni_traj/launch\n'}
+[3.088855] (omni_traj) StdoutLine: {'line': b'copying config/waypoint_traj.yaml -> /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/share/omni_traj/config\n'}
+[3.089124] (omni_traj) StdoutLine: {'line': b'copying config/amcl_localization.yaml -> /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/share/omni_traj/config\n'}
+[3.089348] (omni_traj) StdoutLine: {'line': b'running install_egg_info\n'}
+[3.114279] (-) TimerEvent: {}
+[3.131480] (omni_traj) StdoutLine: {'line': b"removing '/home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info' (and everything under it)\n"}
+[3.134420] (omni_traj) StdoutLine: {'line': b'Copying ../build/omni_traj/omni_traj.egg-info to /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info\n'}
+[3.134716] (omni_traj) StdoutLine: {'line': b'running install_scripts\n'}
+[3.214440] (-) TimerEvent: {}
+[3.315123] (-) TimerEvent: {}
+[3.396910] (omni_traj) StdoutLine: {'line': b'Installing empty_scan_pub script to /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/omni_traj\n'}
+[3.397456] (omni_traj) StdoutLine: {'line': b'Installing waypoint_traj script to /home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/omni_traj\n'}
+[3.400120] (omni_traj) StdoutLine: {'line': b"writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/build/omni_traj/install.log'\n"}
+[3.415330] (-) TimerEvent: {}
+[3.516144] (-) TimerEvent: {}
+[3.588630] (omni_traj) CommandEnded: {'returncode': 0}
+[3.616203] (-) TimerEvent: {}
+[3.655035] (omni_traj) JobEnded: {'identifier': 'omni_traj', 'rc': 0}
+[3.656207] (-) EventReactorShutdown: {}

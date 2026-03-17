@@ -50,7 +50,9 @@ Production-ready TCP communication server for OMNI robot stack. Runs on Raspberr
 ### Data Flow
 
 **STM32 → Pi (5 Hz):**
-- POSE messages: Robot position, velocity, orientation
+- POSE messages: Robot pose and twist
+    - Pose: `x,y,yaw` interpreted in `odom` frame
+    - Twist: `vx,vy,wz` interpreted in `base_link` (body) frame
 - CMD messages: Commands (SET_IDLE, START/STOP ROS2, etc.)
 
 **Pi → STM32 (5 Hz):**
@@ -95,12 +97,12 @@ Production-ready TCP communication server for OMNI robot stack. Runs on Raspberr
 | Offset | Size | Type   | Name      | Description                    |
 |--------|------|--------|-----------|--------------------------------|
 | 24-27  | 4    | uint32 | pose_t_ms | Pose timestamp (ms)            |
-| 28-31  | 4    | float  | x         | Position x (meters)            |
-| 32-35  | 4    | float  | y         | Position y (meters)            |
+| 28-31  | 4    | float  | x         | Position x (meters, odom frame) |
+| 32-35  | 4    | float  | y         | Position y (meters, odom frame) |
 | 36-39  | 4    | float  | yaw       | Orientation (radians, [-π, π]) |
-| 40-43  | 4    | float  | vx        | Velocity x (m/s, world frame)  |
-| 44-47  | 4    | float  | vy        | Velocity y (m/s, world frame)  |
-| 48-51  | 4    | float  | wz        | Yaw rate (rad/s)               |
+| 40-43  | 4    | float  | vx        | Linear x (m/s, base_link/body frame) |
+| 44-47  | 4    | float  | vy        | Linear y (m/s, base_link/body frame) |
+| 48-51  | 4    | float  | wz        | Angular z (rad/s, base_link/body frame) |
 
 ### TRAJ Message (Total: 44 bytes)
 
@@ -112,8 +114,8 @@ Production-ready TCP communication server for OMNI robot stack. Runs on Raspberr
 | 24-27  | 4    | float | x_des    | Desired position x (meters)       |
 | 28-31  | 4    | float | y_des    | Desired position y (meters)       |
 | 32-35  | 4    | float | yaw_des  | Desired orientation (radians)     |
-| 36-39  | 4    | float | vx_world | Feedforward velocity x (m/s)      |
-| 40-43  | 4    | float | vy_world | Feedforward velocity y (m/s)      |
+| 36-39  | 4    | float | vx_world | Feedforward velocity x (m/s, world/odom frame) |
+| 40-43  | 4    | float | vy_world | Feedforward velocity y (m/s, world/odom frame) |
 
 ### Command IDs
 
@@ -222,14 +224,18 @@ chmod +x ~/.local/bin/omni_pi_server
 # Reload and enable service
 systemctl --user daemon-reload
 systemctl --user enable omni_pi_server.service
+systemctl --user enable omni_ros2_stack.service
 systemctl --user start omni_pi_server.service
+systemctl --user start omni_ros2_stack.service
 ```
 
 #### 3. Verify Service
 
 ```bash
 systemctl --user status omni_pi_server.service
+systemctl --user status omni_ros2_stack.service
 journalctl --user -u omni_pi_server.service -f
+journalctl --user -u omni_ros2_stack.service -f
 ```
 
 ---

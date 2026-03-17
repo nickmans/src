@@ -1,8 +1,11 @@
 waypoint_traj:
   ros__parameters:
-    map_frame: odom
+    map_frame: map
+    odom_frame: odom
     base_frame: base_link
     publish_odom_to_base_tf: true
+    prefer_tf_pose: true
+    pose_tf_timeout_s: 0.05
 
     robot_exclusion_enable: true
     robot_exclusion_radius_m: 0.22
@@ -10,7 +13,7 @@ waypoint_traj:
     waypoint_reached_tol_m: 0.10
     remove_waypoint_radius_m: 0.50
 
-    global_map_res: 0.025
+    global_map_res: 0.0444
     global_map_width_m: 4.0
     global_map_height_m: 4.0
     rolling_map_enable: true
@@ -19,23 +22,46 @@ waypoint_traj:
     persistent_confirm_time_s: 1.2
     persistent_clear_time_s: 1.2
     persistent_evidence_cap: 20
-    persistent_inf_clearing_enable: false
+    persistent_inf_clearing_enable: true
     persistent_inf_clearing_ratio: 0.95
+    mapping_save_path: /home/nickolas/Desktop/last_costmap.npz
+    auto_load_saved_map: true
+    default_frozen_map_mode: true
+    mapping_area_size_m: 10.0
+    mapping_res_m: 0.05
+    mapping_hit_logodd_inc: 4
+    mapping_free_logodd_dec: 1
+    mapping_logodd_min: -50
+    mapping_logodd_max: 50
+    mapping_occ_threshold: 8
 
     hard_inflate_radius: 0.222
     soft_inflate_radius: 0.444
 
     wheel_radius_m: 0.075
     wheelbase_m: 0.200
-    max_wheel_acceleration_ms2: 1.0
+    max_wheel_acceleration_ms2: 0.8
     max_linear_velocity_ms: 0.5
+    max_lateral_accel: 1.0
+    trajectory_replan_hz: 2.0
+    trajectory_replan_min_move_m: 0.05
+    trajectory_replan_min_yaw_rad: 0.10
+    spline_sample_spacing_m: 0.04
+    spline_max_curvature: 3.0
+    spline_curvature_blend_step: 0.20
+    spline_curvature_max_iters: 6
+    odom_history_s: 2.0
 
     scan_max_age_s: 0.5
     scan_beam_stride: 1
+    scan_no_hit_eps_m: 0.02
+    max_lidar_range_m: 5.0
 
     publish_fused_scan: true
+    fused_angle_min: -3.14159
+    fused_angle_max: 3.14159
     fused_angle_increment_deg: 0.25
-    motion_compensate: false
+    motion_compensate: true
 
     start_pose: [0.0, 0.0, 0.0]
 

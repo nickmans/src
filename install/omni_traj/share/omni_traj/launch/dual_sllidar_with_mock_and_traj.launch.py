@@ -17,11 +17,14 @@ def generate_launch_description() -> LaunchDescription:
     use_rviz = LaunchConfiguration("use_rviz")
     rviz_config = LaunchConfiguration("rviz_config")
     map_frame = LaunchConfiguration("map_frame")
+    odom_frame = LaunchConfiguration("odom_frame")
     publish_odom_to_base_tf = LaunchConfiguration("publish_odom_to_base_tf")
     publish_world_to_odom_tf = LaunchConfiguration("publish_world_to_odom_tf")
     rolling_map_enable = LaunchConfiguration("rolling_map_enable")
     rolling_map_margin_m = LaunchConfiguration("rolling_map_margin_m")
     persistent_obstacles_enable = LaunchConfiguration("persistent_obstacles_enable")
+    enable_amcl_localization = LaunchConfiguration("enable_amcl_localization")
+    amcl_params_file = LaunchConfiguration("amcl_params_file")
 
     channel_type = LaunchConfiguration("channel_type")
     serial_baudrate = LaunchConfiguration("serial_baudrate")
@@ -63,7 +66,10 @@ def generate_launch_description() -> LaunchDescription:
         package="sllidar_ros2",
         executable="sllidar_node",
         name="lidar1",
+        namespace="lidar1",
         output="screen",
+        respawn=True,
+        respawn_delay=2.0,
         parameters=[{**sllidar_common_params, "serial_port": lidar1_serial_port, "frame_id": lidar1_frame_id}],
         remappings=[("scan", "/lidar1/scan")],
         condition=UnlessCondition(use_mock_lidar),
@@ -73,7 +79,10 @@ def generate_launch_description() -> LaunchDescription:
         package="sllidar_ros2",
         executable="sllidar_node",
         name="lidar2",
+        namespace="lidar2",
         output="screen",
+        respawn=True,
+        respawn_delay=2.0,
         parameters=[{**sllidar_common_params, "serial_port": lidar2_serial_port, "frame_id": lidar2_frame_id}],
         remappings=[("scan", "/lidar2/scan")],
         condition=UnlessCondition(use_mock_lidar),
@@ -179,6 +188,7 @@ def generate_launch_description() -> LaunchDescription:
             {
                 # frames
                 "map_frame": map_frame,
+                "odom_frame": odom_frame,
 
                 # publish odom->base from /odom (set false if something else already publishes it)
                 "publish_odom_to_base_tf": ParameterValue(publish_odom_to_base_tf, value_type=bool),
@@ -187,6 +197,40 @@ def generate_launch_description() -> LaunchDescription:
                 "persistent_obstacles_enable": ParameterValue(persistent_obstacles_enable, value_type=bool),
             }
         ],
+    )
+
+    amcl = Node(
+        package="nav2_amcl",
+        executable="amcl",
+        name="amcl",
+        output="screen",
+        parameters=[
+            amcl_params_file,
+            {
+                "use_map_topic": True,
+                "scan_topic": "/scan_fused",
+                "global_frame_id": map_frame,
+                "odom_frame_id": odom_frame,
+                "base_frame_id": "base_link",
+                "tf_broadcast": True,
+            },
+        ],
+        condition=IfCondition(enable_amcl_localization),
+    )
+
+    amcl_lifecycle = Node(
+        package="nav2_lifecycle_manager",
+        executable="lifecycle_manager",
+        name="lifecycle_manager_localization",
+        output="screen",
+        parameters=[
+            {
+                "autostart": True,
+                "node_names": ["amcl"],
+                "bond_timeout": 4.0,
+            }
+        ],
+        condition=IfCondition(enable_amcl_localization),
     )
 
     rviz = Node(
@@ -204,12 +248,18 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("rviz_config", default_value=rviz_config_path),
             DeclareLaunchArgument("traj_params_file", default_value=traj_params_path),
-            DeclareLaunchArgument("map_frame", default_value="odom"),
+            DeclareLaunchArgument("map_frame", default_value="map"),
+            DeclareLaunchArgument("odom_frame", default_value="odom"),
             DeclareLaunchArgument("publish_odom_to_base_tf", default_value="true"),
             DeclareLaunchArgument("publish_world_to_odom_tf", default_value="false"),
             DeclareLaunchArgument("rolling_map_enable", default_value="true"),
             DeclareLaunchArgument("rolling_map_margin_m", default_value="1.0"),
-            DeclareLaunchArgument("persistent_obstacles_enable", default_value="true"),
+            DeclareLaunchArgument("persistent_obstacles_enable", default_value="false"),
+            DeclareLaunchArgument("enable_amcl_localization", default_value="true"),
+            DeclareLaunchArgument(
+                "amcl_params_file",
+                default_value=os.path.join(get_package_share_directory("omni_traj"), "config", "amcl_localization.yaml"),
+            ),
             DeclareLaunchArgument("channel_type", default_value="serial"),
             DeclareLaunchArgument("serial_baudrate", default_value="460800"),
             DeclareLaunchArgument("inverted", default_value="false"),
@@ -231,6 +281,8 @@ def generate_launch_description() -> LaunchDescription:
             base_to_lidar2,
 
             traj,
+            amcl,
+            amcl_lifecycle,
             rviz,
         ]
     )

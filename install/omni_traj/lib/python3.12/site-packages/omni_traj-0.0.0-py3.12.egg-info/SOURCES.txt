@@ -8,6 +8,8 @@ setup.py
 ../build/omni_traj/omni_traj.egg-info/requires.txt
 ../build/omni_traj/omni_traj.egg-info/top_level.txt
 ../build/omni_traj/omni_traj.egg-info/zip-safe
+config/amcl_localization.yaml
+config/waypoint_traj.yaml
 launch/dual_sllidar_with_mock_and_traj.launch.py
 launch/omni_bringup.launch.py
 omni_traj/__init__.py
