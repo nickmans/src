@@ -1,6 +1,6 @@
 # OMNI Pi Communication Server - Documentation
 
-This folder contains the communication server for the OMNI robot, enabling TCP/IP communication between the Raspberry Pi 5 and the STM32 NUCLEO H755 controller.
+This folder contains the communication server for the OMNI robot, enabling UDP communication between the Raspberry Pi 5 and the STM32 NUCLEO H755 controller.
 
 ---
 
@@ -11,7 +11,7 @@ This folder contains the communication server for the OMNI robot, enabling TCP/I
 | **[README.md](README.md)** | Complete reference documentation | Full protocol specs, installation, architecture |
 | **[QUICKSTART.md](QUICKSTART.md)** | Quick start guide | Get up and running in 2 minutes |
 | **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** | Troubleshooting guide | Having issues? Start here |
-| **[STM32_CLIENT_GUIDE.md](STM32_CLIENT_GUIDE.md)** | STM32 implementation guide | Implementing the STM32 client |
+| **[README.md](README.md)** | STM32 implementation guide | Implementing the STM32 client |
 
 ---
 
@@ -26,10 +26,10 @@ sudo ./setup_complete.sh
 ### Common Commands
 ```bash
 # Check service status
-sudo systemctl status omni_tcp_server.service
+sudo systemctl status omni_udp_server.service
 
 # View logs
-sudo journalctl -u omni_tcp_server.service -f
+sudo journalctl -u omni_udp_server.service -f
 
 # Test network
 ./test_network.sh
@@ -47,19 +47,9 @@ pi_comm_server/
 ├── README.md                    # Complete reference (protocol, installation, usage)
 ├── QUICKSTART.md               # 2-minute quick start guide
 ├── TROUBLESHOOTING.md          # Comprehensive troubleshooting
-├── STM32_CLIENT_GUIDE.md       # STM32 TCP client implementation
-│
-├── docs_archive/               # Old documentation (archived)
-│   ├── README_old.md
-│   ├── README_TCP.md
-│   ├── QUICK_START.md
-│   ├── SETUP.md
-│   ├── ARCHITECTURE.md
-│   └── ... (other archived docs)
-│
 ├── protocol.py                 # Binary protocol implementation
-├── server.py                   # Main TCP server (asyncio)
-├── run_server.py              # Server wrapper script
+├── udp_server.py               # Main UDP server implementation
+├── run_udp_server.py           # Server wrapper script
 ├── run_test_client.py         # Test client wrapper script
 │
 ├── setup_complete.sh          # One-command setup
@@ -106,15 +96,15 @@ pi_comm_server/
 
 **Read this when:** Something isn't working and you need to diagnose and fix the issue.
 
-### STM32_CLIENT_GUIDE.md (For STM32 Developers)
-- Non-blocking TCP client implementation
+### README.md (For STM32 Developers)
+- Non-blocking UDP client implementation
 - Binary protocol specification
 - Message formats with C code examples
 - State machine architecture
 - Integration with controller loop
 - Testing checklist
 
-**Read this when:** You're implementing or debugging the STM32 TCP client.
+**Read this when:** You're implementing or debugging the STM32 UDP client.
 
 ---
 
@@ -133,7 +123,7 @@ pi_comm_server/
 - **Run:** `./diagnose_stm32_connection.sh`
 
 **Scenario:** I need to implement the STM32 client
-- **Start with:** [STM32_CLIENT_GUIDE.md](STM32_CLIENT_GUIDE.md)
+- **Start with:** [README.md](README.md)
 - **Reference:** [README.md](README.md) for protocol details
 
 **Scenario:** How do I test without STM32?
@@ -164,18 +154,6 @@ pi_comm_server/
 
 ---
 
-## 📦 Archived Documentation
-
-Previous versions of documentation are available in the `docs_archive/` directory for reference:
-- Multiple README versions
-- Separate architecture, implementation, and setup guides
-- Old troubleshooting guides
-- Network setup guides
-
-These have been consolidated into the four main documents above for easier navigation and maintenance.
-
----
-
 ## 🆘 Getting Help
 
 1. **Check the docs in this order:**
@@ -192,12 +170,12 @@ These have been consolidated into the four main documents above for easier navig
 
 3. **Check logs:**
    ```bash
-   sudo journalctl -u omni_tcp_server.service -n 200
+   sudo journalctl -u omni_udp_server.service -n 200
    ```
 
 4. **Enable debug logging:**
    ```bash
-   python3 run_server.py --log-level DEBUG
+   python3 run_udp_server.py --log-level DEBUG
    ```
 
 ---
@@ -206,11 +184,11 @@ These have been consolidated into the four main documents above for easier navig
 
 | Device | IP Address | Port | Role |
 |--------|------------|------|------|
-| Raspberry Pi 5 | 192.168.1.100 | 9000 | TCP Server |
-| STM32 Nucleo H755 | 192.168.1.10 | - | TCP Client |
+| Raspberry Pi 5 | 192.168.1.100 | 9000 | UDP Server |
+| STM32 Nucleo H755 | 192.168.1.10 | - | UDP Client |
 
 **Connection:** Direct Ethernet (no router)  
-**Protocol:** TCP/IP with binary framing  
+**Protocol:** UDP with binary framing  
 **Rate:** 5 Hz bidirectional  
 
 ---

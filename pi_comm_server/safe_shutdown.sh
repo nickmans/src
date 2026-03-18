@@ -3,7 +3,7 @@ set -euo pipefail
 
 SERVICES=(
   omni_ros2_stack.service
-  omni_tcp_server.service
+  omni_udp_server.service
   omni_pi_server.service
   omni_server.service
 )

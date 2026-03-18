@@ -1,15 +1,15 @@
 #!/bin/bash
-# Install OMNI TCP Server as systemd service
+# Install OMNI UDP Server as systemd service
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_NAME="omni_tcp_server.service"
+SERVICE_NAME="omni_udp_server.service"
 SERVICE_FILE="$SCRIPT_DIR/$SERVICE_NAME"
 SYSTEMD_DIR="/etc/systemd/system"
 
 echo "======================================================"
-echo "  OMNI TCP Server - Service Installation"
+echo "  OMNI UDP Server - Service Installation"
 echo "======================================================"
 echo ""
 

@@ -1,6 +1,6 @@
-# OMNI TCP Server - Troubleshooting Guide
+# OMNI UDP Server - Troubleshooting Guide
 
-Complete guide to diagnosing and fixing common issues with the OMNI TCP server.
+Complete guide to diagnosing and fixing common issues with the OMNI UDP server.
 
 ---
 
@@ -27,7 +27,7 @@ Complete guide to diagnosing and fixing common issues with the OMNI TCP server.
 **Diagnosis:**
 ```bash
 # Check if something is using port 9000
-sudo netstat -tlnp | grep 9000
+sudo netstat -ulnp | grep 9000
 ```
 
 **Solutions:**
@@ -35,18 +35,18 @@ sudo netstat -tlnp | grep 9000
 1. **Kill existing process:**
 ```bash
 # Find the process
-sudo netstat -tlnp | grep 9000
+sudo netstat -ulnp | grep 9000
 
 # Kill it
 sudo kill -9 <PID>
 
 # Or kill all python processes running the server
-pkill -f run_server.py
+pkill -f run_udp_server.py
 ```
 
 2. **Restart the service:**
 ```bash
-sudo systemctl restart omni_tcp_server.service
+sudo systemctl restart omni_udp_server.service
 ```
 
 3. **Change the port (if needed):**
@@ -106,7 +106,7 @@ sudo ./setup_complete.sh
 
 **Symptoms:**
 - Server is running but STM32 can't connect
-- `ping` works but TCP connection fails
+- `ping` works but UDP connection fails
 
 **Diagnosis:**
 ```bash
@@ -118,7 +118,7 @@ sudo ufw status
 
 1. **Allow port 9000:**
 ```bash
-sudo ufw allow 9000/tcp
+sudo ufw allow 9000/udp
 sudo ufw reload
 ```
 
@@ -130,7 +130,7 @@ sudo ufw disable
 3. **Re-enable after testing:**
 ```bash
 sudo ufw enable
-sudo ufw allow 9000/tcp
+sudo ufw allow 9000/udp
 ```
 
 ---
@@ -149,12 +149,12 @@ sudo ufw allow 9000/tcp
 systemctl --user status omni_pi_server.service
 
 # Check system service
-sudo systemctl status omni_tcp_server.service
+sudo systemctl status omni_udp_server.service
 
 # View recent logs
 journalctl --user -u omni_pi_server.service -n 50
 # or
-sudo journalctl -u omni_tcp_server.service -n 50
+sudo journalctl -u omni_udp_server.service -n 50
 ```
 
 **Solutions:**
@@ -165,13 +165,13 @@ sudo journalctl -u omni_tcp_server.service -n 50
 python3 --version
 
 # Check if files exist
-ls -la /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/run_server.py
+ls -la /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/run_udp_server.py
 ```
 
 2. **Fix permissions:**
 ```bash
 cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-chmod +x run_server.py
+chmod +x run_udp_server.py
 chmod +x start_server.sh
 ```
 
@@ -202,7 +202,7 @@ sudo ./install_service.sh
 journalctl --user -u omni_pi_server.service -n 200 | less
 
 # Check if process is running
-ps aux | grep run_server.py
+ps aux | grep run_udp_server.py
 ```
 
 **Solutions:**
@@ -229,7 +229,7 @@ systemctl --user restart omni_pi_server.service
 3. **Run manually to see errors:**
 ```bash
 cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-python3 run_server.py --log-level DEBUG
+python3 run_udp_server.py --log-level DEBUG
 ```
 
 ---
@@ -281,8 +281,8 @@ ip addr show eth0
 # Should show: 192.168.1.100/24
 
 # 2. Check server is listening
-sudo netstat -tlnp | grep 9000
-# Should show: tcp ... 0.0.0.0:9000 ... LISTEN
+sudo netstat -ulnp | grep 9000
+# Should show: udp ... 0.0.0.0:9000 ...
 
 # 3. Try to ping STM32
 ping 192.168.1.10
@@ -352,8 +352,8 @@ ping -i 0.2 192.168.1.10
 # Should show consistent <1ms latency
 ```
 
-3. **Check for keepalive settings** in STM32 TCP code
-   - Enable TCP keepalive
+3. **Check heartbeat/watchdog settings** in STM32 UDP code
+   - Ensure periodic POSE messages are sent
    - Set appropriate timeout values
 
 ---
@@ -488,7 +488,7 @@ systemctl --user restart omni_pi_server.service
 
 2. **Or run manually with flag:**
 ```bash
-python3 run_server.py --enable-ros2-cmds
+python3 run_udp_server.py --enable-ros2-cmds
 ```
 
 ---
@@ -542,7 +542,7 @@ High CPU usage can cause timing issues.
 ./monitor_resources.sh
 
 # Or manually:
-top -p $(pgrep -f run_server.py)
+top -p $(pgrep -f run_udp_server.py)
 ```
 
 **Solutions:**
@@ -589,7 +589,7 @@ Edit ROS2 nodes to publish only required topics.
 ```bash
 # First, SSH might be barely working - be patient
 # Once in:
-sudo systemctl stop omni_tcp_server.service
+sudo systemctl stop omni_udp_server.service
 ```
 
 3. **Set CPU limits (cgroups):**
@@ -610,7 +610,7 @@ CPUQuota=30%
 **Diagnosis:**
 ```bash
 # Monitor memory over time
-watch -n 5 'ps aux | grep run_server.py'
+watch -n 5 'ps aux | grep run_udp_server.py'
 ```
 
 **Solutions:**
@@ -641,31 +641,31 @@ ModuleNotFoundError: No module named 'planner_stub'
 ```
 
 **Cause:**
-Running `server.py` or `test_client.py` directly instead of using wrapper scripts.
+Running `udp_server.py` or `test_client.py` directly instead of using wrapper scripts.
 
 **Solutions:**
 
 1. **Always use wrapper scripts:**
 ```bash
 # ✓ Correct
-python3 run_server.py
+python3 run_udp_server.py
 python3 run_test_client.py
 
 # ✗ Wrong
-python3 server.py
+python3 run_udp_server.py
 python3 test_client.py
 ```
 
 2. **Or run from the pi_comm_server directory:**
 ```bash
 cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-python3 server.py
+python3 run_udp_server.py
 ```
 
 3. **Add to PYTHONPATH (if needed):**
 ```bash
 export PYTHONPATH="/home/nickolas/ros2_ws/src/omni_src/pi_comm_server:$PYTHONPATH"
-python3 server.py
+python3 run_udp_server.py
 ```
 
 ---
@@ -714,7 +714,7 @@ echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 Checks:
 - ✓ Pi5 has IP 192.168.1.100
 - ✓ STM32 is reachable at 192.168.1.10
-- ✓ TCP server is listening on port 9000
+- ✓ UDP server is listening on port 9000
 - ✓ Server service is running
 
 ---
@@ -773,8 +773,8 @@ ip route show
 ip neigh show
 
 # Server status
-sudo netstat -tlnp | grep 9000
-ps aux | grep run_server.py
+sudo netstat -ulnp | grep 9000
+ps aux | grep run_udp_server.py
 
 # Service status
 systemctl --user status omni_pi_server.service
@@ -850,7 +850,7 @@ journalctl --user -u omni_pi_server.service -n 200 > server_logs.txt
 
 2. **Run server manually with debug logging:**
    ```bash
-   python3 run_server.py --log-level DEBUG
+   python3 run_udp_server.py --log-level DEBUG
    ```
 
 3. **Test with simulator first:**
@@ -875,4 +875,4 @@ journalctl --user -u omni_pi_server.service -n 200 > server_logs.txt
 **See also:**
 - [README.md](README.md) - Full documentation
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide
-- [STM32_CLIENT_GUIDE.md](STM32_CLIENT_GUIDE.md) - STM32 implementation
+- [README.md](README.md) - STM32 implementation

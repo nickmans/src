@@ -37,10 +37,10 @@ echo "---------------------------"
 ss -tuln | grep 9000 || echo "No service listening on port 9000"
 echo
 
-# 6. Check for any TCP activity to port 9000
-echo "6. TCP Connection Attempts:"
+# 6. Check for any activity to port 9000
+echo "6. UDP Connection Attempts:"
 echo "---------------------------"
-ss -tn | grep 9000 || echo "No active TCP connections to port 9000"
+ss -un | grep 9000 || echo "No active UDP connections to port 9000"
 echo
 
 # 7. Try to scan STM32

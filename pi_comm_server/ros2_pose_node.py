@@ -1,7 +1,7 @@
 """
-ROS2 node for publishing robot pose from TCP server.
+ROS2 node for publishing robot pose from UDP server.
 
-Receives pose updates from TCP server and publishes to ROS2 topics.
+Receives pose updates from UDP server and publishes to ROS2 topics.
 """
 
 import rclpy
@@ -47,7 +47,7 @@ class PosePublisherNode(Node):
         Publish pose data to ROS2 topics.
         
         Args:
-            pose_data: PoseData object from TCP server
+            pose_data: PoseData object from UDP server
         """
         try:
             # Create timestamp

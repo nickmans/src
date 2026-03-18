@@ -1,5 +1,5 @@
 """
-Binary protocol for OMNI TCP communication.
+Binary protocol for OMNI UDP communication.
 
 Framed messages with header and optional CRC validation.
 All integers are little-endian.
@@ -38,7 +38,7 @@ class CommandID(IntEnum):
     #   2 = stop trajectory generation
     #   3 = start/restart ROS2 stack
     # Historically, this code used 1 as START_ROS2. Keep the alias for backward
-    # compatibility with existing TCP tooling, but prefer START_TRAJ/STOP_TRAJ
+    # compatibility with existing legacy tooling, but prefer START_TRAJ/STOP_TRAJ
     # for STM32 command semantics.
     START_ROS2 = 1
     START_TRAJ = 1

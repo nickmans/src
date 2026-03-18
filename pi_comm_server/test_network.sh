@@ -37,29 +37,29 @@ else
 fi
 echo ""
 
-echo "4. Checking if TCP server is running..."
+echo "4. Checking if UDP server is running..."
 echo "-----------------------------------"
 if netstat -tln 2>/dev/null | grep -q ":9000"; then
-    echo "✓ TCP server is listening on port 9000"
+    echo "✓ UDP server is listening on port 9000"
     netstat -tln | grep ":9000"
 elif ss -tln 2>/dev/null | grep -q ":9000"; then
-    echo "✓ TCP server is listening on port 9000"
+    echo "✓ UDP server is listening on port 9000"
     ss -tln | grep ":9000"
 else
     echo "✗ No server listening on port 9000"
     echo "  Start the server with:"
-    echo "  sudo systemctl start omni_tcp_server.service"
+    echo "  sudo systemctl start omni_udp_server.service"
 fi
 echo ""
 
 echo "5. Checking service status..."
 echo "-----------------------------------"
-if systemctl is-active --quiet omni_tcp_server.service 2>/dev/null; then
-    echo "✓ OMNI TCP server service is running"
-    systemctl status omni_tcp_server.service --no-pager -l | head -10
+if systemctl is-active --quiet omni_udp_server.service 2>/dev/null; then
+    echo "✓ OMNI UDP server service is running"
+    systemctl status omni_udp_server.service --no-pager -l | head -10
 else
     echo "✗ Service not running"
-    echo "  Start with: sudo systemctl start omni_tcp_server.service"
+    echo "  Start with: sudo systemctl start omni_udp_server.service"
 fi
 echo ""
 
@@ -87,8 +87,8 @@ echo "  Test Complete"
 echo "======================================================"
 echo ""
 echo "Quick Commands:"
-echo "  View logs:    sudo journalctl -u omni_tcp_server.service -f"
-echo "  Start server: sudo systemctl start omni_tcp_server.service"
-echo "  Stop server:  sudo systemctl stop omni_tcp_server.service"
-echo "  Server status: sudo systemctl status omni_tcp_server.service"
+echo "  View logs:    sudo journalctl -u omni_udp_server.service -f"
+echo "  Start server: sudo systemctl start omni_udp_server.service"
+echo "  Stop server:  sudo systemctl stop omni_udp_server.service"
+echo "  Server status: sudo systemctl status omni_udp_server.service"
 echo ""

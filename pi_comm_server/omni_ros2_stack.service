@@ -2,6 +2,7 @@
 Description=OMNI ROS2 Stack
 After=network.target systemd-udev-settle.service
 Wants=systemd-udev-settle.service
+Conflicts=omni_udp_server.service
 
 [Service]
 Type=simple

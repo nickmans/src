@@ -1,10 +1,10 @@
 #!/bin/bash
-# Complete setup script for OMNI TCP Server
+# Complete setup script for OMNI UDP Server
 
 set -e
 
 echo "======================================================"
-echo "  OMNI TCP Server - Complete Setup"
+echo "  OMNI UDP Server - Complete Setup"
 echo "======================================================"
 echo ""
 
@@ -56,7 +56,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         # Add static IP configuration
         cat >> /etc/network/interfaces <<EOF
 
-# OMNI TCP Server Configuration
+# OMNI UDP Server Configuration
 auto eth0
 iface eth0 inet static
     address 192.168.1.100
@@ -80,7 +80,7 @@ fi
 echo ""
 echo "Step 2: Install System Services"
 echo "-----------------------------------"
-read -p "Install OMNI TCP server as system service? (y/n) " -n 1 -r
+read -p "Install OMNI UDP server as system service? (y/n) " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     ./install_service.sh
@@ -103,10 +103,10 @@ echo "-----------------------------------"
 read -p "Start the service immediately? (y/n) " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    systemctl start omni_tcp_server.service
+    systemctl start omni_udp_server.service
     sleep 2
     echo ""
-    systemctl status omni_tcp_server.service --no-pager -l | head -15
+    systemctl status omni_udp_server.service --no-pager -l | head -15
 else
     echo "Skipping service start"
 fi
@@ -121,8 +121,8 @@ ip addr show eth0 | grep "inet " || echo "No IP on eth0"
 echo ""
 
 echo "Service Status:"
-systemctl is-active omni_tcp_server.service && echo "✓ Service is running" || echo "✗ Service not running"
-systemctl is-enabled omni_tcp_server.service && echo "✓ Will start on boot" || echo "✗ Will not start on boot"
+systemctl is-active omni_udp_server.service && echo "✓ Service is running" || echo "✗ Service not running"
+systemctl is-enabled omni_udp_server.service && echo "✓ Will start on boot" || echo "✗ Will not start on boot"
 systemctl is-active omni_ros2_stack.service && echo "✓ ROS2 stack service is running" || echo "✗ ROS2 stack service not running"
 systemctl is-enabled omni_ros2_stack.service && echo "✓ ROS2 stack will start on boot" || echo "✗ ROS2 stack will not start on boot"
 echo ""
@@ -130,12 +130,12 @@ echo ""
 echo "Next Steps:"
 echo "1. Connect STM32 via Ethernet cable"
 echo "2. Power on STM32 (should have IP 192.168.1.10)"
-echo "3. Monitor logs: sudo journalctl -u omni_tcp_server.service -f"
+echo "3. Monitor logs: sudo journalctl -u omni_udp_server.service -f"
 echo "4. Test connection: ping 192.168.1.10"
 echo ""
 echo "Service Commands:"
-echo "  View logs:  sudo journalctl -u omni_tcp_server.service -f"
-echo "  Stop:       sudo systemctl stop omni_tcp_server.service"
-echo "  Restart:    sudo systemctl restart omni_tcp_server.service"
-echo "  Status:     sudo systemctl status omni_tcp_server.service"
+echo "  View logs:  sudo journalctl -u omni_udp_server.service -f"
+echo "  Stop:       sudo systemctl stop omni_udp_server.service"
+echo "  Restart:    sudo systemctl restart omni_udp_server.service"
+echo "  Status:     sudo systemctl status omni_udp_server.service"
 echo ""

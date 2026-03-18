@@ -9,7 +9,7 @@ echo ""
 while true; do
     clear
     echo "╔════════════════════════════════════════════════════════════════╗"
-    echo "║           STM32 TCP Connection Status Monitor                 ║"
+    echo "║           STM32 UDP Connection Status Monitor                 ║"
     echo "╚════════════════════════════════════════════════════════════════╝"
     echo ""
     
@@ -47,13 +47,13 @@ while true; do
     fi
     echo ""
     
-    # Check TCP server
-    echo "🔌 TCP Server (port 9000):"
-    if ss -tln | grep -q ":9000"; then
+    # Check UDP server
+    echo "🔌 UDP Server (port 9000):"
+    if ss -uln | grep -q ":9000"; then
         echo "   ✅ LISTENING"
         
         # Check for active connection
-        CONN=$(ss -tn | grep ":9000" | grep "192.168.1.10")
+        CONN=$(ss -un | grep ":9000" | grep "192.168.1.10")
         if [ -n "$CONN" ]; then
             echo "   ✅ STM32 CONNECTED"
             echo "   Connection: $CONN"
@@ -67,8 +67,8 @@ while true; do
     
     # Show recent server logs
     echo "📋 Recent Server Logs (last 8 lines):"
-    if [ -f /tmp/tcp_server.log ]; then
-        tail -8 /tmp/tcp_server.log | sed 's/^/   /'
+    if [ -f /tmp/udp_server.log ]; then
+        tail -8 /tmp/udp_server.log | sed 's/^/   /'
     else
         echo "   No log file found"
     fi

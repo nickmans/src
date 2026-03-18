@@ -7,8 +7,10 @@ helpers in `protocol.py` so wire format is unchanged.
 """
 
 import asyncio
+import fcntl
 import logging
 import math
+import os
 import socket
 import subprocess
 import threading
@@ -113,25 +115,112 @@ class OMNIUDPServer:
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
         self._loop_thread.start()
+        self._active_stack_mode = "standby"
+        self._stack_transition_lock = threading.Lock()
+        self._stack_lock_path = "/tmp/omni_ros2_stack_controller.lock"
+        self._stack_lock_fd: Optional[int] = None
+        self._stack_control_enabled = True
+        self._server_lock_path = "/tmp/omni_udp_server.lock"
+        self._server_lock_fd: Optional[int] = None
 
         logger.info(f"OMNIUDPServer initialized: {self.host}:{self.port}")
+
+    def _switch_stack_mode(self, stack_mode: str) -> bool:
+        if not self._stack_control_enabled:
+            logger.warning(f"Stack lifecycle control disabled; cannot switch to mode={stack_mode}")
+            return False
+
+        target_mode = (stack_mode or "").strip().lower()
+        if target_mode not in {"standby", "mapping", "localization"}:
+            logger.error(f"Invalid stack mode request: {stack_mode}")
+            return False
+
+        with self._stack_transition_lock:
+            self._set_ros2_retry_enabled(False, reason=f"mode transition to {target_mode}")
+
+            try:
+                changed = self.ros2_mgr.set_stack_mode(target_mode)
+            except Exception as exc:
+                logger.error(f"Failed to set ROS2 stack mode '{target_mode}': {exc}")
+                return False
+
+            is_running = self._run_ros2(self.ros2_mgr.is_running)
+            needs_restart = True
+
+            if is_running and not changed:
+                async def _healthy_check() -> bool:
+                    return await self.ros2_mgr.is_mode_healthy(target_mode)
+
+                if self._run_ros2(_healthy_check):
+                    logger.info(f"ROS2 stack already healthy in {target_mode} mode")
+                    self._active_stack_mode = target_mode
+                    return True
+                logger.warning(f"ROS2 stack running but unhealthy in {target_mode} mode; forcing restart")
+
+            if is_running and needs_restart:
+                logger.info(f"Switching ROS2 stack from {self._active_stack_mode} to {target_mode}")
+                stopped = self._run_ros2(self.ros2_mgr.stop)
+                if not stopped:
+                    logger.error("Failed to stop ROS2 stack during mode switch")
+                    self._set_ros2_retry_enabled(True, reason="stop failed during transition")
+                    return False
+                time.sleep(0.5)
+
+            started = self._run_ros2(self.ros2_mgr.start)
+            if not started:
+                logger.error(f"Failed to start ROS2 stack in {target_mode} mode")
+                self._set_ros2_retry_enabled(True, reason="start failed during transition")
+                return False
+
+            self._active_stack_mode = target_mode
+            self._set_ros2_retry_enabled(False, reason="mode transition complete")
+            return True
 
     def start(self):
         if self.running:
             logger.warning("Server already running")
             return
 
+        if not self._acquire_server_instance_lock():
+            raise RuntimeError("UDP server instance lock is already held")
+
+        if not self._acquire_stack_controller_lock():
+            self._stack_control_enabled = False
+            logger.warning(
+                "ROS2 stack controller lock is already held; starting UDP server in bridge-only mode "
+                "(pose/commands active, stack start/stop/mode-switch disabled)"
+            )
+        else:
+            self._stack_control_enabled = True
+
         self.running = True
         self._stop_event.clear()
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((self.host, self.port))
+        try:
+            self.sock.bind((self.host, self.port))
+        except OSError as exc:
+            self.running = False
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+            self._release_stack_controller_lock()
+            self._release_server_instance_lock()
+            raise RuntimeError(f"Failed to bind UDP socket {self.host}:{self.port}: {exc}") from exc
         self.sock.settimeout(2.0)  # Increased from 1.0 to reduce CPU wake-ups
 
         logger.info(f"UDP server listening on {self.host}:{self.port}")
 
         self._start_ros2_retry_worker()
+
+        # Required default flow: startup in local-costmap-only standby mode.
+        if self._stack_control_enabled:
+            ok_stack = self._switch_stack_mode("standby")
+            if not ok_stack:
+                logger.warning("Startup standby mode switch failed; enabling retry worker")
+                self._set_ros2_retry_enabled(True, reason="startup standby failed")
 
         self.recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self.recv_thread.start()
@@ -139,7 +228,7 @@ class OMNIUDPServer:
         self.send_thread = threading.Thread(target=self._send_loop, daemon=True)
         self.send_thread.start()
 
-    def stop(self):
+    def stop(self, stop_ros2_stack: bool = True):
         logger.info("Stopping UDP server...")
         self.running = False
         self._stop_event.set()
@@ -147,7 +236,8 @@ class OMNIUDPServer:
         self._set_ros2_retry_enabled(False, reason="server stopping")
 
         # Stop ROS2 stack first while manager loop is still alive.
-        _ = self._run_ros2(self.ros2_mgr.stop)
+        if stop_ros2_stack:
+            _ = self._run_ros2(self.ros2_mgr.stop)
 
         if self.sock:
             try:
@@ -170,8 +260,108 @@ class OMNIUDPServer:
 
         # Stop ROS2 bridge
         self.ros2_bridge.shutdown()
+        self._release_stack_controller_lock()
+        self._release_server_instance_lock()
 
         logger.info("UDP server stopped")
+
+    def _acquire_server_instance_lock(self) -> bool:
+        if self._server_lock_fd is not None:
+            return True
+
+        fd: Optional[int] = None
+        try:
+            fd = os.open(self._server_lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.ftruncate(fd, 0)
+            owner = f"pid={os.getpid()} controller=udp_server_singleton\n"
+            os.write(fd, owner.encode("utf-8"))
+            os.fsync(fd)
+            self._server_lock_fd = fd
+            logger.info(f"Acquired UDP server singleton lock: {self._server_lock_path}")
+            return True
+        except BlockingIOError:
+            logger.error(f"UDP server singleton lock busy: {self._server_lock_path}")
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+            return False
+        except Exception as exc:
+            logger.error(f"Failed acquiring UDP server singleton lock: {exc}")
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+            return False
+
+    def _release_server_instance_lock(self) -> None:
+        if self._server_lock_fd is None:
+            return
+
+        fd = self._server_lock_fd
+        self._server_lock_fd = None
+
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except Exception:
+            pass
+
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+
+    def _acquire_stack_controller_lock(self) -> bool:
+        if self._stack_lock_fd is not None:
+            return True
+
+        fd: Optional[int] = None
+        try:
+            fd = os.open(self._stack_lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.ftruncate(fd, 0)
+            owner = f"pid={os.getpid()} controller=udp_server\n"
+            os.write(fd, owner.encode("utf-8"))
+            os.fsync(fd)
+            self._stack_lock_fd = fd
+            logger.info(f"Acquired ROS2 stack controller lock: {self._stack_lock_path}")
+            return True
+        except BlockingIOError:
+            logger.error(f"ROS2 stack controller lock busy: {self._stack_lock_path}")
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+            return False
+        except Exception as exc:
+            logger.error(f"Failed acquiring ROS2 stack controller lock: {exc}")
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+            return False
+
+    def _release_stack_controller_lock(self) -> None:
+        if self._stack_lock_fd is None:
+            return
+
+        fd = self._stack_lock_fd
+        self._stack_lock_fd = None
+
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except Exception:
+            pass
+
+        try:
+            os.close(fd)
+        except Exception:
+            pass
 
     def set_trajectory_active(self, active: bool):
         with self.traj_lock:
@@ -327,6 +517,9 @@ class OMNIUDPServer:
             # - traj 1 immediately switches to mapping mode
             # - trajectory streaming is paused while mapping
             self.set_trajectory_active(False)
+            ok_stack = self._switch_stack_mode("mapping")
+            if not ok_stack:
+                logger.warning("START_TRAJ failed to switch ROS2 stack to mapping mode")
             ok = self.ros2_bridge.start_mapping_mode()
             if not ok:
                 logger.warning("START_TRAJ->START_MAPPING failed: mapping service unavailable or rejected")
@@ -357,30 +550,16 @@ class OMNIUDPServer:
             return
 
         if cmd.cmd_id == CommandID.START_RESTART_ROS2:
-            logger.info("START_RESTART_ROS2 received; restarting ROS2 stack")
+            logger.info("START_RESTART_ROS2 received; restarting ROS2 stack in standby mode")
             # Keep current trajectory_active state, but pause sending while restart happens.
             with self.traj_lock:
                 resume_traj = bool(self.trajectory_active)
             self.set_trajectory_active(False)
 
-            stopped = self._run_ros2(self.ros2_mgr.stop)
-            time.sleep(0.5)
-            started = self._run_ros2(self.ros2_mgr.start)
-
-            if started:
-                self._set_ros2_retry_enabled(False, reason="ROS2 stack started")
-            else:
-                self._set_ros2_retry_enabled(True, reason="ROS2 start failed; enabling periodic retry")
+            started = self._switch_stack_mode("standby")
 
             if started and resume_traj:
                 self.set_trajectory_active(True)
-
-            # Requested behavior: default mode after startup is global LiDAR mapping.
-            if started:
-                self.set_trajectory_active(False)
-                ok = self.ros2_bridge.start_mapping_mode()
-                if not ok:
-                    logger.warning("Post-start default START_MAPPING failed: mapping service unavailable or rejected")
 
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             return
@@ -388,8 +567,9 @@ class OMNIUDPServer:
         if cmd.cmd_id == CommandID.STOP_ROS2:
             logger.info("STOP_ROS2 received; stopping ROS2 stack")
             self.set_trajectory_active(False)
-            self._set_ros2_retry_enabled(False, reason="STOP_ROS2 command received")
-            _ = self._run_ros2(self.ros2_mgr.stop)
+            with self._stack_transition_lock:
+                self._set_ros2_retry_enabled(False, reason="STOP_ROS2 command received")
+                _ = self._run_ros2(self.ros2_mgr.stop)
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             return
 
@@ -402,6 +582,9 @@ class OMNIUDPServer:
         if cmd.cmd_id == CommandID.START_MAPPING:
             logger.info("START_MAPPING received; enabling mapping mode")
             self.set_trajectory_active(False)
+            ok_stack = self._switch_stack_mode("mapping")
+            if not ok_stack:
+                logger.warning("START_MAPPING failed to switch ROS2 stack to mapping mode")
             ok = self.ros2_bridge.start_mapping_mode()
             if not ok:
                 logger.warning("START_MAPPING failed: mapping service unavailable or rejected")
@@ -409,19 +592,24 @@ class OMNIUDPServer:
             return
 
         if cmd.cmd_id == CommandID.FINISH_MAPPING:
-            logger.info("FINISH_MAPPING received; finalizing mapping and switching to trajectory/live mode")
+            logger.info("FINISH_MAPPING received; finalizing mapping and switching to AMCL localization mode")
             # Requested behavior for map 0:
             # 1) finish map save
-            # 2) ensure live LiDAR map mode
-            # 3) resume trajectory following output
+            # 2) restart stack into localization mode (AMCL only)
+            # 3) load saved/frozen map
+            # 4) resume trajectory following output
             self.set_trajectory_active(False)
             ok_finish = self.ros2_bridge.finish_mapping_mode()
             if not ok_finish:
                 logger.warning("FINISH_MAPPING failed: mapping service unavailable or rejected")
 
-            ok_live = self.ros2_bridge.use_live_map_mode()
-            if not ok_live:
-                logger.warning("FINISH_MAPPING->USE_LIVE_MAP failed: service unavailable or rejected")
+            ok_stack = self._switch_stack_mode("localization")
+            if not ok_stack:
+                logger.warning("FINISH_MAPPING failed to switch ROS2 stack to localization mode")
+
+            ok_frozen = self.ros2_bridge.use_frozen_map_mode()
+            if not ok_frozen:
+                logger.warning("FINISH_MAPPING->USE_FROZEN_MAP failed: service unavailable or rejected")
 
             self.set_trajectory_active(True)
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
@@ -430,6 +618,9 @@ class OMNIUDPServer:
         if cmd.cmd_id == CommandID.USE_LIVE_MAP:
             logger.info("USE_LIVE_MAP received; switching to live LiDAR mode")
             self.set_trajectory_active(False)
+            ok_stack = self._switch_stack_mode("mapping")
+            if not ok_stack:
+                logger.warning("USE_LIVE_MAP failed to switch ROS2 stack to mapping mode")
             ok = self.ros2_bridge.use_live_map_mode()
             if not ok:
                 logger.warning("USE_LIVE_MAP failed: service unavailable or rejected")
@@ -437,11 +628,15 @@ class OMNIUDPServer:
             return
 
         if cmd.cmd_id == CommandID.USE_FROZEN_MAP:
-            logger.info("USE_FROZEN_MAP received; switching to frozen saved-map mode")
+            logger.info("USE_FROZEN_MAP received; switching to AMCL localization on saved map")
             self.set_trajectory_active(False)
+            ok_stack = self._switch_stack_mode("localization")
+            if not ok_stack:
+                logger.warning("USE_FROZEN_MAP failed to switch ROS2 stack to localization mode")
             ok = self.ros2_bridge.use_frozen_map_mode()
             if not ok:
                 logger.warning("USE_FROZEN_MAP failed: service unavailable or rejected")
+            self.set_trajectory_active(True)
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             return
 
@@ -529,16 +724,23 @@ class OMNIUDPServer:
                 continue
             if not self._is_ros2_retry_enabled():
                 continue
-
-            is_running = self._run_ros2(self.ros2_mgr.is_running)
-            if is_running:
-                self._set_ros2_retry_enabled(False, reason="stack is running")
+            if not self._stack_control_enabled:
                 continue
 
-            logger.warning("Retrying ROS2 stack startup...")
-            started = self._run_ros2(self.ros2_mgr.start)
-            if started:
-                self._set_ros2_retry_enabled(False, reason="retry startup succeeded")
+            target_mode = self._active_stack_mode
+
+            async def _healthy_check() -> bool:
+                return await self.ros2_mgr.is_mode_healthy(target_mode)
+
+            healthy = self._run_ros2(_healthy_check)
+            if healthy:
+                self._set_ros2_retry_enabled(False, reason="stack is healthy")
+                continue
+
+            logger.warning(f"Retrying ROS2 stack recovery in mode={target_mode}...")
+            recovered = self._switch_stack_mode(target_mode)
+            if recovered:
+                self._set_ros2_retry_enabled(False, reason="retry recovery succeeded")
 
     def _default_get_trajectory(self) -> Optional[Trajectory]:
         """Forward the latest ROS2 trajectory knots without modifying values."""

@@ -5,6 +5,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LAUNCH_FILE="dual_sllidar_with_mock_and_traj.launch.py"
+STACK_LOCK_FILE="/tmp/omni_ros2_stack_controller.lock"
+
+exec 9>"$STACK_LOCK_FILE"
+if ! flock -n 9; then
+    echo "ERROR: ROS2 stack controller is already active (lock: $STACK_LOCK_FILE)"
+    echo "       Stop the existing controller before running start_ros2_stack.sh"
+    exit 1
+fi
+
+echo "pid=$$ controller=start_ros2_stack.sh" 1>&9
 
 HARDCODED_LIDAR1="/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_2608b4e7586eef118367e9c2c169b110-if00-port0"
 HARDCODED_LIDAR2="/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_420b6b8a586eef11a134e0c2c169b110-if00-port0"
@@ -114,9 +124,6 @@ if ! wait_for_path "$LIDAR2_PORT" 30; then
     exit 1
 fi
 
-/usr/bin/stty -F "$LIDAR1_PORT" 460800 raw -echo -crtscts -ixon -ixoff
-/usr/bin/stty -F "$LIDAR2_PORT" 460800 raw -echo -crtscts -ixon -ixoff
-
 echo "Using workspace setup: $WS_SETUP"
 echo "Using LiDAR ports: $LIDAR1_PORT | $LIDAR2_PORT"
 
@@ -131,7 +138,7 @@ launch_cmd=(
     use_mock_lidar:=false
     use_rviz:=false
     enable_amcl_localization:=false
-    enable_slam_toolbox:=true
+    enable_slam_toolbox:=false
     map_frame:=map
     publish_odom_to_base_tf:=true
     publish_world_to_odom_tf:=false
@@ -153,25 +160,13 @@ launch_pid=$!
         sleep 1
     done
 
-    for _ in {1..20}; do
-        if ros2 topic echo --qos-profile sensor_data --once --timeout 2 --field header.frame_id /lidar1/scan >/dev/null 2>&1; then
-            break
-        fi
-
+    if ! ros2 topic echo --qos-profile sensor_data --once --timeout 3 --field header.frame_id /lidar1/scan >/dev/null 2>&1; then
         ros2 service call /lidar1/start_motor std_srvs/srv/Empty "{}" >/dev/null 2>&1 || true
-        ros2 service call /start_motor std_srvs/srv/Empty "{}" >/dev/null 2>&1 || true
-        sleep 1
-    done
+    fi
 
-    for _ in {1..20}; do
-        if ros2 topic echo --qos-profile sensor_data --once --timeout 2 --field header.frame_id /lidar2/scan >/dev/null 2>&1; then
-            break
-        fi
-
+    if ! ros2 topic echo --qos-profile sensor_data --once --timeout 3 --field header.frame_id /lidar2/scan >/dev/null 2>&1; then
         ros2 service call /lidar2/start_motor std_srvs/srv/Empty "{}" >/dev/null 2>&1 || true
-        ros2 service call /start_motor std_srvs/srv/Empty "{}" >/dev/null 2>&1 || true
-        sleep 1
-    done
+    fi
 ) &
 helper_pid=$!
 

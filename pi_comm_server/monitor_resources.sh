@@ -8,7 +8,7 @@ echo "==============================================="
 echo
 
 # Find Python processes related to omni
-OMNI_PIDS=$(pgrep -f "omni_main.py|tcp_server.py|run_server.py")
+OMNI_PIDS=$(pgrep -f "run_udp_server.py|udp_server.py")
 
 if [ -z "$OMNI_PIDS" ]; then
     echo "No OMNI server processes found"
@@ -48,7 +48,7 @@ echo
 # Show network connections
 echo "Network Connections:"
 echo "--------------------"
-netstat -tnp 2>/dev/null | grep -E "9000|ssh|22" | head -10
+netstat -unp 2>/dev/null | grep -E "9000|ssh|22" | head -10
 
 echo
 echo "==============================================="

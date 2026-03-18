@@ -1,5 +1,5 @@
 #!/bin/bash
-# Quick start script for OMNI TCP Server
+# Quick start script for OMNI UDP Server
 
 set -e
 
@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "======================================================"
-echo "  OMNI Robot TCP Server - Quick Start"
+echo "  OMNI Robot UDP Server - Quick Start"
 echo "======================================================"
 echo ""
 
@@ -30,12 +30,12 @@ else
 fi
 
 echo ""
-echo "Starting OMNI TCP Server..."
+echo "Starting OMNI UDP Server..."
 echo "  - Listening on: 192.168.1.100:9000"
 echo "  - Waiting for STM32 connection from 192.168.1.10"
 echo ""
 echo "Press Ctrl+C to stop"
 echo ""
 
-# Run the main script
-exec python3 omni_main.py
+# Run the UDP server wrapper
+exec python3 run_udp_server.py

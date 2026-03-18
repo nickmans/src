@@ -1,10 +1,10 @@
 [Unit]
-Description=OMNI TCP Communication Server
+Description=OMNI UDP Communication Server
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/omni_pi_server --host 0.0.0.0 --port 9000 --log-level INFO
+ExecStart=%h/.local/bin/omni-udp-server
 KillSignal=SIGINT
 TimeoutStartSec=10
 TimeoutStopSec=5

@@ -64,26 +64,26 @@ else
 fi
 echo ""
 
-# Test 3: TCP Server
-echo "═══ Test 3: TCP Server Status ═══"
-if ss -tln | grep -q ":9000"; then
-    echo -e "${GREEN}✓${NC} TCP server is listening on port 9000"
+# Test 3: UDP Server
+echo "═══ Test 3: UDP Server Status ═══"
+if ss -uln | grep -q ":9000"; then
+    echo -e "${GREEN}✓${NC} UDP server is listening on port 9000"
     
     # Check for active connection
-    if ss -tn | grep ":9000" | grep -q "192.168.1.10"; then
+    if ss -un | grep ":9000" | grep -q "192.168.1.10"; then
         echo -e "${GREEN}✓${NC} STM32 is connected!"
-        CONN=$(ss -tn | grep ":9000" | grep "192.168.1.10")
+        CONN=$(ss -un | grep ":9000" | grep "192.168.1.10")
         echo "   Connection: $CONN"
     else
         echo -e "${YELLOW}⏳${NC} Server listening, waiting for STM32 to connect..."
     fi
 else
-    echo -e "${RED}✗${NC} TCP server is NOT listening on port 9000"
+    echo -e "${RED}✗${NC} UDP server is NOT listening on port 9000"
     echo "   Fix: cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server && ./monitor_connection.sh"
 fi
 
 # Check if process is running
-if ps aux | grep -q "[p]ython3.*tcp_server.py"; then
+if ps aux | grep -q "[p]ython3.*udp_server.py"; then
     echo -e "${GREEN}✓${NC} Server process is running"
 else
     echo -e "${RED}✗${NC} Server process is NOT running"
@@ -92,10 +92,10 @@ echo ""
 
 # Test 4: Recent Logs
 echo "═══ Test 4: Server Logs (last 10 lines) ═══"
-if [ -f /tmp/tcp_server.log ]; then
-    tail -10 /tmp/tcp_server.log
+if [ -f /tmp/udp_server.log ]; then
+    tail -10 /tmp/udp_server.log
 else
-    echo -e "${YELLOW}⚠${NC}  No log file at /tmp/tcp_server.log"
+    echo -e "${YELLOW}⚠${NC}  No log file at /tmp/udp_server.log"
 fi
 echo ""
 
@@ -106,10 +106,10 @@ echo "╚═══════════════════════�
 
 # Determine the issue
 if ping -c 1 -W 1 192.168.1.10 &>/dev/null; then
-    if ss -tn | grep ":9000" | grep -q "192.168.1.10"; then
+    if ss -un | grep ":9000" | grep -q "192.168.1.10"; then
         echo -e "${GREEN}STATUS: Everything looks good! STM32 is connected.${NC}"
     else
-        echo -e "${YELLOW}STATUS: STM32 is reachable but not connecting to TCP server${NC}"
+        echo -e "${YELLOW}STATUS: STM32 is reachable but not connecting to UDP server${NC}"
         echo ""
         echo "Next steps:"
         echo "1. Check STM32 serial output for connection errors"
@@ -139,5 +139,5 @@ echo "To monitor connection in real-time:"
 echo "  ./monitor_connection.sh"
 echo ""
 echo "To view live server logs:"
-echo "  tail -f /tmp/tcp_server.log"
+echo "  tail -f /tmp/udp_server.log"
 echo ""

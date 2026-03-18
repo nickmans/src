@@ -1,4 +1,4 @@
-# OMNI TCP Server - Quick Start Guide
+# OMNI UDP Server - Quick Start Guide
 
 **Get up and running in 2 minutes!**
 
@@ -23,7 +23,7 @@ This single command:
 
 ```bash
 # Check service status
-sudo systemctl status omni_tcp_server.service
+sudo systemctl status omni_udp_server.service
 
 # Should show:
 #   Active: active (running)
@@ -44,7 +44,7 @@ sudo systemctl status omni_tcp_server.service
 
 Watch server logs for STM32 connection:
 ```bash
-sudo journalctl -u omni_tcp_server.service -f
+sudo journalctl -u omni_udp_server.service -f
 ```
 
 When STM32 connects, you'll see:
@@ -180,7 +180,7 @@ cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
 ./start_server.sh
 
 # With debug logging
-python3 run_server.py --log-level DEBUG
+python3 run_udp_server.py --log-level DEBUG
 
 # Low resource mode (if CPU usage is high)
 ./start_server_low_resource.sh
@@ -253,12 +253,12 @@ ip addr show eth0
 # Should show: 192.168.1.100/24
 
 # 2. Check service
-sudo systemctl status omni_tcp_server.service
+sudo systemctl status omni_udp_server.service
 # Should show: Active: active (running)
 
 # 3. Check port
-sudo netstat -tlnp | grep 9000
-# Should show: tcp ... 0.0.0.0:9000 ... LISTEN
+sudo netstat -ulnp | grep 9000
+# Should show: udp ... 0.0.0.0:9000 ...
 
 # 4. Check ROS2 nodes (if ROS2 stack is active)
 ros2 node list
@@ -277,8 +277,8 @@ Or use the automated test:
 Expected output:
 ```
 ✓ Pi5 has IP 192.168.1.100
-✓ TCP server is listening on port 9000
-✓ OMNI TCP server service is running
+✓ UDP server is listening on port 9000
+✓ OMNI UDP server service is running
 ```
 
 ---
@@ -289,13 +289,13 @@ Expected output:
 
 ```bash
 # Check if port is in use
-sudo netstat -tlnp | grep 9000
+sudo netstat -ulnp | grep 9000
 
 # Kill existing process
-pkill -f run_server.py
+pkill -f run_udp_server.py
 
 # Restart service
-sudo systemctl restart omni_tcp_server.service
+sudo systemctl restart omni_udp_server.service
 ```
 
 ### Problem: STM32 won't connect
@@ -342,11 +342,11 @@ ros2 node list
 Always use the wrapper scripts:
 ```bash
 # ✓ Correct
-python3 run_server.py
+python3 run_udp_server.py
 python3 run_test_client.py
 
 # ✗ Wrong (will fail with import errors)
-python3 server.py
+python3 run_udp_server.py
 python3 test_client.py
 ```
 
@@ -356,7 +356,7 @@ python3 test_client.py
 
 - **Full documentation**: See [README.md](README.md)
 - **Troubleshooting**: See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-- **STM32 setup**: See [STM32_CLIENT_GUIDE.md](STM32_CLIENT_GUIDE.md)
+- **STM32 setup**: See [README.md](README.md)
 
 ---
 
@@ -366,8 +366,8 @@ python3 test_client.py
 
 | Device | IP Address | Port | Role |
 |--------|------------|------|------|
-| Raspberry Pi 5 | 192.168.1.100 | 9000 | TCP Server |
-| STM32 Nucleo H755 | 192.168.1.10 | - | TCP Client |
+| Raspberry Pi 5 | 192.168.1.100 | 9000 | UDP Server |
+| STM32 Nucleo H755 | 192.168.1.10 | - | UDP Client |
 
 ### Message Rates
 
@@ -403,7 +403,7 @@ python3 test_client.py
 | `start_server.sh` | Manual server start |
 | `start_test_client.sh` | Test client launcher |
 | `test_network.sh` | Network configuration test |
-| `run_server.py` | Server wrapper (use this!) |
+| `run_udp_server.py` | UDP server wrapper (use this!) |
 | `run_test_client.py` | Test client wrapper (use this!) |
 
 ---

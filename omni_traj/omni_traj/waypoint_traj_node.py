@@ -286,6 +286,17 @@ class WaypointTrajNode(Node):
         self._main_loop_hz = 5.0
         self.timer = self.create_timer(1.0 / self._main_loop_hz, self.on_timer)
 
+        # Runtime load shedding to keep LiDAR processing responsive under CPU pressure
+        self._effective_scan_stride = 1
+        self._scan_stride_max = 4
+        self._scan_beam_budget_per_scan = 1200
+        self._timer_load_shed_ratio = 0.85
+        self._timer_overrun_streak = 0
+        self._timer_recover_streak = 0
+        self._last_lidar_warn_ns = 0
+        self._lidar_warn_period_ns = int(2.0 * 1e9)
+        self._last_scan_rx_ns = 0
+
         self._last_tf_warn_ns = 0
         self._tf_warn_period_ns = int(1e9)
 
@@ -548,9 +559,6 @@ class WaypointTrajNode(Node):
     # =======================
     def _publish_robot_visualization(self, pose: Pose2D) -> None:
         """Publish robot footprint circle and orientation arrow."""
-        if not self.have_odom_pose:
-            return
-
         frame = self.get_parameter("map_frame").value
         wheelbase = float(self.get_parameter("wheelbase_m").value)
         now = self.get_clock().now().to_msg()
@@ -608,7 +616,7 @@ class WaypointTrajNode(Node):
         arrow.color.a = 1.0
         markers.markers.append(arrow)
 
-        self.robot_viz_pub.publish(markers)
+        self._safe_publish(self.robot_viz_pub, markers, "robot_visualization")
 
     # =======================
     # TF / warnings
@@ -618,6 +626,36 @@ class WaypointTrajNode(Node):
         if now_ns - self._last_tf_warn_ns >= self._tf_warn_period_ns:
             self._last_tf_warn_ns = now_ns
             self.get_logger().warn(msg)
+
+    def _warn_lidar_throttled(self, msg: str) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        if now_ns - self._last_lidar_warn_ns >= self._lidar_warn_period_ns:
+            self._last_lidar_warn_ns = now_ns
+            self.get_logger().warn(msg)
+
+    def _finish_timer_cycle(self, timer_start_ns: int) -> None:
+        elapsed_ns = self.get_clock().now().nanoseconds - timer_start_ns
+        period_ns = int(1e9 / max(0.1, self._main_loop_hz))
+        overload_ns = int(period_ns * self._timer_load_shed_ratio)
+
+        if elapsed_ns > overload_ns:
+            self._timer_overrun_streak += 1
+            self._timer_recover_streak = 0
+            if self._timer_overrun_streak >= 2 and self._effective_scan_stride < self._scan_stride_max:
+                self._effective_scan_stride += 1
+                self.get_logger().warn(
+                    f"CPU overload detected ({elapsed_ns / 1e6:.1f} ms loop). "
+                    f"Increasing LiDAR stride to {self._effective_scan_stride}."
+                )
+        else:
+            self._timer_recover_streak += 1
+            self._timer_overrun_streak = 0
+            if self._timer_recover_streak >= 6 and self._effective_scan_stride > 1:
+                self._effective_scan_stride -= 1
+                self.get_logger().info(
+                    f"CPU load recovered ({elapsed_ns / 1e6:.1f} ms loop). "
+                    f"Reducing LiDAR stride to {self._effective_scan_stride}."
+                )
 
     # =======================
     # Odom
@@ -721,21 +759,25 @@ class WaypointTrajNode(Node):
     def _publish_odom_to_base_tf(self) -> None:
         if not bool(self.get_parameter("publish_odom_to_base_tf").value):
             return
-        if not self.have_odom_pose:
-            return
 
         odom_frame = self.get_parameter("odom_frame").value
         base_frame = self.get_parameter("base_frame").value
+
+        if self.have_odom_pose:
+            pose_for_tf = self.odom_pose_latest
+        else:
+            sp = self.get_parameter("start_pose").value
+            pose_for_tf = Pose2D(float(sp[0]), float(sp[1]), float(sp[2]))
 
         now = self.get_clock().now().to_msg()
         t = TransformStamped()
         t.header.stamp = now
         t.header.frame_id = odom_frame
         t.child_frame_id = base_frame
-        t.transform.translation.x = float(self.odom_pose_latest.x)
-        t.transform.translation.y = float(self.odom_pose_latest.y)
+        t.transform.translation.x = float(pose_for_tf.x)
+        t.transform.translation.y = float(pose_for_tf.y)
         t.transform.translation.z = 0.0
-        q = yaw_to_quat(self.odom_pose_latest.yaw)
+        q = yaw_to_quat(pose_for_tf.yaw)
         t.transform.rotation.x = q[0]
         t.transform.rotation.y = q[1]
         t.transform.rotation.z = q[2]
@@ -747,9 +789,11 @@ class WaypointTrajNode(Node):
     # =======================
     def on_scan1(self, msg: LaserScan) -> None:
         self.last_scan1 = msg
+        self._last_scan_rx_ns = self.get_clock().now().nanoseconds
 
     def on_scan2(self, msg: LaserScan) -> None:
         self.last_scan2 = msg
+        self._last_scan_rx_ns = self.get_clock().now().nanoseconds
 
     # =======================
     # Transform helpers
@@ -842,32 +886,35 @@ class WaypointTrajNode(Node):
         rmin = float(scan.range_min)
         rmax = float(scan.range_max)
         no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
-        stride = max(1, int(self.get_parameter("scan_beam_stride").value))
+        base_stride = max(1, int(self.get_parameter("scan_beam_stride").value))
+        stride = max(base_stride, self._effective_scan_stride)
+        beam_budget = max(64, int(self._scan_beam_budget_per_scan))
         max_range = float(self.get_parameter("max_lidar_range_m").value)
         
         # Clamp rmax to max_range to reduce processing
         rmax = min(rmax, max_range)
 
         pts: List[Tuple[float, float]] = []
-        ang = float(scan.angle_min)
+        ang0 = float(scan.angle_min)
         inc = float(scan.angle_increment)
 
-        for i, rr in enumerate(scan.ranges):
-            if (i % stride) != 0:
-                ang += inc
-                continue
+        processed = 0
+        ranges = scan.ranges
+        for i in range(0, len(ranges), stride):
+            if processed >= beam_budget:
+                break
+            processed += 1
 
-            r = float(rr)
+            ang = ang0 + i * inc
+
+            r = float(ranges[i])
             if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps) or r > max_range:
-                ang += inc
                 continue
 
             xs = r * math.cos(ang)
             ys = r * math.sin(ang)
             xb, yb = self._apply_transform_2d(tr, xs, ys)
             pts.append((xb, yb))
-
-            ang += inc
 
         return pts
 
@@ -910,17 +957,35 @@ class WaypointTrajNode(Node):
         motion_comp = bool(self.get_parameter("motion_compensate").value)
         max_range = float(self.get_parameter("max_lidar_range_m").value)
 
+        # Motion compensation must use scan-time pose and current pose from the same frame.
+        # Odom history (_odom_pose_at) is in odom frame, so de-warp in odom as well.
+        if motion_comp and self.have_odom_pose:
+            base_pose_now_mc = self.odom_pose_latest
+        else:
+            base_pose_now_mc = base_pose_now
+
+        if motion_comp and not self.have_odom_pose:
+            self._warn_tf_throttled(
+                "motion_compensate enabled but no odom history available; using uncompensated fused scan"
+            )
+            motion_comp = False
+
         # Use conservative range_max across sensors, clamped to max_lidar_range
         range_max = min(min(float(s.range_max) for s in scans), max_range)
         range_min = max(0.0, min(float(s.range_min) for s in scans))
 
         # Process each scan and fuse
+        base_stride = max(1, int(self.get_parameter("scan_beam_stride").value))
+        stride = max(base_stride, self._effective_scan_stride)
+        no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
+        beam_budget = max(64, int(self._scan_beam_budget_per_scan))
+
         for s in scans:
             stamp_ns = Time.from_msg(s.header.stamp).nanoseconds
             
             # Get robot pose at scan time for motion compensation
             if motion_comp:
-                base_pose_scan = self._odom_pose_at(stamp_ns) or base_pose_now
+                base_pose_scan = self._odom_pose_at(stamp_ns) or base_pose_now_mc
             else:
                 base_pose_scan = base_pose_now
 
@@ -932,20 +997,20 @@ class WaypointTrajNode(Node):
             # Process each beam in the scan
             rmin = float(s.range_min)
             rmax = float(s.range_max)
-            no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
-            stride = max(1, int(self.get_parameter("scan_beam_stride").value))
-            
-            beam_angle = float(s.angle_min)
+            beam_angle0 = float(s.angle_min)
             beam_inc = float(s.angle_increment)
-            
-            for i, rr in enumerate(s.ranges):
-                if (i % stride) != 0:
-                    beam_angle += beam_inc
-                    continue
 
-                r = float(rr)
+            processed = 0
+            sranges = s.ranges
+            for i in range(0, len(sranges), stride):
+                if processed >= beam_budget:
+                    break
+                processed += 1
+
+                beam_angle = beam_angle0 + i * beam_inc
+
+                r = float(sranges[i])
                 if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps) or r > max_range:
-                    beam_angle += beam_inc
                     continue
 
                 # Convert beam to Cartesian in sensor frame
@@ -960,33 +1025,28 @@ class WaypointTrajNode(Node):
                     # Transform point to world frame using scan pose
                     xm, ym = self._se2_apply(base_pose_scan, x_origin, y_origin)
                     # Transform back using current pose (de-warp)
-                    x_final, y_final = self._se2_apply_inv(base_pose_now, xm, ym)
+                    x_final, y_final = self._se2_apply_inv(base_pose_now_mc, xm, ym)
                 else:
                     x_final = x_origin
                     y_final = y_origin
 
                 # Check robot exclusion
                 if use_excl and (x_final * x_final + y_final * y_final) < excl_r2:
-                    beam_angle += beam_inc
                     continue
 
                 # Compute range and angle from origin
                 rr_fused = math.hypot(x_final, y_final)
                 if rr_fused < range_min or rr_fused > range_max:
-                    beam_angle += beam_inc
                     continue
 
                 aa_fused = math.atan2(y_final, x_final)
                 if aa_fused < a_min or aa_fused >= a_max:
-                    beam_angle += beam_inc
                     continue
 
                 # Bin the range (take minimum per angle bin)
                 k = int((aa_fused - a_min) / inc)
                 if 0 <= k < n and rr_fused < ranges[k]:
                     ranges[k] = rr_fused
-
-                beam_angle += beam_inc
 
         msg = LaserScan()
         msg.header.stamp = now_t.to_msg()
@@ -1147,6 +1207,30 @@ class WaypointTrajNode(Node):
         self._inflate(local, local_gs, hard_r=hard_r, soft_r=soft_r)
         self._clear_robot_circle_in_costmap(local, local_gs, base_pose_now)
         return local
+
+    def _build_planning_costmap_from_local(
+        self,
+        local_costmap: np.ndarray,
+        local_gs: GridSpec,
+    ) -> np.ndarray:
+        """
+        Build a global-size planning grid where dynamic obstacles are only stamped
+        from the local window. This keeps long-range planning area while limiting
+        live obstacle designation/inflation to the local vicinity.
+        """
+        planning = self.static_occ.copy()
+
+        occ_ys, occ_xs = np.where(local_costmap > 0)
+        if len(occ_xs) == 0:
+            return planning
+
+        for ix_l, iy_l in zip(occ_xs, occ_ys):
+            wx, wy = self.grid_to_world(local_gs, int(ix_l), int(iy_l))
+            ix_g, iy_g = self.world_to_grid(self.gs_map, wx, wy)
+            if self.in_bounds(self.gs_map, ix_g, iy_g):
+                planning[iy_g, ix_g] = max(planning[iy_g, ix_g], local_costmap[iy_l, ix_l])
+
+        return planning
 
     def _reset_mapping_buffers(self) -> None:
         self.static_occ.fill(0)
@@ -3056,6 +3140,16 @@ class WaypointTrajNode(Node):
     # =======================
     # Publishing
     # =======================
+    def _safe_publish(self, pub, msg, channel: str) -> None:
+        try:
+            pub.publish(msg)
+        except Exception as exc:
+            text = str(exc).lower()
+            if "context is invalid" in text or "publisher's context is invalid" in text:
+                self.get_logger().warn(f"Skipping publish on {channel}: ROS context is shutting down")
+                return
+            self.get_logger().error(f"Publish failed on {channel}: {exc}")
+
     def _publish_grid(self, pub, frame_id: str, grid: np.ndarray, gs: Optional[GridSpec] = None) -> None:
         if gs is None:
             gs = self.gs_map
@@ -3076,7 +3170,7 @@ class WaypointTrajNode(Node):
         msg.info.origin.orientation.w = q[3]
         # Flatten NumPy array to list for ROS message (row-major order)
         msg.data = grid.flatten().astype(np.int8).tolist()
-        pub.publish(msg)
+        self._safe_publish(pub, msg, "grid")
 
     def publish_waypoints(self, wps: List[Tuple[float, float]]) -> None:
         ma = MarkerArray()
@@ -3094,14 +3188,14 @@ class WaypointTrajNode(Node):
         for (x, y) in wps:
             m.points.append(Point(x=float(x), y=float(y), z=0.05))
         ma.markers.append(m)
-        self.wp_marker_pub.publish(ma)
+        self._safe_publish(self.wp_marker_pub, ma, "waypoint_markers")
 
     def publish_velocity_markers(self, xs: List[float], ys: List[float], velocities: List[float]) -> None:
         """Publish velocity as colored line strip along the path."""
         ma = MarkerArray()
         
         if len(xs) < 2 or len(velocities) != len(xs):
-            self.velocity_marker_pub.publish(ma)
+            self._safe_publish(self.velocity_marker_pub, ma, "velocity_markers")
             return
         
         # Create LINE_STRIP marker with thicker width
@@ -3135,7 +3229,7 @@ class WaypointTrajNode(Node):
             m.colors.append(c)
         
         ma.markers.append(m)
-        self.velocity_marker_pub.publish(ma)
+        self._safe_publish(self.velocity_marker_pub, ma, "velocity_markers")
 
     def _publish_trajectory(
         self,
@@ -3166,7 +3260,7 @@ class WaypointTrajNode(Node):
             ps.pose.orientation.z = q[2]
             ps.pose.orientation.w = q[3]
             path.poses.append(ps)
-        self.path_pub.publish(path)
+        self._safe_publish(self.path_pub, path, "planned_path")
 
         # Publish velocities for UDP trajectory server
         if vxs is not None and vys is not None:
@@ -3176,7 +3270,7 @@ class WaypointTrajNode(Node):
             for i in range(min(len(vxs), len(vys))):
                 vel_msg.data.append(float(vxs[i]))
                 vel_msg.data.append(float(vys[i]))
-            self.path_velocities_pub.publish(vel_msg)
+            self._safe_publish(self.path_velocities_pub, vel_msg, "planned_path_velocities")
 
         self.publish_velocity_markers(xs, ys, velocities)
 
@@ -3185,14 +3279,14 @@ class WaypointTrajNode(Node):
         path = Path()
         path.header.stamp = self.get_clock().now().to_msg()
         path.header.frame_id = frame
-        self.path_pub.publish(path)
+        self._safe_publish(self.path_pub, path, "planned_path")
 
         vel_msg = Float64MultiArray()
         vel_msg.data = []
-        self.path_velocities_pub.publish(vel_msg)
+        self._safe_publish(self.path_velocities_pub, vel_msg, "planned_path_velocities")
 
         # Clear RViz velocity visualization too.
-        self.velocity_marker_pub.publish(MarkerArray())
+        self._safe_publish(self.velocity_marker_pub, MarkerArray(), "velocity_markers")
 
     def _publish_hold_current_trajectory(self, frame: str, pose: Pose2D) -> None:
         """Publish a single-point hold trajectory at current pose with zero velocity."""
@@ -3228,7 +3322,7 @@ class WaypointTrajNode(Node):
             anchor.action = Marker.DELETE
             ma.markers.append(outline)
             ma.markers.append(anchor)
-            self.geofence_marker_pub.publish(ma)
+            self._safe_publish(self.geofence_marker_pub, ma, "geofence_markers")
             return
 
         gx_min, gx_max, gy_min, gy_max = self.active_geofence_bounds
@@ -3262,7 +3356,7 @@ class WaypointTrajNode(Node):
             anchor.action = Marker.DELETE
         ma.markers.append(anchor)
 
-        self.geofence_marker_pub.publish(ma)
+        self._safe_publish(self.geofence_marker_pub, ma, "geofence_markers")
 
     def _waypoint_signature(self, wps: List[Tuple[float, float]]) -> Tuple[Tuple[int, int], ...]:
         """Grid-quantized signature of waypoints for replan-change detection."""
@@ -3334,6 +3428,7 @@ class WaypointTrajNode(Node):
     # Main timer
     # =======================
     def on_timer(self) -> None:
+        timer_start_ns = self.get_clock().now().nanoseconds
         self.consume_add_wp()
 
         # base pose now (in odom/map_frame)
@@ -3358,7 +3453,13 @@ class WaypointTrajNode(Node):
         # build + publish fused scan (for RViz) and costmap from it
         fused = self._build_fused_scan(base_pose_now)
         if fused is not None:
-            self.scan_fused_pub.publish(fused)
+            self._safe_publish(self.scan_fused_pub, fused, "scan_fused")
+        elif self._last_scan_rx_ns > 0:
+            age_s = (self.get_clock().now().nanoseconds - self._last_scan_rx_ns) * 1e-9
+            if age_s > max(1.0, float(self.get_parameter("scan_max_age_s").value) * 2.0):
+                self._warn_lidar_throttled(
+                    f"No fresh LiDAR messages for {age_s:.1f}s; publishing empty local costmap until scans recover."
+                )
 
         frame = self.get_parameter("map_frame").value
 
@@ -3389,9 +3490,8 @@ class WaypointTrajNode(Node):
             empty_costmap = np.zeros((local_gs.height, local_gs.width), dtype=np.int8)
             self._apply_geofence_to_costmap(empty_costmap, local_gs)
             self._publish_grid(self.costmap_pub, frame, empty_costmap, gs=local_gs)
+            self._finish_timer_cycle(timer_start_ns)
             return
-
-        planning_costmap = self._build_costmap_from_fused_scan(fused, base_pose_now)
 
         local_gs = self._make_local_costmap_spec(base_pose_now)
         local_costmap = self._build_local_costmap_from_fused_scan(fused, base_pose_now, local_gs)
@@ -3408,24 +3508,43 @@ class WaypointTrajNode(Node):
             self._cached_traj = None
             self._last_plan_wps_sig = None
             self._publish_hold_current_trajectory(frame, base_pose_now)
+            self._finish_timer_cycle(timer_start_ns)
             return
+
+        # plan if waypoints exist
+        if not wps:
+            if self.mapping_active:
+                self._update_mapping_logodds_from_fused_scan(fused, base_pose_now)
+            self._cached_traj = None
+            self._last_plan_wps_sig = None
+            self._publish_hold_current_trajectory(frame, base_pose_now)
+            self._finish_timer_cycle(timer_start_ns)
+            return
+
+        if self.mapping_active:
+            self._update_mapping_logodds_from_fused_scan(fused, base_pose_now)
+
+        planning_costmap = self._build_planning_costmap_from_local(local_costmap, local_gs)
 
         moved_wps = self._relocate_stuck_waypoints(planning_costmap, base_pose_now)
         if moved_wps is not None:
             wps = moved_wps
             self.publish_waypoints(wps)
 
-        # plan if waypoints exist
-        if not wps:
-            self._cached_traj = None
-            self._last_plan_wps_sig = None
-            self._publish_hold_current_trajectory(frame, base_pose_now)
+        if self._effective_scan_stride > 1:
+            if self._cached_traj is not None:
+                xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
+                self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+            else:
+                self._publish_hold_current_trajectory(frame, base_pose_now)
+            self._finish_timer_cycle(timer_start_ns)
             return
 
         should_replan = self._should_replan_trajectory(base_pose_now, wps)
         if not should_replan and self._cached_traj is not None:
             xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
             self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+            self._finish_timer_cycle(timer_start_ns)
             return
 
         stitched: List[Tuple[float, float]] = []
@@ -3438,6 +3557,7 @@ class WaypointTrajNode(Node):
                 if self._cached_traj is not None:
                     xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
                     self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+                self._finish_timer_cycle(timer_start_ns)
                 return
             if not stitched:
                 stitched.extend(seg)
@@ -3455,6 +3575,7 @@ class WaypointTrajNode(Node):
             if self._cached_traj is not None:
                 xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
                 self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+            self._finish_timer_cycle(timer_start_ns)
             return
 
         self._cached_traj = (xs, ys, yaws, velocities, vxs, vys)
@@ -3466,14 +3587,26 @@ class WaypointTrajNode(Node):
         # self.save_trajectory_json(xs, ys, yaws, velocities, vxs, vys)
 
         self._publish_trajectory(frame, xs, ys, yaws, velocities, vxs, vys)
+        self._finish_timer_cycle(timer_start_ns)
 
 
 def main() -> None:
     rclpy.init()
     node = WaypointTrajNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

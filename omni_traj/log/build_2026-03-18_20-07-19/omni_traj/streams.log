@@ -1,0 +1,27 @@
+[2.071s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src/omni_traj': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni_traj build --build-base /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build install --record /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log --single-version-externally-managed install_data
+[2.548s] running egg_info
+[2.581s] writing build/omni_traj/omni_traj.egg-info/PKG-INFO
+[2.581s] writing dependency_links to build/omni_traj/omni_traj.egg-info/dependency_links.txt
+[2.582s] writing entry points to build/omni_traj/omni_traj.egg-info/entry_points.txt
+[2.589s] writing requirements to build/omni_traj/omni_traj.egg-info/requires.txt
+[2.590s] writing top-level names to build/omni_traj/omni_traj.egg-info/top_level.txt
+[2.654s] reading manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+[2.656s] writing manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+[2.657s] running build
+[2.657s] running build_py
+[2.657s] copying omni_traj/lidar_watchdog.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build/lib/omni_traj
+[2.658s] running install
+[2.672s] running install_lib
+[2.705s] copying /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build/lib/omni_traj/lidar_watchdog.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj
+[2.706s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj/lidar_watchdog.py to lidar_watchdog.cpython-312.pyc
+[2.709s] running install_data
+[2.709s] copying launch/dual_sllidar_with_mock_and_traj.launch.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/share/omni_traj/launch
+[2.710s] running install_egg_info
+[2.747s] removing '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info' (and everything under it)
+[2.747s] Copying build/omni_traj/omni_traj.egg-info to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info
+[2.749s] running install_scripts
+[2.989s] Installing empty_scan_pub script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[2.989s] Installing lidar_watchdog script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[2.990s] Installing waypoint_traj script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[2.991s] writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log'
+[3.115s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src/omni_traj' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni_traj build --build-base /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build install --record /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log --single-version-externally-managed install_data

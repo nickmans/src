@@ -1,6 +1,6 @@
 # OMNI Pi Communication Server
 
-Production-ready TCP communication server for OMNI robot stack. Runs on Raspberry Pi 5 (Ubuntu 24.04) and communicates with STM32 NUCLEO H755 for real-time control.
+Production-ready UDP communication server for OMNI robot stack. Runs on Raspberry Pi 5 (Ubuntu 24.04) and communicates with STM32 NUCLEO H755 for real-time control.
 
 ---
 
@@ -33,7 +33,7 @@ Production-ready TCP communication server for OMNI robot stack. Runs on Raspberr
 
 ```
 ┌──────────────┐                          ┌─────────────────┐
-│   STM32      │  TCP Socket (5 Hz)       │  Raspberry Pi 5 │
+│   STM32      │  UDP (5 Hz)       │  Raspberry Pi 5 │
 │   Nucleo     │◄────────────────────────►│                 │
 │   H755ZI     │  POSE / CMD / TRAJ       │  192.168.1.100  │
 │              │                          │     Port 9000   │
@@ -150,10 +150,10 @@ This will:
 
 ```bash
 # Check service status
-sudo systemctl status omni_tcp_server.service
+sudo systemctl status omni_udp_server.service
 
 # View live logs
-sudo journalctl -u omni_tcp_server.service -f
+sudo journalctl -u omni_udp_server.service -f
 
 # Test network
 ./test_network.sh
@@ -217,7 +217,7 @@ cp omni_ros2_stack.service ~/.config/systemd/user/
 cat > ~/.local/bin/omni_pi_server << 'EOF'
 #!/bin/bash
 cd /home/$USER/ros2_ws/src/omni_src/pi_comm_server
-exec python3 run_server.py "$@"
+exec python3 run_udp_server.py "$@"
 EOF
 chmod +x ~/.local/bin/omni_pi_server
 
@@ -274,13 +274,13 @@ cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
 ./start_server.sh
 
 # With debug logging
-python3 run_server.py --log-level DEBUG
+python3 run_udp_server.py --log-level DEBUG
 
 # Low resource mode (reduced CPU usage)
 ./start_server_low_resource.sh
 
 # Enable ROS2 commands (START_ROS2/STOP_ROS2)
-python3 run_server.py --enable-ros2-cmds
+python3 run_udp_server.py --enable-ros2-cmds
 ```
 
 ### ROS2 Integration
@@ -383,7 +383,7 @@ ros2 topic echo /robot/pose
 
 **Terminal 4: Monitor Logs**
 ```bash
-sudo journalctl -u omni_tcp_server.service -f
+sudo journalctl -u omni_udp_server.service -f
 ```
 
 ---
@@ -394,12 +394,12 @@ sudo journalctl -u omni_tcp_server.service -f
 
 **Check if port is already in use:**
 ```bash
-sudo netstat -tlnp | grep 9000
+sudo netstat -ulnp | grep 9000
 ```
 
 **Kill existing process:**
 ```bash
-pkill -f run_server.py
+pkill -f run_udp_server.py
 ```
 
 **Check logs:**
@@ -427,7 +427,7 @@ ip neigh show
 
 **3. Check server is listening:**
 ```bash
-sudo netstat -tlnp | grep 9000
+sudo netstat -ulnp | grep 9000
 # Should show: 0.0.0.0:9000 or 192.168.1.100:9000
 ```
 
@@ -463,18 +463,18 @@ If the server uses too much CPU and affects SSH:
 **Solution:** Always use wrapper scripts:
 ```bash
 # ✓ Use these
-python3 run_server.py
+python3 run_udp_server.py
 python3 run_test_client.py
 
 # ✗ Don't use these directly
-python3 server.py
+python3 run_udp_server.py
 python3 test_client.py
 ```
 
 Or run from the pi_comm_server directory:
 ```bash
 cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-python3 server.py
+python3 run_udp_server.py
 ```
 
 ### ROS2 Topics Not Publishing
@@ -513,7 +513,7 @@ sudo systemctl restart NetworkManager
 sudo ufw disable
 
 # Or allow specific port
-sudo ufw allow 9000/tcp
+sudo ufw allow 9000/udp
 ```
 
 ---
@@ -524,18 +524,18 @@ sudo ufw allow 9000/tcp
 ```
 pi_comm_server/
 ├── protocol.py              # Binary protocol definitions & parsing
-├── server.py                # Asyncio TCP server (main logic)
+├── udp_server.py             # Asyncio UDP server (main logic)
 ├── planner_stub.py          # Trajectory generation
 ├── ros2_manager.py          # ROS2 stack control via systemd
 ├── test_client.py           # STM32 simulator
 │
-├── run_server.py            # ✓ Wrapper script for server
+├── run_udp_server.py            # ✓ Wrapper script for server
 ├── run_test_client.py       # ✓ Wrapper script for test client
 │
-├── tcp_server.py            # Multi-threaded TCP server (alternative)
+├── udp_server.py            # Multi-threaded UDP server (alternative)
 ├── ros2_pose_node.py        # ROS2 pose publisher
 ├── ros2_trajectory_node.py  # ROS2 trajectory generator
-└── omni_main.py            # Main integration (TCP + ROS2)
+└── run_udp_server.py            # Main integration (UDP + ROS2)
 ```
 
 ### Setup & Testing
@@ -559,7 +559,7 @@ pi_comm_server/
 ```
 ├── omni_pi_server.service   # Main server service
 ├── omni_ros2_stack.service  # ROS2 nodes service
-└── omni_tcp_server.service  # Alternative TCP service
+└── omni_udp_server.service  # UDP service
 ```
 
 ### Documentation
@@ -567,7 +567,7 @@ pi_comm_server/
 ├── README.md                # This file
 ├── QUICKSTART.md           # Quick reference
 ├── TROUBLESHOOTING.md      # Detailed troubleshooting
-└── STM32_CLIENT_GUIDE.md   # STM32 implementation guide
+└── README.md   # STM32 implementation guide
 ```
 
 ---
@@ -605,11 +605,11 @@ Modify topics in [ros2_pose_node.py](ros2_pose_node.py) or [ros2_trajectory_node
 
 | Device | IP Address | Port | Role |
 |--------|------------|------|------|
-| Raspberry Pi 5 | 192.168.1.100 | 9000 | TCP Server |
-| STM32 Nucleo H755 | 192.168.1.10 | - | TCP Client |
+| Raspberry Pi 5 | 192.168.1.100 | 9000 | UDP Server |
+| STM32 Nucleo H755 | 192.168.1.10 | - | UDP Client |
 
 **Connection Type:** Direct Ethernet (no router needed)  
-**Protocol:** TCP/IP with binary framing  
+**Protocol:** UDP with binary framing  
 **Data Rate:** 5 Hz (bidirectional)
 
 ---
@@ -619,7 +619,7 @@ Modify topics in [ros2_pose_node.py](ros2_pose_node.py) or [ros2_trajectory_node
 ### Enable Debug Logging
 
 ```bash
-python3 run_server.py --log-level DEBUG
+python3 run_udp_server.py --log-level DEBUG
 ```
 
 ### Log Files
@@ -635,7 +635,7 @@ journalctl --user -u omni_pi_server.service --since today
 # Network status
 ip addr show
 ip neigh show
-sudo netstat -tlnp | grep 9000
+sudo netstat -ulnp | grep 9000
 
 # Service status
 systemctl --user status omni_pi_server.service
@@ -645,7 +645,7 @@ systemctl --user status omni_ros2_stack.service
 ps aux | grep python3
 
 # Resource usage
-top -p $(pgrep -f run_server.py)
+top -p $(pgrep -f run_udp_server.py)
 ```
 
 ---
@@ -662,6 +662,6 @@ top -p $(pgrep -f run_server.py)
 
 - v1.0: Initial production release
   - Binary protocol implementation
-  - Asyncio TCP server
+  - Asyncio UDP server
   - ROS2 integration
   - Systemd service support

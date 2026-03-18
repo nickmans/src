@@ -10,9 +10,9 @@ echo "======================================"
 echo
 
 # Check if already running
-if pgrep -f "omni_main.py" > /dev/null; then
+if pgrep -f "run_udp_server.py" > /dev/null; then
     echo "ERROR: OMNI server already running"
-    echo "Stop it first with: pkill -f omni_main.py"
+    echo "Stop it first with: pkill -f run_udp_server.py"
     exit 1
 fi
 
@@ -35,4 +35,4 @@ elif [ -f "/opt/ros/humble/setup.bash" ]; then
 fi
 
 # Start with output to log
-nice -n 10 python3 omni_main.py 2>&1 | tee /tmp/omni_server_startup.log
+nice -n 10 python3 run_udp_server.py 2>&1 | tee /tmp/omni_server_startup.log

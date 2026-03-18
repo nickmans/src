@@ -1,13 +1,13 @@
 #!/bin/bash
-# Uninstall OMNI TCP Server systemd service
+# Uninstall OMNI UDP Server systemd service
 
 set -e
 
-SERVICE_NAME="omni_tcp_server.service"
+SERVICE_NAME="omni_udp_server.service"
 SYSTEMD_DIR="/etc/systemd/system"
 
 echo "======================================================"
-echo "  OMNI TCP Server - Service Uninstallation"
+echo "  OMNI UDP Server - Service Uninstallation"
 echo "======================================================"
 echo ""
 

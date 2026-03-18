@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'empty_scan_pub = omni_traj.empty_scan_pub:main',
+            'lidar_watchdog = omni_traj.lidar_watchdog:main',
             'waypoint_traj = omni_traj.waypoint_traj_node:main',
         ],
     },
