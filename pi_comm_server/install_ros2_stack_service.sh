@@ -63,6 +63,15 @@ echo "✓ Wakeup service file copied"
 systemctl daemon-reload
 echo "✓ Systemd reloaded"
 
+# Ensure UDP-managed stack service is disabled when enabling legacy stack mode.
+systemctl disable omni_udp_server.service >/dev/null 2>&1 || true
+systemctl stop omni_udp_server.service >/dev/null 2>&1 || true
+echo "✓ Disabled omni_udp_server service"
+
+# Clear stale lock file from previous controller instance.
+rm -f /tmp/omni_ros2_stack_controller.lock >/dev/null 2>&1 || true
+echo "✓ Cleared stale ROS2 stack controller lock"
+
 systemctl enable "$SERVICE_NAME"
 echo "✓ Service enabled (will start on boot)"
 

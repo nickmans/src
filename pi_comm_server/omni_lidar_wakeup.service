@@ -2,6 +2,8 @@
 Description=OMNI LiDAR Motor Wakeup
 After=omni_ros2_stack.service
 Requires=omni_ros2_stack.service
+PartOf=omni_ros2_stack.service
+Conflicts=omni_udp_server.service
 
 [Service]
 Type=oneshot
@@ -12,4 +14,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=omni_ros2_stack.service

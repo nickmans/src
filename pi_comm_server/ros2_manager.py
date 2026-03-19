@@ -10,6 +10,7 @@ import os
 import shlex
 import signal
 import subprocess
+import threading
 import time
 from typing import Optional
 
@@ -33,9 +34,13 @@ class ROS2Manager:
         self.launch_args = self._build_launch_args(self.stack_mode)
         self.launch_match = f"ros2 launch {self.package} {self.launch_file}"
         self.process: Optional[asyncio.subprocess.Process] = None
-        self.timeout_sec = 5.0
-        self.start_verify_timeout_sec = 12.0
-        self.start_stability_window_sec = 2.0
+        self.timeout_sec = 2.5
+        self.start_verify_timeout_sec = 8.0
+        self.start_stability_window_sec = 1.0
+        self.lidar_boot_settle_delay_sec = 1.5
+        self.lidar_scan_probe_timeout_sec = 3.0
+        self.mode_health_cache_ttl_sec = 1.5
+        self._mode_health_cache: dict[str, tuple[float, bool]] = {}
 
         self._residual_process_patterns = [
             r"/lib/nav2_amcl/amcl(\s|$)",
@@ -105,6 +110,7 @@ class ROS2Manager:
 
         self.stack_mode = normalized
         self.launch_args = self._build_launch_args(self.stack_mode)
+        self._mode_health_cache.clear()
         logger.info(f"ROS2 stack mode set to: {self.stack_mode}")
         return True
 
@@ -175,6 +181,10 @@ class ROS2Manager:
             # Start background task to log output
             asyncio.create_task(self._log_output())
 
+            # Keep LiDAR motor/scan recovery, but run it in the background so
+            # stack mode transitions are not blocked by long serial bringup.
+            self._schedule_lidar_recovery(workspace_setup)
+
             # Verify expected mode processes are present (and incompatible ones absent).
             ready = await self._wait_mode_healthy(self.stack_mode, timeout_sec=self.start_verify_timeout_sec)
             if not ready:
@@ -195,6 +205,45 @@ class ROS2Manager:
             logger.error(f"Error starting ROS2 stack: {e}")
             self.process = None
             return False
+
+    def _schedule_lidar_recovery(self, workspace_setup: str) -> None:
+        def _worker() -> None:
+            try:
+                time.sleep(max(0.0, float(self.lidar_boot_settle_delay_sec)))
+                self._ensure_lidar_scans(workspace_setup)
+            except Exception as exc:
+                logger.warning(f"LiDAR recovery worker failed: {exc}")
+
+        threading.Thread(target=_worker, name="lidar_recovery_worker", daemon=True).start()
+
+    def _run_ros_shell_cmd(self, workspace_setup: str, command: str, timeout_sec: float = 10.0) -> subprocess.CompletedProcess:
+        workspace_setup_quoted = shlex.quote(workspace_setup)
+        shell_cmd = f"source /opt/ros/jazzy/setup.bash && source {workspace_setup_quoted} && {command}"
+        return subprocess.run(
+            ["bash", "-lc", shell_cmd],
+            text=True,
+            capture_output=True,
+            timeout=timeout_sec,
+            check=False,
+        )
+
+    def _scan_available(self, workspace_setup: str, topic_name: str) -> bool:
+        probe_timeout = max(1.0, float(self.lidar_scan_probe_timeout_sec))
+        cmd = (
+            f"timeout {probe_timeout:g} ros2 topic echo --qos-profile sensor_data --once --field header.frame_id "
+            f"{shlex.quote(topic_name)} >/dev/null 2>&1"
+        )
+        result = self._run_ros_shell_cmd(workspace_setup, cmd, timeout_sec=probe_timeout + 3.0)
+        return result.returncode == 0
+
+    def _ensure_lidar_scans(self, workspace_setup: str) -> None:
+        topics = ["/lidar1/scan", "/lidar2/scan"]
+        for topic_name in topics:
+            if self._scan_available(workspace_setup, topic_name):
+                continue
+            logger.warning(
+                f"No startup scan on {topic_name}; ROS2Manager will not call start_motor and expects lidar_watchdog to recover"
+            )
 
     async def stop(self) -> bool:
         """
@@ -234,6 +283,7 @@ class ROS2Manager:
 
             self.process = None
             if stopped:
+                self._mode_health_cache.clear()
                 logger.info("Stopped ROS2 stack")
                 return True
             logger.error("ROS2 stack still appears to be running")
@@ -259,10 +309,20 @@ class ROS2Manager:
         if mode not in {"standby", "mapping", "localization"}:
             return False
 
+        now = time.monotonic()
+        cached = self._mode_health_cache.get(mode)
+        if cached is not None:
+            cached_t, cached_ok = cached
+            if (now - float(cached_t)) <= float(self.mode_health_cache_ttl_sec):
+                return bool(cached_ok)
+
         if not await self.is_running():
+            self._mode_health_cache[mode] = (now, False)
             return False
 
-        return self._mode_process_health(mode, require_amcl_active=True)
+        healthy = self._mode_process_health(mode, require_amcl_active=True)
+        self._mode_health_cache[mode] = (now, healthy)
+        return healthy
 
     def _get_launch_pids(self) -> list[int]:
         """Get PIDs for stack launch parent process(es)."""

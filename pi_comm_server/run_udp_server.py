@@ -11,16 +11,17 @@ from udp_server import OMNIUDPServer, PoseData
 
 
 def main():
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    # logging.basicConfig(
+    #     level=logging.INFO,
+    #     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    # )
+    logging.disable(logging.CRITICAL)
 
     def on_pose(p: PoseData):
-        logging.debug("Pose callback")
+        pass
 
     def on_cmd(cmd_id: int):
-        logging.info(f"CMD callback: {cmd_id}")
+        pass
 
     # Use the server's default trajectory source (ROS2 /planned_path bridge).
     server = OMNIUDPServer(host="0.0.0.0", port=9000, on_pose_callback=on_pose, on_cmd_callback=on_cmd)

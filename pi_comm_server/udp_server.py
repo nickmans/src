@@ -116,6 +116,17 @@ class OMNIUDPServer:
         self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
         self._loop_thread.start()
         self._active_stack_mode = "standby"
+        self._last_mode_switch_monotonic = 0.0
+        self._last_mode_request_monotonic = 0.0
+        self._last_mode_request_target: Optional[str] = None
+        self._last_mode_request_result = False
+        self._mode_request_debounce_s = 1.0
+        self._mode_health_cache_ttl_s = 1.5
+        self._last_mode_health_check_monotonic = 0.0
+        self._last_mode_health_check_target: Optional[str] = None
+        self._last_mode_health_check_result = False
+        self._warmup_guard_s = 20.0
+        self._throttled_log_last_ts: dict[str, float] = {}
         self._stack_transition_lock = threading.Lock()
         self._stack_lock_path = "/tmp/omni_ros2_stack_controller.lock"
         self._stack_lock_fd: Optional[int] = None
@@ -136,26 +147,56 @@ class OMNIUDPServer:
             return False
 
         with self._stack_transition_lock:
+            now = time.monotonic()
+            if (
+                self._last_mode_request_target == target_mode
+                and (now - float(self._last_mode_request_monotonic)) < float(self._mode_request_debounce_s)
+            ):
+                return bool(self._last_mode_request_result)
+
+            self._last_mode_request_target = target_mode
+            self._last_mode_request_monotonic = now
+
             self._set_ros2_retry_enabled(False, reason=f"mode transition to {target_mode}")
 
             try:
                 changed = self.ros2_mgr.set_stack_mode(target_mode)
             except Exception as exc:
                 logger.error(f"Failed to set ROS2 stack mode '{target_mode}': {exc}")
+                self._last_mode_request_result = False
                 return False
 
             is_running = self._run_ros2(self.ros2_mgr.is_running)
             needs_restart = True
 
             if is_running and not changed:
-                async def _healthy_check() -> bool:
-                    return await self.ros2_mgr.is_mode_healthy(target_mode)
+                since_last_switch_s = now - float(self._last_mode_switch_monotonic)
+                if self._active_stack_mode == target_mode and since_last_switch_s < float(self._warmup_guard_s):
+                    self._log_throttled(
+                        f"mode-warmup-{target_mode}",
+                        logging.WARNING,
+                        (
+                            f"ROS2 stack in {target_mode} is still warming up "
+                            f"({since_last_switch_s:.1f}s); skipping forced restart"
+                        ),
+                        interval_s=2.0,
+                    )
+                    self._last_mode_request_result = True
+                    return True
 
-                if self._run_ros2(_healthy_check):
+                healthy = self._is_mode_healthy_cached(target_mode, now)
+                if healthy:
                     logger.info(f"ROS2 stack already healthy in {target_mode} mode")
                     self._active_stack_mode = target_mode
+                    self._last_mode_request_result = True
                     return True
-                logger.warning(f"ROS2 stack running but unhealthy in {target_mode} mode; forcing restart")
+
+                self._log_throttled(
+                    f"mode-unhealthy-{target_mode}",
+                    logging.WARNING,
+                    f"ROS2 stack running but unhealthy in {target_mode} mode; forcing restart",
+                    interval_s=2.0,
+                )
 
             if is_running and needs_restart:
                 logger.info(f"Switching ROS2 stack from {self._active_stack_mode} to {target_mode}")
@@ -163,18 +204,50 @@ class OMNIUDPServer:
                 if not stopped:
                     logger.error("Failed to stop ROS2 stack during mode switch")
                     self._set_ros2_retry_enabled(True, reason="stop failed during transition")
+                    self._last_mode_request_result = False
                     return False
-                time.sleep(0.5)
+                time.sleep(0.1)
 
             started = self._run_ros2(self.ros2_mgr.start)
             if not started:
                 logger.error(f"Failed to start ROS2 stack in {target_mode} mode")
                 self._set_ros2_retry_enabled(True, reason="start failed during transition")
+                self._last_mode_request_result = False
                 return False
 
             self._active_stack_mode = target_mode
+            self._last_mode_switch_monotonic = time.monotonic()
+            self._last_mode_health_check_target = target_mode
+            self._last_mode_health_check_monotonic = self._last_mode_switch_monotonic
+            self._last_mode_health_check_result = True
             self._set_ros2_retry_enabled(False, reason="mode transition complete")
+            self._last_mode_request_result = True
             return True
+
+    def _is_mode_healthy_cached(self, target_mode: str, now_monotonic: Optional[float] = None) -> bool:
+        now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+        if (
+            self._last_mode_health_check_target == target_mode
+            and (now - float(self._last_mode_health_check_monotonic)) < float(self._mode_health_cache_ttl_s)
+        ):
+            return bool(self._last_mode_health_check_result)
+
+        async def _healthy_check() -> bool:
+            return await self.ros2_mgr.is_mode_healthy(target_mode)
+
+        healthy = bool(self._run_ros2(_healthy_check))
+        self._last_mode_health_check_target = target_mode
+        self._last_mode_health_check_monotonic = now
+        self._last_mode_health_check_result = healthy
+        return healthy
+
+    def _log_throttled(self, key: str, level: int, message: str, interval_s: float = 1.0) -> None:
+        now = time.monotonic()
+        last_ts = float(self._throttled_log_last_ts.get(key, 0.0))
+        if (now - last_ts) < float(interval_s):
+            return
+        self._throttled_log_last_ts[key] = now
+        logger.log(level, message)
 
     def start(self):
         if self.running:
@@ -365,10 +438,12 @@ class OMNIUDPServer:
 
     def set_trajectory_active(self, active: bool):
         with self.traj_lock:
+            changed = (self.trajectory_active != active)
             self.trajectory_active = active
         # Wake sender immediately so mode changes are reflected without idle delay.
         self._send_wakeup.set()
-        logger.info(f"Trajectory sending: {'active' if active else 'inactive'}")
+        if changed:
+            logger.info(f"Trajectory sending: {'active' if active else 'inactive'}")
 
     @staticmethod
     def _now_ms() -> int:
@@ -503,7 +578,12 @@ class OMNIUDPServer:
 
     def _handle_cmd(self, header: Header, payload: bytes, addr: tuple):
         cmd = Command.unpack(payload)
-        logger.info(f"CMD received: command={cmd.cmd_id} (seq={header.seq}) from {addr}")
+        self._log_throttled(
+            key=f"cmd-rx-{int(cmd.cmd_id)}",
+            level=logging.INFO,
+            message=f"CMD received: command={cmd.cmd_id} (seq={header.seq}) from {addr}",
+            interval_s=0.5,
+        )
         if self.on_cmd_callback:
             self.on_cmd_callback(cmd.cmd_id)
 
@@ -527,7 +607,7 @@ class OMNIUDPServer:
             return
 
         if cmd.cmd_id == CommandID.STOP_TRAJ:
-            logger.info("STOP_TRAJ received; disabling trajectory output")
+            logger.info("STOP_TRAJ received; disabling trajectory output and returning to standby mode")
             now_ms = self._now_ms()
             with self.pose_lock:
                 latest_pose = self.latest_pose
@@ -546,6 +626,9 @@ class OMNIUDPServer:
                 self._active_traj_t0_ms = None
                 self._last_valid_traj = None
             self.set_trajectory_active(False)
+            ok_stack = self._switch_stack_mode("standby")
+            if not ok_stack:
+                logger.warning("STOP_TRAJ failed to switch ROS2 stack to standby mode")
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             return
 
@@ -710,9 +793,19 @@ class OMNIUDPServer:
             self._ros2_retry_enabled = enabled
 
         if enabled:
-            logger.warning("ROS2 retry enabled: %s", reason or "start failures")
+            self._log_throttled(
+                key="ros2-retry-enabled",
+                level=logging.WARNING,
+                message=f"ROS2 retry enabled: {reason or 'start failures'}",
+                interval_s=1.0,
+            )
         else:
-            logger.info("ROS2 retry disabled: %s", reason or "")
+            self._log_throttled(
+                key="ros2-retry-disabled",
+                level=logging.INFO,
+                message=f"ROS2 retry disabled: {reason or ''}",
+                interval_s=1.0,
+            )
 
     def _is_ros2_retry_enabled(self) -> bool:
         with self._ros2_retry_lock:
@@ -737,7 +830,12 @@ class OMNIUDPServer:
                 self._set_ros2_retry_enabled(False, reason="stack is healthy")
                 continue
 
-            logger.warning(f"Retrying ROS2 stack recovery in mode={target_mode}...")
+            self._log_throttled(
+                key=f"ros2-retry-recover-{target_mode}",
+                level=logging.WARNING,
+                message=f"Retrying ROS2 stack recovery in mode={target_mode}...",
+                interval_s=2.0,
+            )
             recovered = self._switch_stack_mode(target_mode)
             if recovered:
                 self._set_ros2_retry_enabled(False, reason="retry recovery succeeded")

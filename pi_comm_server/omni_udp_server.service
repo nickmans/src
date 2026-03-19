@@ -1,7 +1,7 @@
 [Unit]
 Description=OMNI UDP Communication Server with ROS2 Support
 After=network.target
-Conflicts=omni_ros2_stack.service
+Conflicts=omni_ros2_stack.service omni_lidar_wakeup.service
 
 [Service]
 Type=simple

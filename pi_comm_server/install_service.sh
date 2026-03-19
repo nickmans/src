@@ -38,6 +38,14 @@ echo "✓ Service file copied"
 systemctl daemon-reload
 echo "✓ Systemd reloaded"
 
+# Ensure legacy ROS2 stack services do not conflict with UDP-managed stack.
+systemctl disable omni_ros2_stack.service >/dev/null 2>&1 || true
+systemctl disable omni_lidar_wakeup.service >/dev/null 2>&1 || true
+systemctl stop omni_lidar_wakeup.service >/dev/null 2>&1 || true
+systemctl stop omni_ros2_stack.service >/dev/null 2>&1 || true
+rm -f /tmp/omni_ros2_stack_controller.lock >/dev/null 2>&1 || true
+echo "✓ Disabled legacy omni_ros2_stack/omni_lidar_wakeup services"
+
 # Enable service
 systemctl enable "$SERVICE_NAME"
 echo "✓ Service enabled (will start on boot)"
