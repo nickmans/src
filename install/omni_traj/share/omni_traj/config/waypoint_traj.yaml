@@ -14,8 +14,8 @@ waypoint_traj:
     remove_waypoint_radius_m: 0.50
 
     global_map_res: 0.0444
-    global_map_width_m: 4.0
-    global_map_height_m: 4.0
+    global_map_width_m: 6.0
+    global_map_height_m: 6.0
     rolling_map_enable: true
     rolling_map_margin_m: 1.0
     persistent_obstacles_enable: false

@@ -14,8 +14,8 @@ waypoint_traj:
     remove_waypoint_radius_m: 0.50
 
     global_map_res: 0.025
-    global_map_width_m: 4.0
-    global_map_height_m: 4.0
+    global_map_width_m: 6.0
+    global_map_height_m: 6.0
     local_costmap_res: 0.05
     local_costmap_width_m: 3.0
     local_costmap_height_m: 3.0
