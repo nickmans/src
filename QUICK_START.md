@@ -6,7 +6,7 @@ Fast path for a new engineer to prove the stack works.
 
 - ROS2 environment installed and sourced capability available.
 - Workspace path: `/home/nickolas/ros2_ws/src/omni_src`.
-- For real LiDAR: USB permissions (`dialout`) and valid serial ports.
+- For real LiDAR: valid serial ports (Pi 5 UART defaults: `/dev/ttyAMA0` and `/dev/ttyAMA2`).
 
 ---
 
@@ -60,15 +60,14 @@ If `/scan_fused` is missing, verify both raw scan topics and frame IDs first.
 ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py \
   use_mock_lidar:=false \
   use_rviz:=true \
-  lidar1_serial_port:=/dev/ttyUSB0 \
-  lidar2_serial_port:=/dev/ttyUSB1
+  lidar1_serial_port:=/dev/ttyAMA0 \
+  lidar2_serial_port:=/dev/ttyAMA2
 ```
 
 Helpful checks:
 
 ```bash
-ls -la /dev/ttyUSB*
-ls -la /dev/serial/by-id
+ls -la /dev/ttyAMA*
 ```
 
 ---

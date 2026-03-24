@@ -1,0 +1,28 @@
+[2.279s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src/omni_traj': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni_traj build --build-base /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build install --record /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log --single-version-externally-managed install_data
+[2.879s] running egg_info
+[2.916s] writing build/omni_traj/omni_traj.egg-info/PKG-INFO
+[2.917s] writing dependency_links to build/omni_traj/omni_traj.egg-info/dependency_links.txt
+[2.919s] writing entry points to build/omni_traj/omni_traj.egg-info/entry_points.txt
+[2.920s] writing requirements to build/omni_traj/omni_traj.egg-info/requires.txt
+[2.921s] writing top-level names to build/omni_traj/omni_traj.egg-info/top_level.txt
+[2.986s] reading manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+[2.988s] writing manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+[2.988s] running build
+[2.988s] running build_py
+[2.989s] copying omni_traj/map_odom_startup_fallback.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build/lib/omni_traj
+[2.992s] running install
+[3.005s] running install_lib
+[3.038s] copying /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build/lib/omni_traj/map_odom_startup_fallback.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj
+[3.039s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj/map_odom_startup_fallback.py to map_odom_startup_fallback.cpython-312.pyc
+[3.042s] running install_data
+[3.043s] copying launch/dual_sllidar_with_mock_and_traj.launch.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/share/omni_traj/launch
+[3.044s] running install_egg_info
+[3.083s] removing '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info' (and everything under it)
+[3.085s] Copying build/omni_traj/omni_traj.egg-info to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info
+[3.086s] running install_scripts
+[3.335s] Installing empty_scan_pub script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[3.388s] Installing lidar_watchdog script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[3.389s] Installing map_odom_startup_fallback script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[3.390s] Installing waypoint_traj script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[3.391s] writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log'
+[3.536s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src/omni_traj' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni_traj build --build-base /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build install --record /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log --single-version-externally-managed install_data

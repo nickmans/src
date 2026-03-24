@@ -2,9 +2,39 @@
 
 set -euo pipefail
 
+pick_workspace_setup() {
+    local candidates=(
+        "/home/nickolas/ros2_ws/install/setup.bash"
+        "/home/nickolas/ros2_ws/src/omni_src/install/setup.bash"
+        "/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/setup.bash"
+    )
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [ -f "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+WS_SETUP="$(pick_workspace_setup || true)"
+
+if [ ! -f /opt/ros/jazzy/setup.bash ]; then
+    echo "ERROR: /opt/ros/jazzy/setup.bash not found"
+    exit 1
+fi
+
+if [ -z "$WS_SETUP" ]; then
+    echo "ERROR: Could not find workspace setup.bash for LiDAR wakeup"
+    exit 1
+fi
+
 set +u
 source /opt/ros/jazzy/setup.bash
-source /home/nickolas/ros2_ws/src/omni_src/install/setup.bash
+source "$WS_SETUP"
 set -u
 
 wait_for_service() {

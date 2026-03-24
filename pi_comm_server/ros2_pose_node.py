@@ -6,9 +6,12 @@ Receives pose updates from UDP server and publishes to ROS2 topics.
 
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from geometry_msgs.msg import PoseStamped, TwistStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 import math
+import tf2_ros
 
 
 class PosePublisherNode(Node):
@@ -23,6 +26,10 @@ class PosePublisherNode(Node):
 
     def __init__(self):
         super().__init__('pose_publisher')
+
+        initial_pose_qos = QoSProfile(depth=1)
+        initial_pose_qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        initial_pose_qos.reliability = QoSReliabilityPolicy.RELIABLE
         
         # Publishers
         self.pose_pub = self.create_publisher(PoseStamped, '/robot/pose', 10)
@@ -34,8 +41,17 @@ class PosePublisherNode(Node):
         self.initial_pose_pub = self.create_publisher(
             PoseWithCovarianceStamped, 
             '/initialpose', 
-            10
+            initial_pose_qos
         )
+
+        self.tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=5.0))
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.latest_pose_data = None
+        self.initial_pose_seed_started_ns = None
+        self.initial_pose_seed_min_duration_ns = int(30.0 * 1e9)
+        self.initial_pose_seed_max_duration_ns = int(60.0 * 1e9)
+        self.localization_seed_confirmed = False
+        self.initial_pose_timer = self.create_timer(1.0, self._refresh_initial_pose_seed)
         
         self.get_logger().info('Pose Publisher Node initialized')
         
@@ -50,6 +66,8 @@ class PosePublisherNode(Node):
             pose_data: PoseData object from UDP server
         """
         try:
+            self.latest_pose_data = pose_data
+
             # Create timestamp
             stamp = self.get_clock().now().to_msg()
             
@@ -116,9 +134,44 @@ class PosePublisherNode(Node):
             if not self.initial_pose_published:
                 self._publish_initial_pose(pose_data)
                 self.initial_pose_published = True
+                self.initial_pose_seed_started_ns = self.get_clock().now().nanoseconds
             
         except Exception as e:
             self.get_logger().error(f'Error publishing pose: {e}')
+
+    def _has_map_to_odom_transform(self):
+        try:
+            self.tf_buffer.lookup_transform(
+                'map',
+                'odom',
+                rclpy.time.Time(),
+                timeout=Duration(seconds=0.05),
+            )
+            return True
+        except Exception:
+            return False
+
+    def _refresh_initial_pose_seed(self):
+        if self.latest_pose_data is None or self.localization_seed_confirmed:
+            return
+
+        now_ns = self.get_clock().now().nanoseconds
+        if self.initial_pose_seed_started_ns is None:
+            self.initial_pose_seed_started_ns = now_ns
+
+        elapsed_ns = now_ns - self.initial_pose_seed_started_ns
+
+        if elapsed_ns >= self.initial_pose_seed_min_duration_ns and self._has_map_to_odom_transform():
+            self.localization_seed_confirmed = True
+            self.get_logger().info('Detected map->odom transform after startup; stopping /initialpose reseeding')
+            return
+
+        if elapsed_ns >= self.initial_pose_seed_max_duration_ns:
+            self.localization_seed_confirmed = True
+            self.get_logger().warn('Stopping /initialpose reseeding after timeout; map->odom transform still not confirmed')
+            return
+
+        self._publish_initial_pose(self.latest_pose_data)
 
     def _publish_initial_pose(self, pose_data):
         """Publish initial pose for localization."""

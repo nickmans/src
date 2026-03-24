@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install OMNI ROS2 stack as a systemd service
+# Install OMNI ROS2 stack as a debug-only systemd service
 
 set -e
 
@@ -13,8 +13,11 @@ WAKEUP_SCRIPT="$SCRIPT_DIR/wakeup_lidars.sh"
 SYSTEMD_DIR="/etc/systemd/system"
 
 echo "======================================================"
-echo "  OMNI ROS2 Stack - Service Installation"
+echo "  OMNI ROS2 Stack - Debug Service Installation"
 echo "======================================================"
+echo ""
+echo "NOTE: This service is for direct ROS2 bringup/debugging only."
+echo "      The normal boot path is omni_udp_server.service."
 echo ""
 
 # Check if running as root
@@ -63,7 +66,7 @@ echo "✓ Wakeup service file copied"
 systemctl daemon-reload
 echo "✓ Systemd reloaded"
 
-# Ensure UDP-managed stack service is disabled when enabling legacy stack mode.
+# Ensure UDP-managed boot service is disabled when explicitly opting into debug stack mode.
 systemctl disable omni_udp_server.service >/dev/null 2>&1 || true
 systemctl stop omni_udp_server.service >/dev/null 2>&1 || true
 echo "✓ Disabled omni_udp_server service"
@@ -73,7 +76,7 @@ rm -f /tmp/omni_ros2_stack_controller.lock >/dev/null 2>&1 || true
 echo "✓ Cleared stale ROS2 stack controller lock"
 
 systemctl enable "$SERVICE_NAME"
-echo "✓ Service enabled (will start on boot)"
+echo "✓ Debug service enabled (will start on boot until disabled)"
 
 systemctl enable "$WAKEUP_SERVICE_NAME"
 echo "✓ Wakeup service enabled (will run on boot)"
@@ -84,3 +87,7 @@ echo "  Start now:   sudo systemctl start $SERVICE_NAME"
 echo "  Status:      sudo systemctl status $SERVICE_NAME"
 echo "  Logs:        sudo journalctl -u $SERVICE_NAME -f"
 echo "  Wakeup logs: sudo journalctl -u $WAKEUP_SERVICE_NAME -f"
+echo ""
+echo "To restore the normal command-driven boot path:"
+echo "  sudo systemctl disable $SERVICE_NAME $WAKEUP_SERVICE_NAME"
+echo "  sudo systemctl enable omni_udp_server.service"

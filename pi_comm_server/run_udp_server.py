@@ -11,11 +11,10 @@ from udp_server import OMNIUDPServer, PoseData
 
 
 def main():
-    # logging.basicConfig(
-    #     level=logging.INFO,
-    #     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    # )
-    logging.disable(logging.CRITICAL)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
     def on_pose(p: PoseData):
         pass

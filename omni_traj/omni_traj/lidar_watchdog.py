@@ -37,8 +37,10 @@ class LidarWatchdog(Node):
         self.declare_parameter("startup_grace_s", 5.0)
         self.declare_parameter("scan_timeout_s", 2.5)
         self.declare_parameter("start_motor_retry_s", 5.0)
+        self.declare_parameter("start_command_stagger_s", 2.0)
 
         self._startup_ns = self.get_clock().now().nanoseconds
+        self._last_any_start_try_ns = 0
 
         self._states: Dict[str, LidarState] = {
             "lidar1": LidarState(
@@ -87,6 +89,10 @@ class LidarWatchdog(Node):
         if now_ns - state.last_start_try_ns < int(retry_s * 1e9):
             return
 
+        stagger_s = max(2.0, float(self.get_parameter("start_command_stagger_s").value))
+        if now_ns - self._last_any_start_try_ns < int(stagger_s * 1e9):
+            return
+
         client = self._start_clients[state.key]
         if not client.wait_for_service(timeout_sec=0.2):
             return
@@ -94,6 +100,7 @@ class LidarWatchdog(Node):
         req = Empty.Request()
         client.call_async(req)
         state.last_start_try_ns = now_ns
+        self._last_any_start_try_ns = now_ns
         self.get_logger().warn(f"{state.key}: stale scan, requesting {state.start_service}")
 
     def _on_timer(self) -> None:

@@ -142,6 +142,8 @@ class WaypointTrajNode(Node):
         self.declare_parameter("lidar1_topic", cfg("lidar1_topic"))
         self.declare_parameter("lidar2_topic", cfg("lidar2_topic"))
         self.declare_parameter("scan_max_age_s", cfg("scan_max_age_s"))
+        self.declare_parameter("use_arrival_stamp_for_scan_timing", cfg("use_arrival_stamp_for_scan_timing"))
+        self.declare_parameter("max_scan_pair_skew_s", cfg("max_scan_pair_skew_s"))
         self.declare_parameter("scan_beam_stride", cfg("scan_beam_stride"))
         self.declare_parameter("scan_no_hit_eps_m", cfg("scan_no_hit_eps_m"))
         self.declare_parameter("max_lidar_range_m", cfg("max_lidar_range_m"))  # Max range for lidar processing (reduces CPU load)
@@ -788,10 +790,14 @@ class WaypointTrajNode(Node):
     # Scan capture
     # =======================
     def on_scan1(self, msg: LaserScan) -> None:
+        if bool(self.get_parameter("use_arrival_stamp_for_scan_timing").value):
+            msg.header.stamp = self.get_clock().now().to_msg()
         self.last_scan1 = msg
         self._last_scan_rx_ns = self.get_clock().now().nanoseconds
 
     def on_scan2(self, msg: LaserScan) -> None:
+        if bool(self.get_parameter("use_arrival_stamp_for_scan_timing").value):
+            msg.header.stamp = self.get_clock().now().to_msg()
         self.last_scan2 = msg
         self._last_scan_rx_ns = self.get_clock().now().nanoseconds
 
@@ -934,6 +940,21 @@ class WaypointTrajNode(Node):
             if max_age_s > 0.0 and age_s > max_age_s:
                 continue
             scans.append(s)
+
+        max_scan_pair_skew_s = max(0.0, float(self.get_parameter("max_scan_pair_skew_s").value))
+        if len(scans) == 2 and max_scan_pair_skew_s > 0.0:
+            stamp0_ns = Time.from_msg(scans[0].header.stamp).nanoseconds
+            stamp1_ns = Time.from_msg(scans[1].header.stamp).nanoseconds
+            pair_skew_s = abs(stamp0_ns - stamp1_ns) * 1e-9
+            if pair_skew_s > max_scan_pair_skew_s:
+                newer_scan = scans[0] if stamp0_ns >= stamp1_ns else scans[1]
+                older_scan = scans[1] if stamp0_ns >= stamp1_ns else scans[0]
+                self._warn_lidar_throttled(
+                    "Dropping stale LiDAR scan for fusion due to timestamp skew "
+                    f"({pair_skew_s:.3f}s > {max_scan_pair_skew_s:.3f}s): "
+                    f"keeping {newer_scan.header.frame_id}, dropping {older_scan.header.frame_id}"
+                )
+                scans = [newer_scan]
 
         if not scans:
             return None

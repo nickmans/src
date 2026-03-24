@@ -9,6 +9,7 @@ import heapq
 import json
 import math
 import os
+import struct
 import sys
 import time
 import zlib
@@ -28,7 +29,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, PointCloud2, PointField
 from std_msgs.msg import ColorRGBA, Float64MultiArray
 from std_srvs.srv import Empty, Trigger
 from visualization_msgs.msg import Marker, MarkerArray
@@ -53,11 +54,21 @@ def yaw_to_quat(yaw: float) -> Tuple[float, float, float, float]:
     return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
 
 
+SAVED_MAP_POSE_CONVENTION = "stm32_yaw_matches_lidar_x_forward_v1"
+
+
 @dataclass(frozen=True)
 class Pose2D:
     x: float
     y: float
     yaw: float
+
+
+@dataclass(frozen=True)
+class ScanSample:
+    scan: LaserScan
+    source_stamp_ns: int
+    arrival_stamp_ns: int
 
 
 @dataclass(frozen=True)
@@ -76,7 +87,8 @@ class WaypointTrajNode(Node):
     Key fixes:
     - Proper inflation (hard inflation works even when soft=0)
     - Publish a fused LaserScan in base_link: /scan_fused
-    - Build costmap from fused scan so it doesn't look "double"
+    - Publish exact fused points in base_link: /points_fused
+    - Build the live obstacle costmap from exact transformed points
     - Clear robot footprint circle (0.22m radius) around base_link center
     - Pop reached waypoints within 0.10m
     """
@@ -97,6 +109,7 @@ class WaypointTrajNode(Node):
         self.declare_parameter("base_frame", cfg("base_frame"))
         self.declare_parameter("prefer_tf_pose", cfg("prefer_tf_pose"))
         self.declare_parameter("pose_tf_timeout_s", cfg("pose_tf_timeout_s"))
+        self.declare_parameter("odom_yaw_offset_rad", cfg("odom_yaw_offset_rad"))
 
         # If YOU already publish odom->base_link elsewhere, keep this false
         self.declare_parameter("publish_odom_to_base_tf", cfg("publish_odom_to_base_tf"))
@@ -142,15 +155,21 @@ class WaypointTrajNode(Node):
         self.declare_parameter("lidar1_topic", cfg("lidar1_topic"))
         self.declare_parameter("lidar2_topic", cfg("lidar2_topic"))
         self.declare_parameter("scan_max_age_s", cfg("scan_max_age_s"))
+        self.declare_parameter("use_arrival_stamp_for_scan_timing", cfg("use_arrival_stamp_for_scan_timing"))
+        self.declare_parameter("max_scan_pair_skew_s", cfg("max_scan_pair_skew_s"))
+        self.declare_parameter("scan_sync_queue_size", cfg("scan_sync_queue_size"))
         self.declare_parameter("scan_beam_stride", cfg("scan_beam_stride"))
         self.declare_parameter("scan_no_hit_eps_m", cfg("scan_no_hit_eps_m"))
         self.declare_parameter("max_lidar_range_m", cfg("max_lidar_range_m"))  # Max range for lidar processing (reduces CPU load)
 
         # ===== Fused scan output =====
         self.declare_parameter("publish_fused_scan", cfg("publish_fused_scan"))
+        self.declare_parameter("publish_scan_match", cfg("publish_scan_match"))
         self.declare_parameter("fused_angle_min", cfg("fused_angle_min"))
         self.declare_parameter("fused_angle_max", cfg("fused_angle_max"))
         self.declare_parameter("fused_angle_increment_deg", cfg("fused_angle_increment_deg"))  # 0.5 degree bins
+        self.declare_parameter("scan_match_angle_increment_deg", cfg("scan_match_angle_increment_deg"))
+        self.declare_parameter("fused_voxel_merge_resolution_m", cfg("fused_voxel_merge_resolution_m"))
         self.declare_parameter("motion_compensate", cfg("motion_compensate"))         # set True if robot moves + you want de-warp
 
         # ===== Inflation =====
@@ -221,8 +240,8 @@ class WaypointTrajNode(Node):
             self.on_remove_waypoint_pose,
             20,
         )
-        self.last_scan1: Optional[LaserScan] = None
-        self.last_scan2: Optional[LaserScan] = None
+        self._scan1_buffer: Deque[ScanSample] = deque()
+        self._scan2_buffer: Deque[ScanSample] = deque()
 
         # ===== Grid =====
         self.gs_map = self._make_global_grid_spec()
@@ -266,6 +285,8 @@ class WaypointTrajNode(Node):
         self.map_pub = self.create_publisher(OccupancyGrid, "/map", map_qos)
         self.costmap_pub = self.create_publisher(OccupancyGrid, "/costmap", 1)
         self.scan_fused_pub = self.create_publisher(LaserScan, "/scan_fused", 10)
+        self.scan_match_pub = self.create_publisher(LaserScan, "/scan_match", 10)
+        self.points_fused_pub = self.create_publisher(PointCloud2, "/points_fused", 10)
 
         self.wp_marker_pub = self.create_publisher(MarkerArray, "/waypoint_markers", 1)
         self.path_pub = self.create_publisher(Path, "/planned_path", 1)
@@ -312,6 +333,9 @@ class WaypointTrajNode(Node):
         self._last_plan_pose: Optional[Pose2D] = None
         self._last_plan_wps_sig: Optional[Tuple[Tuple[int, int], ...]] = None
         self._last_pose_for_waypoint_pop: Optional[Pose2D] = None
+        self._last_published_map_crc: Optional[int] = None
+        self._latest_fused_points_base: List[Tuple[float, float]] = []
+        self._latest_scan_pairs: List[Tuple[LaserScan, int]] = []
 
     def _load_yaml_param_defaults(self) -> Dict[str, object]:
         if yaml is None:
@@ -667,6 +691,9 @@ class WaypointTrajNode(Node):
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         yaw = math.atan2(siny_cosp, cosy_cosp)
 
+        yaw_offset = float(self.get_parameter("odom_yaw_offset_rad").value)
+        yaw = wrap_to_pi(yaw + yaw_offset)
+
         pose = Pose2D(float(p.x), float(p.y), float(yaw))
         self.odom_pose_latest = pose
 
@@ -787,13 +814,118 @@ class WaypointTrajNode(Node):
     # =======================
     # Scan capture
     # =======================
+    @staticmethod
+    def _scan_stamp_ns(scan: LaserScan) -> int:
+        sec = int(scan.header.stamp.sec)
+        nsec = int(scan.header.stamp.nanosec)
+        return sec * int(1e9) + nsec
+
+    @staticmethod
+    def _sample_time_ns(sample: ScanSample, use_arrival_stamp: bool) -> int:
+        if use_arrival_stamp:
+            return sample.arrival_stamp_ns
+        if sample.source_stamp_ns > 0:
+            return sample.source_stamp_ns
+        return sample.arrival_stamp_ns
+
+    def _push_scan_sample(self, buffer: Deque[ScanSample], msg: LaserScan) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        sample = ScanSample(
+            scan=msg,
+            source_stamp_ns=self._scan_stamp_ns(msg),
+            arrival_stamp_ns=now_ns,
+        )
+        buffer.append(sample)
+
+        queue_size = max(2, int(self.get_parameter("scan_sync_queue_size").value))
+        while len(buffer) > queue_size:
+            buffer.popleft()
+
+        self._last_scan_rx_ns = now_ns
+
+    def _prune_stale_scan_samples(
+        self,
+        buffer: Deque[ScanSample],
+        now_ns: int,
+        max_age_ns: int,
+        use_arrival_stamp: bool,
+    ) -> None:
+        if max_age_ns <= 0:
+            return
+        while buffer:
+            t_ns = self._sample_time_ns(buffer[0], use_arrival_stamp)
+            if now_ns - t_ns <= max_age_ns:
+                break
+            buffer.popleft()
+
+    def _select_fusion_scans(self, now_t: Time) -> List[Tuple[LaserScan, int]]:
+        max_age_s = max(0.0, float(self.get_parameter("scan_max_age_s").value))
+        max_age_ns = int(max_age_s * 1e9)
+        max_scan_pair_skew_s = max(0.0, float(self.get_parameter("max_scan_pair_skew_s").value))
+        max_scan_pair_skew_ns = int(max_scan_pair_skew_s * 1e9)
+        use_arrival_stamp = bool(self.get_parameter("use_arrival_stamp_for_scan_timing").value)
+
+        now_ns = now_t.nanoseconds
+        self._prune_stale_scan_samples(self._scan1_buffer, now_ns, max_age_ns, use_arrival_stamp)
+        self._prune_stale_scan_samples(self._scan2_buffer, now_ns, max_age_ns, use_arrival_stamp)
+
+        newest_1 = self._scan1_buffer[-1] if self._scan1_buffer else None
+        newest_2 = self._scan2_buffer[-1] if self._scan2_buffer else None
+
+        if newest_1 is None and newest_2 is None:
+            return []
+        if newest_1 is None:
+            t2 = self._sample_time_ns(newest_2, use_arrival_stamp)
+            return [(newest_2.scan, t2)]
+        if newest_2 is None:
+            t1 = self._sample_time_ns(newest_1, use_arrival_stamp)
+            return [(newest_1.scan, t1)]
+
+        t1 = self._sample_time_ns(newest_1, use_arrival_stamp)
+        best_2: Optional[ScanSample] = None
+        best_skew_ns = sys.maxsize
+        for candidate in self._scan2_buffer:
+            tc = self._sample_time_ns(candidate, use_arrival_stamp)
+            skew = abs(tc - t1)
+            if skew < best_skew_ns:
+                best_skew_ns = skew
+                best_2 = candidate
+
+        if best_2 is not None and (max_scan_pair_skew_ns <= 0 or best_skew_ns <= max_scan_pair_skew_ns):
+            t2 = self._sample_time_ns(best_2, use_arrival_stamp)
+            return [(newest_1.scan, t1), (best_2.scan, t2)]
+
+        t2 = self._sample_time_ns(newest_2, use_arrival_stamp)
+        best_1: Optional[ScanSample] = None
+        best_skew_ns_rev = sys.maxsize
+        for candidate in self._scan1_buffer:
+            tc = self._sample_time_ns(candidate, use_arrival_stamp)
+            skew = abs(tc - t2)
+            if skew < best_skew_ns_rev:
+                best_skew_ns_rev = skew
+                best_1 = candidate
+
+        if best_1 is not None and (max_scan_pair_skew_ns <= 0 or best_skew_ns_rev <= max_scan_pair_skew_ns):
+            t1_best = self._sample_time_ns(best_1, use_arrival_stamp)
+            return [(best_1.scan, t1_best), (newest_2.scan, t2)]
+
+        newer_scan = newest_1 if t1 >= t2 else newest_2
+        older_scan = newest_2 if t1 >= t2 else newest_1
+        pair_skew_s = abs(t1 - t2) * 1e-9
+        self._warn_lidar_throttled(
+            "LiDAR streams out of sync; using newest scan only "
+            f"({pair_skew_s:.3f}s skew > {max_scan_pair_skew_s:.3f}s): "
+            f"keeping {newer_scan.scan.header.frame_id}, dropping {older_scan.scan.header.frame_id}"
+        )
+
+        t_newer = self._sample_time_ns(newer_scan, use_arrival_stamp)
+        return [(newer_scan.scan, t_newer)]
+
     def on_scan1(self, msg: LaserScan) -> None:
-        self.last_scan1 = msg
-        self._last_scan_rx_ns = self.get_clock().now().nanoseconds
+        self._push_scan_sample(self._scan1_buffer, msg)
 
     def on_scan2(self, msg: LaserScan) -> None:
-        self.last_scan2 = msg
-        self._last_scan_rx_ns = self.get_clock().now().nanoseconds
+        self._push_scan_sample(self._scan2_buffer, msg)
 
     # =======================
     # Transform helpers
@@ -918,29 +1050,33 @@ class WaypointTrajNode(Node):
 
         return pts
 
-    def _build_fused_scan(self, base_pose_now: Pose2D) -> Optional[LaserScan]:
-        if not bool(self.get_parameter("publish_fused_scan").value):
-            return None
+    @staticmethod
+    def _voxel_merge_points_nearest(points: List[Tuple[float, float]], resolution_m: float) -> List[Tuple[float, float]]:
+        if resolution_m <= 1e-6 or len(points) < 2:
+            return points
 
-        max_age_s = float(self.get_parameter("scan_max_age_s").value)
-        now_t = self.get_clock().now()
+        merged: Dict[Tuple[int, int], Tuple[float, float, float]] = {}
+        inv_res = 1.0 / resolution_m
 
-        scans: List[LaserScan] = []
-        for s in (self.last_scan1, self.last_scan2):
-            if s is None:
-                continue
-            stamp = Time.from_msg(s.header.stamp)
-            age_s = (now_t - stamp).nanoseconds * 1e-9
-            if max_age_s > 0.0 and age_s > max_age_s:
-                continue
-            scans.append(s)
+        for x, y in points:
+            key = (int(math.floor(x * inv_res)), int(math.floor(y * inv_res)))
+            rr = x * x + y * y
+            cur = merged.get(key)
+            if cur is None or rr < cur[0]:
+                merged[key] = (rr, x, y)
 
-        if not scans:
-            return None
+        return [(x, y) for (_rr, x, y) in merged.values()]
 
+    def _build_scan_from_points(
+        self,
+        points_base: List[Tuple[float, float]],
+        stamp_msg,
+        frame_id: str,
+        angle_increment_deg: float,
+    ) -> Optional[LaserScan]:
         a_min = float(self.get_parameter("fused_angle_min").value)
         a_max = float(self.get_parameter("fused_angle_max").value)
-        inc = float(self.get_parameter("fused_angle_increment_deg").value) * math.pi / 180.0
+        inc = float(angle_increment_deg) * math.pi / 180.0
         if inc <= 1e-6:
             inc = math.radians(1.0)
 
@@ -948,7 +1084,51 @@ class WaypointTrajNode(Node):
         if n < 10:
             return None
 
+        range_min = 0.0
+        range_max = float(self.get_parameter("max_lidar_range_m").value)
         ranges = [math.inf] * n
+
+        for x_final, y_final in points_base:
+            rr_fused = math.hypot(x_final, y_final)
+            if rr_fused < range_min or rr_fused > range_max:
+                continue
+
+            aa_fused = math.atan2(y_final, x_final)
+            if aa_fused < a_min or aa_fused >= a_max:
+                continue
+
+            k = int((aa_fused - a_min) / inc)
+            if 0 <= k < n and rr_fused < ranges[k]:
+                ranges[k] = rr_fused
+
+        msg = LaserScan()
+        msg.header.stamp = stamp_msg
+        msg.header.frame_id = frame_id
+        msg.angle_min = a_min
+        msg.angle_max = a_max
+        msg.angle_increment = inc
+        msg.time_increment = 0.0
+        msg.scan_time = 0.0
+        msg.range_min = range_min
+        msg.range_max = range_max
+        msg.ranges = [r if math.isfinite(r) else math.inf for r in ranges]
+        msg.intensities = []
+        return msg
+
+    def _build_fused_scan(self, base_pose_now: Pose2D) -> Optional[LaserScan]:
+        self._latest_fused_points_base = []
+        self._latest_scan_pairs = []
+        if not bool(self.get_parameter("publish_fused_scan").value):
+            return None
+
+        now_t = self.get_clock().now()
+
+        scan_pairs = self._select_fusion_scans(now_t)
+        if not scan_pairs:
+            return None
+        self._latest_scan_pairs = list(scan_pairs)
+
+        scans = [s for (s, _stamp_ns) in scan_pairs]
 
         use_excl = bool(self.get_parameter("robot_exclusion_enable").value)
         excl_r = float(self.get_parameter("robot_exclusion_radius_m").value)
@@ -956,6 +1136,7 @@ class WaypointTrajNode(Node):
 
         motion_comp = bool(self.get_parameter("motion_compensate").value)
         max_range = float(self.get_parameter("max_lidar_range_m").value)
+        voxel_merge_res = max(0.0, float(self.get_parameter("fused_voxel_merge_resolution_m").value))
 
         # Motion compensation must use scan-time pose and current pose from the same frame.
         # Odom history (_odom_pose_at) is in odom frame, so de-warp in odom as well.
@@ -970,18 +1151,14 @@ class WaypointTrajNode(Node):
             )
             motion_comp = False
 
-        # Use conservative range_max across sensors, clamped to max_lidar_range
-        range_max = min(min(float(s.range_max) for s in scans), max_range)
-        range_min = max(0.0, min(float(s.range_min) for s in scans))
-
         # Process each scan and fuse
         base_stride = max(1, int(self.get_parameter("scan_beam_stride").value))
         stride = max(base_stride, self._effective_scan_stride)
         no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
         beam_budget = max(64, int(self._scan_beam_budget_per_scan))
+        fused_points: List[Tuple[float, float]] = []
 
-        for s in scans:
-            stamp_ns = Time.from_msg(s.header.stamp).nanoseconds
+        for s, stamp_ns in scan_pairs:
             
             # Get robot pose at scan time for motion compensation
             if motion_comp:
@@ -1034,32 +1211,44 @@ class WaypointTrajNode(Node):
                 if use_excl and (x_final * x_final + y_final * y_final) < excl_r2:
                     continue
 
-                # Compute range and angle from origin
-                rr_fused = math.hypot(x_final, y_final)
-                if rr_fused < range_min or rr_fused > range_max:
-                    continue
+                fused_points.append((x_final, y_final))
 
-                aa_fused = math.atan2(y_final, x_final)
-                if aa_fused < a_min or aa_fused >= a_max:
-                    continue
+        if not fused_points:
+            return None
 
-                # Bin the range (take minimum per angle bin)
-                k = int((aa_fused - a_min) / inc)
-                if 0 <= k < n and rr_fused < ranges[k]:
-                    ranges[k] = rr_fused
+        fused_points = self._voxel_merge_points_nearest(fused_points, voxel_merge_res)
+        self._latest_fused_points_base = list(fused_points)
+        return self._build_scan_from_points(
+            fused_points,
+            now_t.to_msg(),
+            str(self.get_parameter("base_frame").value),
+            float(self.get_parameter("fused_angle_increment_deg").value),
+        )
 
-        msg = LaserScan()
-        msg.header.stamp = now_t.to_msg()
-        msg.header.frame_id = self.get_parameter("base_frame").value
-        msg.angle_min = a_min
-        msg.angle_max = a_max
-        msg.angle_increment = inc
-        msg.time_increment = 0.0
-        msg.scan_time = 0.0
-        msg.range_min = range_min
-        msg.range_max = range_max
-        msg.ranges = [r if math.isfinite(r) else math.inf for r in ranges]
-        msg.intensities = []
+    def _build_points_cloud_msg(
+        self,
+        points_base: List[Tuple[float, float]],
+        stamp_msg,
+        frame_id: str,
+    ) -> PointCloud2:
+        msg = PointCloud2()
+        msg.header.stamp = stamp_msg
+        msg.header.frame_id = frame_id
+        msg.height = 1
+        msg.width = len(points_base)
+        msg.fields = [
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.is_bigendian = False
+        msg.point_step = 12
+        msg.row_step = msg.point_step * msg.width
+        msg.is_dense = True
+        payload = bytearray(msg.row_step)
+        for idx, (x_pt, y_pt) in enumerate(points_base):
+            struct.pack_into("<fff", payload, idx * msg.point_step, float(x_pt), float(y_pt), 0.0)
+        msg.data = bytes(payload)
         return msg
 
     # =======================
@@ -1208,6 +1397,26 @@ class WaypointTrajNode(Node):
         self._clear_robot_circle_in_costmap(local, local_gs, base_pose_now)
         return local
 
+    def _build_local_costmap_from_points(
+        self,
+        points_base: List[Tuple[float, float]],
+        base_pose_now: Pose2D,
+        local_gs: GridSpec,
+    ) -> np.ndarray:
+        local = np.zeros((local_gs.height, local_gs.width), dtype=np.int8)
+
+        for xb, yb in points_base:
+            xm, ym = self._se2_apply(base_pose_now, xb, yb)
+            ix, iy = self.world_to_grid(local_gs, xm, ym)
+            if self.in_bounds(local_gs, ix, iy):
+                local[iy, ix] = 100
+
+        hard_r = float(self.get_parameter("hard_inflate_radius").value)
+        soft_r = float(self.get_parameter("soft_inflate_radius").value)
+        self._inflate(local, local_gs, hard_r=hard_r, soft_r=soft_r)
+        self._clear_robot_circle_in_costmap(local, local_gs, base_pose_now)
+        return local
+
     def _build_planning_costmap_from_local(
         self,
         local_costmap: np.ndarray,
@@ -1318,6 +1527,61 @@ class WaypointTrajNode(Node):
 
             a += inc
 
+    def _update_mapping_logodds_from_scan_pairs(self, scan_pairs: List[Tuple[LaserScan, int]], base_pose_now: Pose2D) -> None:
+        if self.mapping_grid_spec is None or self.mapping_logodds is None:
+            return
+        if not scan_pairs:
+            return
+
+        lo_hit = max(1, int(self.get_parameter("mapping_hit_logodd_inc").value))
+        lo_free = max(1, int(self.get_parameter("mapping_free_logodd_dec").value))
+        lo_min = int(self.get_parameter("mapping_logodd_min").value)
+        lo_max = int(self.get_parameter("mapping_logodd_max").value)
+        step_m = max(self.mapping_grid_spec.res * 0.8, 0.02)
+        max_range = float(self.get_parameter("max_lidar_range_m").value)
+        no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
+        motion_comp = bool(self.get_parameter("motion_compensate").value) and self.have_odom_pose
+
+        for scan_msg, stamp_ns in scan_pairs:
+            tr = self._lookup_base_from_scan(scan_msg.header.frame_id)
+            if tr is None:
+                continue
+
+            if motion_comp:
+                base_pose_scan = self._odom_pose_at(stamp_ns) or base_pose_now
+            else:
+                base_pose_scan = base_pose_now
+
+            a = float(scan_msg.angle_min)
+            inc = float(scan_msg.angle_increment)
+            rmin = float(scan_msg.range_min)
+            rmax = min(float(scan_msg.range_max), max_range)
+
+            for r in scan_msg.ranges:
+                rr = float(r)
+                finite_hit = math.isfinite(rr) and rr >= rmin and rr < (float(scan_msg.range_max) - no_hit_eps) and rr <= max_range
+                free_to = max(0.0, rr - 0.5 * self.mapping_grid_spec.res) if finite_hit else max(0.0, rmax)
+
+                if free_to > 1e-6:
+                    n_steps = max(1, int(math.floor(free_to / step_m)))
+                    for j in range(1, n_steps + 1):
+                        d = min(free_to, j * step_m)
+                        xb, yb = self._apply_transform_2d(tr, d * math.cos(a), d * math.sin(a))
+                        xm, ym = self._se2_apply(base_pose_scan, xb, yb)
+                        ix, iy = self._mapping_world_to_grid(xm, ym)
+                        if not self._mapping_in_bounds(ix, iy):
+                            break
+                        self._mapping_update_cell(iy, ix, -lo_free, lo_min, lo_max)
+
+                if finite_hit:
+                    xb, yb = self._apply_transform_2d(tr, rr * math.cos(a), rr * math.sin(a))
+                    xm, ym = self._se2_apply(base_pose_scan, xb, yb)
+                    ix, iy = self._mapping_world_to_grid(xm, ym)
+                    if self._mapping_in_bounds(ix, iy):
+                        self._mapping_update_cell(iy, ix, lo_hit, lo_min, lo_max)
+
+                a += inc
+
     def _mapping_occ_grid(self) -> np.ndarray:
         if self.mapping_logodds is None:
             return np.zeros((1, 1), dtype=np.int8)
@@ -1362,6 +1626,8 @@ class WaypointTrajNode(Node):
         gs = self.mapping_grid_spec
         meta = {
             "frame": self.get_parameter("map_frame").value,
+            "base_frame": self.get_parameter("base_frame").value,
+            "pose_convention": SAVED_MAP_POSE_CONVENTION,
             "format": "occupancy_logodds_v1",
             "resolution_m": float(gs.res),
             "width": int(gs.width),
@@ -1411,6 +1677,28 @@ class WaypointTrajNode(Node):
                 and int(meta["width"]) == int(occ.shape[1])
                 and int(meta["height"]) == int(occ.shape[0])
             ):
+                expected_map_frame = str(self.get_parameter("map_frame").value)
+                saved_frame = str(meta.get("frame", ""))
+                if saved_frame and saved_frame != expected_map_frame:
+                    return (
+                        False,
+                        f"Saved map frame mismatch: file uses '{saved_frame}', runtime expects '{expected_map_frame}'.",
+                    )
+
+                saved_pose_convention = str(meta.get("pose_convention", ""))
+                if saved_pose_convention != SAVED_MAP_POSE_CONVENTION:
+                    if saved_pose_convention:
+                        return (
+                            False,
+                            "Saved map pose convention mismatch: "
+                            f"file uses '{saved_pose_convention}', runtime expects '{SAVED_MAP_POSE_CONVENTION}'.",
+                        )
+                    return (
+                        False,
+                        "Saved map is missing pose convention metadata and may have been created before the STM32/LiDAR "
+                        "forward-axis alignment update. Regenerate the map before loading it.",
+                    )
+
                 self._project_saved_map_to_static(np.asarray(occ, dtype=np.int8), meta)
                 self.mapping_grid_spec = GridSpec(
                     res=float(meta["resolution_m"]),
@@ -3172,6 +3460,14 @@ class WaypointTrajNode(Node):
         msg.data = grid.flatten().astype(np.int8).tolist()
         self._safe_publish(pub, msg, "grid")
 
+    def _publish_map_if_needed(self, frame_id: str) -> None:
+        map_crc = zlib.crc32(self.static_occ.tobytes())
+        if self._last_published_map_crc == map_crc:
+            return
+
+        self._publish_grid(self.map_pub, frame_id, self.static_occ)
+        self._last_published_map_crc = map_crc
+
     def publish_waypoints(self, wps: List[Tuple[float, float]]) -> None:
         ma = MarkerArray()
         m = Marker()
@@ -3454,6 +3750,22 @@ class WaypointTrajNode(Node):
         fused = self._build_fused_scan(base_pose_now)
         if fused is not None:
             self._safe_publish(self.scan_fused_pub, fused, "scan_fused")
+            if bool(self.get_parameter("publish_scan_match").value) and self._latest_fused_points_base:
+                scan_match = self._build_scan_from_points(
+                    self._latest_fused_points_base,
+                    fused.header.stamp,
+                    fused.header.frame_id,
+                    float(self.get_parameter("scan_match_angle_increment_deg").value),
+                )
+                if scan_match is not None:
+                    self._safe_publish(self.scan_match_pub, scan_match, "scan_match")
+            if self._latest_fused_points_base:
+                points_msg = self._build_points_cloud_msg(
+                    self._latest_fused_points_base,
+                    fused.header.stamp,
+                    fused.header.frame_id,
+                )
+                self._safe_publish(self.points_fused_pub, points_msg, "points_fused")
         elif self._last_scan_rx_ns > 0:
             age_s = (self.get_clock().now().nanoseconds - self._last_scan_rx_ns) * 1e-9
             if age_s > max(1.0, float(self.get_parameter("scan_max_age_s").value) * 2.0):
@@ -3463,8 +3775,9 @@ class WaypointTrajNode(Node):
 
         frame = self.get_parameter("map_frame").value
 
-        # publish static map (empty) so RViz "Map" display can be used if you want
-        self._publish_grid(self.map_pub, frame, self.static_occ)
+        # /map is transient-local; only republish when contents change so AMCL
+        # does not rebuild on every main-loop tick.
+        self._publish_map_if_needed(frame)
 
         # publish waypoints even if no scan/costmap yet
         wps = self.read_waypoints()
@@ -3494,7 +3807,7 @@ class WaypointTrajNode(Node):
             return
 
         local_gs = self._make_local_costmap_spec(base_pose_now)
-        local_costmap = self._build_local_costmap_from_fused_scan(fused, base_pose_now, local_gs)
+        local_costmap = self._build_local_costmap_from_points(self._latest_fused_points_base, base_pose_now, local_gs)
         self._apply_geofence_to_costmap(local_costmap, local_gs)
         self._publish_grid(self.costmap_pub, frame, local_costmap, gs=local_gs)
 
@@ -3514,7 +3827,7 @@ class WaypointTrajNode(Node):
         # plan if waypoints exist
         if not wps:
             if self.mapping_active:
-                self._update_mapping_logodds_from_fused_scan(fused, base_pose_now)
+                self._update_mapping_logodds_from_scan_pairs(self._latest_scan_pairs, base_pose_now)
             self._cached_traj = None
             self._last_plan_wps_sig = None
             self._publish_hold_current_trajectory(frame, base_pose_now)
@@ -3522,7 +3835,7 @@ class WaypointTrajNode(Node):
             return
 
         if self.mapping_active:
-            self._update_mapping_logodds_from_fused_scan(fused, base_pose_now)
+            self._update_mapping_logodds_from_scan_pairs(self._latest_scan_pairs, base_pose_now)
 
         planning_costmap = self._build_planning_costmap_from_local(local_costmap, local_gs)
 

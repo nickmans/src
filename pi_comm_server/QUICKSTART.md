@@ -31,6 +31,13 @@ sudo systemctl status omni_udp_server.service
 
 **Done!** The server is now running and will auto-start on every boot.
 
+## Boot Service Choice
+
+- Normal boot mode: `omni_udp_server.service`
+- Debug-only manual bringup: `omni_ros2_stack.service`
+
+`omni_ros2_stack.service` launches the ROS2 stack directly but does not provide the UDP command endpoint on port `9000`. Leave it disabled for boot unless you are intentionally debugging bringup without the UDP control path.
+
 ---
 
 ## 📡 Testing with STM32
@@ -79,12 +86,20 @@ ros2 topic echo /robot/pose
 
 Try these commands:
 ```
-> status          # Get server status
-> idle false      # Disable idle mode (start trajectory generation)
-> idle true       # Enable idle mode (stop trajectory generation)
+> 1 or start      # Send START_TRAJ
+> 2 or stop       # Send STOP_TRAJ
+> m circle        # Change simulator motion mode
 > help            # Show all commands
 > quit            # Exit
 ```
+
+### STM32 `traj/map` sequence (latest)
+
+Use this command sequence during mapping and execution:
+
+1. Send `traj 1` from STM32 to start mapping flow while manual drive remains enabled on STM32.
+2. Send `map 0` from STM32 to finish mapping and switch Pi/ROS2 into localization + trajectory output mode.
+3. Send `traj 0` from STM32 to return to manual/standby behavior.
 
 ### Watch ROS2 Topics
 
@@ -152,24 +167,33 @@ sudo systemctl status omni_virtual_stm32.service
 ### Service Management
 
 ```bash
-# Start
-systemctl --user start omni_pi_server.service
+# Start normal boot service
+sudo systemctl start omni_udp_server.service
 
-# Stop
-systemctl --user stop omni_pi_server.service
+# Stop normal boot service
+sudo systemctl stop omni_udp_server.service
 
-# Restart
-systemctl --user restart omni_pi_server.service
+# Restart normal boot service
+sudo systemctl restart omni_udp_server.service
 
 # View logs (live)
-journalctl --user -u omni_pi_server.service -f
+sudo journalctl -u omni_udp_server.service -f
 
 # View logs (recent)
-journalctl --user -u omni_pi_server.service -n 100
+sudo journalctl -u omni_udp_server.service -n 100
 
 # Check status
-systemctl --user status omni_pi_server.service
+sudo systemctl status omni_udp_server.service
 ```
+
+For direct ROS2 bringup debugging only:
+
+```bash
+sudo systemctl start omni_ros2_stack.service
+sudo systemctl status omni_ros2_stack.service
+```
+
+Do not enable both services for boot.
 
 ### Manual Server Start (for debugging)
 

@@ -159,6 +159,14 @@ sudo journalctl -u omni_udp_server.service -n 50
 
 **Solutions:**
 
+0. **Check for conflicting boot services first:**
+```bash
+sudo systemctl is-enabled omni_udp_server.service
+sudo systemctl is-enabled omni_ros2_stack.service
+```
+
+Only `omni_udp_server.service` should normally be enabled at boot. `omni_ros2_stack.service` is a debug-only standalone bringup service and conflicts with the UDP server by design.
+
 1. **Check for missing dependencies:**
 ```bash
 # Ensure Python 3 is installed

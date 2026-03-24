@@ -55,19 +55,22 @@ def generate_launch_description():
     # 500ms stagger
     lidar2_staggered = TimerAction(period=0.5, actions=[lidar2])
 
-    # Your static TFs (keep yours)
+    # Lidar extrinsics must match dual_sllidar_with_mock_and_traj.launch.py.
+    # Robot-forward convention: +x forward, +y left.
+    # lidar1 is on the left at y=+0.10 m, lidar2 is on the right at y=-0.10 m,
+    # and both lidars face forward in base_link.
     base_to_lidar1 = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_to_lidar1',
-        arguments=['0.0', '0.0', '0.10', '0', '0', '0', 'base_link', 'lidar1_link']
+        arguments=['--x', '0.0', '--y', '0.10', '--z', '0.0', '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0', '--frame-id', 'base_link', '--child-frame-id', 'lidar1_link']
     )
 
     base_to_lidar2 = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_to_lidar2',
-        arguments=['0.0', '0.0', '0.10', '0', '0', '0', 'base_link', 'lidar2_link']
+        arguments=['--x', '0.0', '--y', '-0.10', '--z', '0.0', '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0', '--frame-id', 'base_link', '--child-frame-id', 'lidar2_link']
     )
 
     traj = Node(

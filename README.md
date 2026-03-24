@@ -71,6 +71,10 @@ Then set launch args as needed:
 - `lidar1_frame_id`, `lidar2_frame_id`
 - `publish_world_to_odom_tf` (RViz frame anchoring option)
 
+Pi 5 UART defaults in this workspace:
+- `lidar1_serial_port:=/dev/ttyAMA0`
+- `lidar2_serial_port:=/dev/ttyAMA2`
+
 ### C) Pi communication server with STM32
 
 ```bash
@@ -115,6 +119,16 @@ Success criteria:
    - STM32 sends POSE/CMD → Pi/ROS2 updates world model/trajectory.
    - Pi sends TRAJ back to STM32.
 6. Monitor health with `ros2 topic hz`, `journalctl` (if systemd), and test scripts.
+
+### STM32 mode control sequence (important)
+
+When operating with CM7 + Pi trajectory flow:
+
+- Send `traj 1` to start trajectory generation/recording while staying in manual driving mode.
+- Send `map 0` when mapping is complete; STM32 switches to trajectory-follow mode (manual disabled).
+- Send `traj 0` to re-enable manual driving mode.
+
+Use this exact order when you need to drive during mapping, then execute only the received trajectory.
 
 ## 7) Troubleshooting First Responses
 

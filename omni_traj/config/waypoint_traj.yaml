@@ -5,7 +5,8 @@ waypoint_traj:
     base_frame: base_link
     publish_odom_to_base_tf: true
     prefer_tf_pose: true
-    pose_tf_timeout_s: 0.05
+    pose_tf_timeout_s: 0.20
+    odom_yaw_offset_rad: 0.0
 
     robot_exclusion_enable: true
     robot_exclusion_radius_m: 0.23
@@ -13,9 +14,9 @@ waypoint_traj:
     waypoint_reached_tol_m: 0.10
     remove_waypoint_radius_m: 0.50
 
-    global_map_res: 0.025
-    global_map_width_m: 6.0
-    global_map_height_m: 6.0
+    global_map_res: 0.05
+    global_map_width_m: 7.0
+    global_map_height_m: 7.0
     local_costmap_res: 0.05
     local_costmap_width_m: 3.0
     local_costmap_height_m: 3.0
@@ -30,7 +31,7 @@ waypoint_traj:
     mapping_save_path: /home/nickolas/Desktop/last_costmap.npz
     auto_load_saved_map: true
     default_frozen_map_mode: false
-    mapping_area_size_m: 10.0
+    mapping_area_size_m: 7.0
     mapping_res_m: 0.025
     mapping_hit_logodd_inc: 4
     mapping_free_logodd_dec: 1
@@ -51,7 +52,7 @@ waypoint_traj:
     braking_decel_safety_factor: 0.75
     max_linear_velocity_ms: 0.5
     max_lateral_accel: 1.0
-    trajectory_replan_hz: 2.0
+    trajectory_replan_hz: 1.5
     trajectory_replan_min_move_m: 0.05
     trajectory_replan_min_yaw_rad: 0.10
     spline_sample_spacing_m: 0.04
@@ -60,15 +61,21 @@ waypoint_traj:
     spline_curvature_max_iters: 6
     odom_history_s: 2.0
 
-    scan_max_age_s: 0.5
+    scan_max_age_s: 0.25
+    use_arrival_stamp_for_scan_timing: true
+    max_scan_pair_skew_s: 0.07
+    scan_sync_queue_size: 12
     scan_beam_stride: 1
     scan_no_hit_eps_m: 0.02
     max_lidar_range_m: 5.0
 
     publish_fused_scan: true
+    publish_scan_match: true
     fused_angle_min: -3.14159
     fused_angle_max: 3.14159
-    fused_angle_increment_deg: 0.25
+    fused_angle_increment_deg: 0.5
+    scan_match_angle_increment_deg: 1.0
+    fused_voxel_merge_resolution_m: 0.04
     motion_compensate: true
 
     start_pose: [0.0, 0.0, 0.0]

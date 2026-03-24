@@ -206,7 +206,9 @@ class OMNIUDPServer:
                     self._set_ros2_retry_enabled(True, reason="stop failed during transition")
                     self._last_mode_request_result = False
                     return False
-                time.sleep(0.1)
+                # Allow serial devices/process groups to settle before relaunch,
+                # reducing immediate start/stop oscillation on LiDAR drivers.
+                time.sleep(1.0)
 
             started = self._run_ros2(self.ros2_mgr.start)
             if not started:
@@ -223,6 +225,28 @@ class OMNIUDPServer:
             self._set_ros2_retry_enabled(False, reason="mode transition complete")
             self._last_mode_request_result = True
             return True
+
+    def _switch_stack_mode_with_retries(
+        self,
+        stack_mode: str,
+        attempts: int = 2,
+        retry_delay_s: float = 2.0,
+    ) -> bool:
+        attempts = max(1, int(attempts))
+        for attempt in range(1, attempts + 1):
+            if self._switch_stack_mode(stack_mode):
+                return True
+
+            if attempt >= attempts:
+                break
+
+            logger.warning(
+                f"ROS2 stack switch to {stack_mode} failed on attempt {attempt}/{attempts}; "
+                f"retrying in {retry_delay_s:.1f}s"
+            )
+            time.sleep(max(0.0, float(retry_delay_s)))
+
+        return False
 
     def _is_mode_healthy_cached(self, target_mode: str, now_monotonic: Optional[float] = None) -> bool:
         now = time.monotonic() if now_monotonic is None else float(now_monotonic)
@@ -665,7 +689,7 @@ class OMNIUDPServer:
         if cmd.cmd_id == CommandID.START_MAPPING:
             logger.info("START_MAPPING received; enabling mapping mode")
             self.set_trajectory_active(False)
-            ok_stack = self._switch_stack_mode("mapping")
+            ok_stack = self._switch_stack_mode_with_retries("mapping", attempts=2, retry_delay_s=2.0)
             if not ok_stack:
                 logger.warning("START_MAPPING failed to switch ROS2 stack to mapping mode")
             ok = self.ros2_bridge.start_mapping_mode()
@@ -679,29 +703,32 @@ class OMNIUDPServer:
             # Requested behavior for map 0:
             # 1) finish map save
             # 2) restart stack into localization mode (AMCL only)
-            # 3) load saved/frozen map
-            # 4) resume trajectory following output
+            # 3) resume trajectory following output once localization stack is healthy
             self.set_trajectory_active(False)
             ok_finish = self.ros2_bridge.finish_mapping_mode()
             if not ok_finish:
                 logger.warning("FINISH_MAPPING failed: mapping service unavailable or rejected")
 
-            ok_stack = self._switch_stack_mode("localization")
+            ok_stack = self._switch_stack_mode_with_retries("localization", attempts=3, retry_delay_s=3.0)
             if not ok_stack:
                 logger.warning("FINISH_MAPPING failed to switch ROS2 stack to localization mode")
 
-            ok_frozen = self.ros2_bridge.use_frozen_map_mode()
-            if not ok_frozen:
-                logger.warning("FINISH_MAPPING->USE_FROZEN_MAP failed: service unavailable or rejected")
+            if ok_stack:
+                logger.info(
+                    "FINISH_MAPPING completed with localization mode; deprecated frozen-map service is skipped"
+                )
 
-            self.set_trajectory_active(True)
+            if ok_stack:
+                self.set_trajectory_active(True)
+            else:
+                logger.warning("FINISH_MAPPING left trajectory output disabled because localization is not confirmed healthy")
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             return
 
         if cmd.cmd_id == CommandID.USE_LIVE_MAP:
             logger.info("USE_LIVE_MAP received; switching to live LiDAR mode")
             self.set_trajectory_active(False)
-            ok_stack = self._switch_stack_mode("mapping")
+            ok_stack = self._switch_stack_mode_with_retries("mapping", attempts=2, retry_delay_s=2.0)
             if not ok_stack:
                 logger.warning("USE_LIVE_MAP failed to switch ROS2 stack to mapping mode")
             ok = self.ros2_bridge.use_live_map_mode()
@@ -711,15 +738,16 @@ class OMNIUDPServer:
             return
 
         if cmd.cmd_id == CommandID.USE_FROZEN_MAP:
-            logger.info("USE_FROZEN_MAP received; switching to AMCL localization on saved map")
+            logger.info("USE_FROZEN_MAP received; switching to AMCL localization mode")
             self.set_trajectory_active(False)
-            ok_stack = self._switch_stack_mode("localization")
+            ok_stack = self._switch_stack_mode_with_retries("localization", attempts=3, retry_delay_s=3.0)
             if not ok_stack:
                 logger.warning("USE_FROZEN_MAP failed to switch ROS2 stack to localization mode")
-            ok = self.ros2_bridge.use_frozen_map_mode()
-            if not ok:
-                logger.warning("USE_FROZEN_MAP failed: service unavailable or rejected")
-            self.set_trajectory_active(True)
+            if ok_stack:
+                logger.info("USE_FROZEN_MAP now aliases to localization mode; deprecated frozen-map service is skipped")
+                self.set_trajectory_active(True)
+            else:
+                logger.warning("USE_FROZEN_MAP left trajectory output disabled because localization is not confirmed healthy")
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             return
 

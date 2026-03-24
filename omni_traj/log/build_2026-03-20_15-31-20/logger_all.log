@@ -1,0 +1,95 @@
+[0.327s] DEBUG:colcon:Command line arguments: ['/usr/bin/colcon', 'build', '--packages-select', 'omni_traj', '--symlink-install', '--build-base', '/home/nickolas/ros2_ws/build', '--install-base', '/home/nickolas/ros2_ws/install']
+[0.327s] DEBUG:colcon:Parsed command line arguments: Namespace(log_base=None, log_level=None, verb_name='build', build_base='/home/nickolas/ros2_ws/build', install_base='/home/nickolas/ros2_ws/install', merge_install=False, symlink_install=True, test_result_base=None, continue_on_error=False, executor='parallel', parallel_workers=4, event_handlers=None, ignore_user_meta=False, metas=['./colcon.meta'], base_paths=['.'], packages_ignore=None, packages_ignore_regex=None, paths=None, packages_up_to=None, packages_up_to_regex=None, packages_above=None, packages_above_and_dependencies=None, packages_above_depth=None, packages_select_by_dep=None, packages_skip_by_dep=None, packages_skip_up_to=None, packages_select_build_failed=False, packages_skip_build_finished=False, packages_select_test_failures=False, packages_skip_test_passed=False, packages_select=['omni_traj'], packages_skip=None, packages_select_regex=None, packages_skip_regex=None, packages_start=None, packages_end=None, allow_overriding=[], cmake_args=None, cmake_target=None, cmake_target_skip_unavailable=False, cmake_clean_cache=False, cmake_clean_first=False, cmake_force_configure=False, ament_cmake_args=None, catkin_cmake_args=None, catkin_skip_building_tests=False, mixin_files=None, mixin=None, verb_parser=<colcon_mixin.mixin.mixin_argument.MixinArgumentDecorator object at 0xffffa2a6d6d0>, verb_extension=<colcon_core.verb.build.BuildVerb object at 0xffffa2c252e0>, main=<bound method BuildVerb.main of <colcon_core.verb.build.BuildVerb object at 0xffffa2c252e0>>, mixin_verb=('build',))
+[0.427s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) check parameters
+[0.428s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) check parameters
+[0.428s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) check parameters
+[0.428s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) check parameters
+[0.429s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) discover
+[0.429s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) discover
+[0.429s] INFO:colcon.colcon_core.package_discovery:Crawling recursively for packages in '/home/nickolas/ros2_ws/src/omni_src/omni_traj'
+[0.429s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ignore', 'ignore_ament_install']
+[0.430s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore'
+[0.430s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore_ament_install'
+[0.430s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_pkg']
+[0.431s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_pkg'
+[0.431s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_meta']
+[0.432s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_meta'
+[0.433s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ros']
+[0.433s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ros'
+[0.505s] DEBUG:colcon.colcon_core.package_identification:Package '.' with type 'ros.ament_python' and name 'omni_traj'
+[0.505s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) using defaults
+[0.505s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) discover
+[0.505s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) using defaults
+[0.506s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) discover
+[0.506s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) using defaults
+[0.548s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) check parameters
+[0.548s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) discover
+[0.554s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 3 installed packages in /home/nickolas/ros2_ws/install
+[0.555s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 2 installed packages in /home/nickolas/ros2_ws/src/omni_src/install
+[0.558s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 380 installed packages in /opt/ros/jazzy
+[0.565s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) using defaults
+[0.664s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'cmake_args' from command line to 'None'
+[0.665s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'cmake_target' from command line to 'None'
+[0.665s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.665s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'cmake_clean_cache' from command line to 'False'
+[0.665s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'cmake_clean_first' from command line to 'False'
+[0.665s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'cmake_force_configure' from command line to 'False'
+[0.665s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'ament_cmake_args' from command line to 'None'
+[0.665s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'catkin_cmake_args' from command line to 'None'
+[0.665s] Level 5:colcon.colcon_core.verb:set package 'omni_traj' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.665s] DEBUG:colcon.colcon_core.verb:Building package 'omni_traj' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/nickolas/ros2_ws/build/omni_traj', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/nickolas/ros2_ws/install/omni_traj', 'merge_install': False, 'path': '/home/nickolas/ros2_ws/src/omni_src/omni_traj', 'symlink_install': True, 'test_result_base': None}
+[0.665s] INFO:colcon.colcon_core.executor:Executing jobs using 'parallel' executor
+[0.667s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete
+[0.668s] INFO:colcon.colcon_ros.task.ament_python.build:Building ROS package in '/home/nickolas/ros2_ws/src/omni_src/omni_traj' with build type 'ament_python'
+[0.669s] Level 1:colcon.colcon_core.shell:create_environment_hook('omni_traj', 'ament_prefix_path')
+[0.677s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_core.shell.bat': Not used on non-Windows systems
+[0.678s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/hook/ament_prefix_path.ps1'
+[0.680s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/hook/ament_prefix_path.dsv'
+[0.681s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/hook/ament_prefix_path.sh'
+[0.683s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[0.684s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[1.275s] INFO:colcon.colcon_core.task.python.build:Building Python package in '/home/nickolas/ros2_ws/src/omni_src/omni_traj'
+[1.275s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[1.276s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[3.075s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/nickolas/ros2_ws/build/omni_traj': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/nickolas/ros2_ws/build/omni_traj/build --no-deps symlink_data
+[4.899s] Level 1:colcon.colcon_core.shell:create_environment_hook('omni_traj', 'pythonpath_develop')
+[4.900s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/build/omni_traj/share/omni_traj/hook/pythonpath_develop.ps1'
+[4.902s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/nickolas/ros2_ws/build/omni_traj' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/nickolas/ros2_ws/build/omni_traj/build --no-deps symlink_data
+[4.904s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/nickolas/ros2_ws/build/omni_traj/share/omni_traj/hook/pythonpath_develop.dsv'
+[4.906s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/build/omni_traj/share/omni_traj/hook/pythonpath_develop.sh'
+[4.911s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/install/omni_traj' for CMake module files
+[4.911s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/install/omni_traj' for CMake config files
+[4.913s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/install/omni_traj/lib'
+[4.913s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/install/omni_traj/bin'
+[4.914s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/install/omni_traj/lib/pkgconfig/omni_traj.pc'
+[4.914s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages'
+[4.914s] Level 1:colcon.colcon_core.shell:create_environment_hook('omni_traj', 'pythonpath')
+[4.915s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/hook/pythonpath.ps1'
+[4.916s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/hook/pythonpath.dsv'
+[4.917s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/hook/pythonpath.sh'
+[4.923s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/install/omni_traj/bin'
+[4.923s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(omni_traj)
+[4.924s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/package.ps1'
+[4.930s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/package.dsv'
+[4.932s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/package.sh'
+[4.934s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/package.bash'
+[4.935s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/package.zsh'
+[4.937s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/nickolas/ros2_ws/install/omni_traj/share/colcon-core/packages/omni_traj)
+[4.938s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:closing loop
+[4.938s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:loop closed
+[4.938s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete finished with '0'
+[4.939s] DEBUG:colcon.colcon_core.event_reactor:joining thread
+[4.951s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.terminal_notifier': Not used on non-Darwin systems
+[4.951s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.win32': Not used on non-Windows systems
+[4.951s] INFO:colcon.colcon_notification.desktop_notification:Sending desktop notification using 'notify2'
+[5.030s] DEBUG:colcon.colcon_core.event_reactor:joined thread
+[5.031s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/nickolas/ros2_ws/install/local_setup.ps1'
+[5.033s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/nickolas/ros2_ws/install/_local_setup_util_ps1.py'
+[5.035s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/nickolas/ros2_ws/install/setup.ps1'
+[5.037s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/nickolas/ros2_ws/install/local_setup.sh'
+[5.038s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/nickolas/ros2_ws/install/_local_setup_util_sh.py'
+[5.039s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/nickolas/ros2_ws/install/setup.sh'
+[5.042s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/nickolas/ros2_ws/install/local_setup.bash'
+[5.043s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/nickolas/ros2_ws/install/setup.bash'
+[5.045s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/nickolas/ros2_ws/install/local_setup.zsh'
+[5.046s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/nickolas/ros2_ws/install/setup.zsh'

@@ -27,6 +27,13 @@ Production-ready UDP communication server for OMNI robot stack. Runs on Raspberr
 - **Robust Parsing**: Handles partial reads, resynchronizes on bad magic, validates payload sizes
 - **Type-Safe**: Type hints, dataclasses, structured logging
 
+## Boot Mode
+
+- `omni_udp_server.service` is the intended production boot service.
+- It owns UDP port `9000`, receives STM32 commands, publishes pose into ROS2, and starts or switches the ROS2 stack as needed.
+- `omni_ros2_stack.service` is a debug-only standalone bringup service. It launches the ROS2 stack directly and does not provide the UDP command endpoint.
+- Do not enable both services on boot. They conflict by design and whichever starts later will displace the other.
+
 ---
 
 ## System Architecture
@@ -53,7 +60,7 @@ Production-ready UDP communication server for OMNI robot stack. Runs on Raspberr
 - POSE messages: Robot pose and twist
     - Pose: `x,y,yaw` interpreted in `odom` frame
     - Twist: `vx,vy,wz` interpreted in `base_link` (body) frame
-- CMD messages: Commands (SET_IDLE, START/STOP ROS2, etc.)
+- CMD messages: Commands (`START_TRAJ`, `STOP_TRAJ`, `START_RESTART_ROS2`, mapping mode commands)
 
 **Pi → STM32 (5 Hz):**
 - TRAJ messages: Trajectory knots for interpolation
@@ -81,13 +88,13 @@ Production-ready UDP communication server for OMNI robot stack. Runs on Raspberr
 | Type | Value | Direction | Payload Size | Purpose |
 |------|-------|-----------|--------------|---------|
 | POSE | 1 | STM32→Pi | 28 bytes | Robot pose + velocity @ 5 Hz |
-| CMD | 2 | STM32→Pi | Variable | Commands (SET_IDLE, START/STOP ROS2) |
 | EVENT | 3 | STM32→Pi | Variable | Optional event notification |
-| TRAJ | 10 | Pi→STM32 | 20 bytes | Trajectory knots |
+| TRAJ | 10 | Pi→STM32 | Variable | Trajectory header + knot array |
 | CORR | 11 | Pi→STM32 | Variable | Optional small correction |
-| ACK | 12 | Pi→STM32 | Variable | Command accepted |
-| NACK | 13 | Pi→STM32 | Variable | Command rejected |
+| ACK | 12 | Pi→STM32 | Variable | Legacy command ack (optional) |
+| NACK | 13 | Pi→STM32 | Variable | Legacy command reject (optional) |
 | STATUS | 15 | Pi→STM32 | Variable | Server status |
+| CMD | 20 | STM32↔Pi | Variable | Commands + command acknowledgments |
 
 ### POSE Message (Total: 52 bytes)
 
@@ -104,27 +111,47 @@ Production-ready UDP communication server for OMNI robot stack. Runs on Raspberr
 | 44-47  | 4    | float  | vy        | Linear y (m/s, base_link/body frame) |
 | 48-51  | 4    | float  | wz        | Angular z (rad/s, base_link/body frame) |
 
-### TRAJ Message (Total: 44 bytes)
+### TRAJ Message (Variable Length)
 
 **Header:** 24 bytes  
-**Payload:** 20 bytes
+**Payload:** `20 + (n_knots * 20)` bytes
 
-| Offset | Size | Type  | Name     | Description                       |
-|--------|------|-------|----------|-----------------------------------|
-| 24-27  | 4    | float | x_des    | Desired position x (meters)       |
-| 28-31  | 4    | float | y_des    | Desired position y (meters)       |
-| 32-35  | 4    | float | yaw_des  | Desired orientation (radians)     |
-| 36-39  | 4    | float | vx_world | Feedforward velocity x (m/s, world/odom frame) |
-| 40-43  | 4    | float | vy_world | Feedforward velocity y (m/s, world/odom frame) |
+Trajectory payload starts with a 20-byte trajectory header, followed by `n_knots` knot entries.
+
+**Trajectory payload header (20 bytes):**
+
+| Offset | Size | Type   | Name              | Description |
+|--------|------|--------|-------------------|-------------|
+| 24-27  | 4    | uint32 | reply_to_pose_seq | POSE seq this trajectory corresponds to |
+| 28-31  | 4    | uint32 | traj_t0_ms        | Trajectory start timestamp (ms) |
+| 32-33  | 2    | uint16 | n_knots           | Number of knots |
+| 34-35  | 2    | uint16 | flags             | Trajectory flags |
+| 36-39  | 4    | uint32 | reserved          | Reserved |
+| 40-43  | 4    | float  | dt                | Knot spacing (seconds) |
+
+**Per-knot entry (20 bytes each):**
+
+| Size | Type  | Name | Description |
+|------|-------|------|-------------|
+| 4    | float | x    | Desired x (m) |
+| 4    | float | y    | Desired y (m) |
+| 4    | float | yaw  | Desired yaw (rad) |
+| 4    | float | vx   | Feedforward x velocity (m/s, world/odom) |
+| 4    | float | vy   | Feedforward y velocity (m/s, world/odom) |
 
 ### Command IDs
 
 | ID | Name | Argument | Purpose |
 |----|------|----------|---------|
-| 1 | SET_IDLE | "true"/"false" or empty | Toggle/set idle mode |
-| 2 | START_ROS2 | optional | Start ROS2 stack |
-| 3 | STOP_ROS2 | optional | Stop ROS2 stack |
-| 4 | GET_STATUS | optional | Request server status |
+| 0 | STOP_ROS2 | optional | Stop ROS2 stack |
+| 1 | START_TRAJ | optional | Start mapping-mode trajectory generation flow |
+| 2 | STOP_TRAJ | optional | Stop trajectory generation/output (standby) |
+| 3 | START_RESTART_ROS2 | optional | Start/restart ROS2 stack |
+| 4 | SHUTDOWN_PI5 | optional | Safe Pi shutdown command |
+| 5 | START_MAPPING | optional | Switch to mapping mode |
+| 6 | FINISH_MAPPING | optional | Finish mapping and switch to localization/frozen map |
+| 7 | USE_LIVE_MAP | optional | Use live mapping mode |
+| 8 | USE_FROZEN_MAP | optional | Use frozen map localization mode |
 
 ---
 
@@ -209,9 +236,8 @@ loginctl enable-linger $USER
 mkdir -p ~/.config/systemd/user
 mkdir -p ~/.local/bin
 
-# Install services
+# Install UDP service only for normal boot
 cp omni_pi_server.service ~/.config/systemd/user/
-cp omni_ros2_stack.service ~/.config/systemd/user/
 
 # Create wrapper script
 cat > ~/.local/bin/omni_pi_server << 'EOF'
@@ -224,19 +250,17 @@ chmod +x ~/.local/bin/omni_pi_server
 # Reload and enable service
 systemctl --user daemon-reload
 systemctl --user enable omni_pi_server.service
-systemctl --user enable omni_ros2_stack.service
 systemctl --user start omni_pi_server.service
-systemctl --user start omni_ros2_stack.service
 ```
 
 #### 3. Verify Service
 
 ```bash
 systemctl --user status omni_pi_server.service
-systemctl --user status omni_ros2_stack.service
 journalctl --user -u omni_pi_server.service -f
-journalctl --user -u omni_ros2_stack.service -f
 ```
+
+`omni_ros2_stack.service` should be treated as debug-only/manual bringup and left disabled for boot.
 
 ---
 
@@ -273,14 +297,11 @@ cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
 # Basic
 ./start_server.sh
 
-# With debug logging
-python3 run_udp_server.py --log-level DEBUG
-
 # Low resource mode (reduced CPU usage)
 ./start_server_low_resource.sh
 
-# Enable ROS2 commands (START_ROS2/STOP_ROS2)
-python3 run_udp_server.py --enable-ros2-cmds
+# Direct wrapper invocation
+python3 run_udp_server.py
 ```
 
 ### ROS2 Integration
@@ -302,6 +323,16 @@ ros2 topic echo /robot/trajectory
 # View odometry
 ros2 topic echo /robot/odom
 ```
+
+### STM32 command workflow (latest)
+
+Current CM7 + Pi sequence:
+
+1. `traj 1` on STM32: Pi enters mapping mode and pauses trajectory output while STM32 remains in manual driving mode.
+2. `map 0` on STM32: Pi finalizes mapping, switches to localization/frozen-map mode, then resumes trajectory output.
+3. `traj 0` on STM32: Pi stops trajectory output and returns to standby behavior.
+
+Use this order for "manual drive while mapping, then follow only received trajectory" operation.
 
 ### Testing Connection
 
@@ -339,11 +370,9 @@ Start the test client:
 
 Interactive commands in test client:
 ```
-> status          # Get server status
-> idle true       # Enable idle mode
-> idle false      # Disable idle mode
-> start_ros2      # Start ROS2 stack
-> stop_ros2       # Stop ROS2 stack
+> 1 or start      # Send START_TRAJ
+> 2 or stop       # Send STOP_TRAJ
+> m <mode>        # Change simulator motion mode (stationary/forward/circle)
 > help            # Show all commands
 > quit            # Disconnect
 ```
