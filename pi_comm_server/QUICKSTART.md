@@ -95,11 +95,12 @@ Try these commands:
 
 ### STM32 `traj/map` sequence (latest)
 
-Use this command sequence during mapping and execution:
+Use this command sequence during mapping and operation:
 
-1. Send `traj 1` from STM32 to start mapping flow while manual drive remains enabled on STM32.
-2. Send `map 0` from STM32 to finish mapping and switch Pi/ROS2 into localization + trajectory output mode.
-3. Send `traj 0` from STM32 to return to manual/standby behavior.
+1. Send `map 1` from STM32 to start dedicated mapping mode while manual drive remains enabled on STM32.
+2. Send `traj 1` from STM32 to switch Pi/ROS2 to autonomous localization using the current saved map.
+3. Send `traj 2` from STM32 to keep localization active but stay manual on STM32 (trajectory output disabled).
+4. Send `traj 0` from STM32 to return to standby/manual behavior.
 
 ### Watch ROS2 Topics
 

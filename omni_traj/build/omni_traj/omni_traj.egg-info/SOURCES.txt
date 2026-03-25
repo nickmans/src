@@ -2,6 +2,7 @@ package.xml
 setup.cfg
 setup.py
 config/amcl_localization.yaml
+config/nav2_dual_scan_costmaps.yaml
 config/slam_toolbox_online_async.yaml
 config/waypoint_traj.yaml
 launch/dual_sllidar_with_mock_and_traj.launch.py

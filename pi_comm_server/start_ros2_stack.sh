@@ -118,11 +118,12 @@ workspace_has_synced_fusion() {
 
 pick_workspace_setup() {
     local candidates=(
+        "/home/nickolas/ros2_ws/install/local_setup.bash"
+        "/home/nickolas/ros2_ws/install/setup.bash"
         "$PROJECT_ROOT/install/local_setup.bash"
         "/home/nickolas/ros2_ws/src/omni_src/install/local_setup.bash"
         "$PROJECT_ROOT/install/setup.bash"
         "/home/nickolas/ros2_ws/src/omni_src/install/setup.bash"
-        "/home/nickolas/ros2_ws/install/setup.bash"
         "/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/setup.bash"
     )
 

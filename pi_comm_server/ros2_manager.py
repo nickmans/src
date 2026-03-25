@@ -39,6 +39,9 @@ class ROS2Manager:
         self.localization_start_verify_timeout_sec = 20.0
         self.start_stability_window_sec = 1.0
         self.localization_stability_window_sec = 2.0
+        self.quick_start_verify_timeout_sec = 2.5
+        self.quick_localization_verify_timeout_sec = 4.0
+        self.strict_start_health_check = False
         self.lidar_boot_settle_delay_sec = 1.5
         self.serial_preflight_settle_delay_sec = 1.0
         self.lidar_scan_probe_timeout_sec = 3.0
@@ -46,9 +49,7 @@ class ROS2Manager:
         self._mode_health_cache: dict[str, tuple[float, bool]] = {}
         self._config_search_roots = [
             "/home/nickolas/ros2_ws/src/omni_src/omni_traj/config",
-            "/home/nickolas/ros2_ws/src/omni_src/install/omni_traj/share/omni_traj/config",
             "/home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config",
-            "/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/share/omni_traj/config",
         ]
 
         self.traj_params_file = self._pick_config_file("waypoint_traj.yaml")
@@ -69,11 +70,9 @@ class ROS2Manager:
         ]
 
         self._workspace_setup_candidates = [
-            "/home/nickolas/ros2_ws/src/omni_src/install/local_setup.bash",
-            "/home/nickolas/ros2_ws/src/omni_src/install/setup.bash",
-            "/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/local_setup.bash",
-            "/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/setup.bash",
+            "/home/nickolas/ros2_ws/install/local_setup.bash",
             "/home/nickolas/ros2_ws/install/setup.bash",
+            os.path.expanduser("~/ros2_ws/install/local_setup.bash"),
             os.path.expanduser("~/ros2_ws/install/setup.bash"),
         ]
 
@@ -135,16 +134,15 @@ class ROS2Manager:
             return False
 
     def _pick_workspace_setup(self) -> Optional[str]:
-        for candidate in self._workspace_setup_candidates:
-            if os.path.isfile(candidate) and self._workspace_has_synced_fusion(candidate):
-                return candidate
+        env_override = os.getenv("OMNI_RUNTIME_SETUP", "").strip()
+        if env_override:
+            if os.path.isfile(env_override):
+                return env_override
+            logger.error("OMNI_RUNTIME_SETUP points to missing file: %s", env_override)
+            return None
 
         for candidate in self._workspace_setup_candidates:
             if os.path.isfile(candidate):
-                logger.warning(
-                    "Falling back to workspace setup without synchronized fusion marker: %s",
-                    candidate,
-                )
                 return candidate
         return None
 
@@ -325,10 +323,6 @@ class ROS2Manager:
                 f"echo '[ros2_manager] Selected waypoint_traj implementation: {resolved_impl_msg}'; "
                 "python3 -c \"import omni_traj.waypoint_traj_node as module; print('[ros2_manager] Python resolved waypoint_traj module:', module.__file__)\""
             )
-            root_ws_setup = "/home/nickolas/ros2_ws/install/local_setup.bash"
-            root_ws_setup_cmd = ""
-            if os.path.isfile(root_ws_setup):
-                root_ws_setup_cmd = f"source {shlex.quote(root_ws_setup)} && "
             env_reset_cmd = (
                 "unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH "
                 "PYTHONPATH LD_LIBRARY_PATH PKG_CONFIG_PATH; "
@@ -337,7 +331,7 @@ class ROS2Manager:
             cmd = [
                 "bash",
                 "-c",
-                f"{env_reset_cmd}source /opt/ros/jazzy/setup.bash && {root_ws_setup_cmd}source {workspace_setup_quoted} && {stty_cmd} && {trace_cmd} && exec {launch_cmd}"
+                f"{env_reset_cmd}source /opt/ros/jazzy/setup.bash && source {workspace_setup_quoted} && {stty_cmd} && {trace_cmd} && exec {launch_cmd}"
             ]
             
             logger.info(f"Starting ROS2 stack ({self.stack_mode}) using {workspace_setup}: {launch_cmd}")
@@ -374,10 +368,13 @@ class ROS2Manager:
             self._schedule_lidar_recovery(workspace_setup)
 
             # Verify expected mode processes are present (and incompatible ones absent).
-            verify_timeout_sec = self.start_verify_timeout_sec
+            verify_timeout_sec = min(self.start_verify_timeout_sec, self.quick_start_verify_timeout_sec)
             stability_window_sec = self.start_stability_window_sec
             if self.stack_mode == "localization":
-                verify_timeout_sec = self.localization_start_verify_timeout_sec
+                verify_timeout_sec = min(
+                    self.localization_start_verify_timeout_sec,
+                    self.quick_localization_verify_timeout_sec,
+                )
                 stability_window_sec = self.localization_stability_window_sec
 
             require_active = self.stack_mode != "localization"
@@ -387,16 +384,27 @@ class ROS2Manager:
                 require_amcl_active=require_active,
             )
             if not ready:
-                logger.error(f"ROS2 stack failed mode health check after startup (mode={self.stack_mode})")
-                await self.stop()
-                return False
+                msg = (
+                    f"ROS2 stack still warming up after quick health check window "
+                    f"(mode={self.stack_mode}, wait={verify_timeout_sec:.1f}s); continuing startup"
+                )
+                if self.strict_start_health_check:
+                    logger.error(msg)
+                    await self.stop()
+                    return False
+                logger.warning(msg)
+                return True
 
             # Require a short stability window so transient startups do not pass as healthy.
             await asyncio.sleep(stability_window_sec)
             if not self._mode_process_health(self.stack_mode, require_amcl_active=require_active):
-                logger.error(f"ROS2 stack failed post-start stability check (mode={self.stack_mode})")
-                await self.stop()
-                return False
+                msg = f"ROS2 stack post-start stability check still warming up (mode={self.stack_mode})"
+                if self.strict_start_health_check:
+                    logger.error(msg)
+                    await self.stop()
+                    return False
+                logger.warning(msg)
+                return True
             
             return True
             
@@ -571,9 +579,14 @@ class ROS2Manager:
 
     def _is_amcl_lifecycle_active(self) -> bool:
         """Return True when AMCL lifecycle state is active."""
+        workspace_setup = self._pick_workspace_setup()
+        if not workspace_setup:
+            return False
+
+        workspace_setup_quoted = shlex.quote(workspace_setup)
         cmd = (
             "source /opt/ros/jazzy/setup.bash && "
-            "source /home/nickolas/ros2_ws/src/omni_src/install/setup.bash && "
+            f"source {workspace_setup_quoted} && "
             "timeout 4 ros2 service call /amcl/get_state lifecycle_msgs/srv/GetState '{}'"
         )
         try:

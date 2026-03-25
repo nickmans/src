@@ -1,7 +1,8 @@
 [Unit]
 Description=OMNI UDP Communication Server with ROS2 Support
-After=network.target
-Conflicts=omni_ros2_stack.service omni_lidar_wakeup.service
+After=network-online.target
+Wants=network-online.target
+Conflicts=omni_ros2_stack.service
 
 [Service]
 Type=simple
@@ -9,12 +10,14 @@ User=nickolas
 WorkingDirectory=/home/nickolas/ros2_ws/src/omni_src/pi_comm_server
 Environment="PYTHONUNBUFFERED=1"
 Environment="ROS_DOMAIN_ID=0"
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/nickolas/ros2_ws/install/setup.bash && exec python3 /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/run_udp_server.py'
+Environment="OMNI_RUNTIME_SETUP=/home/nickolas/ros2_ws/install/local_setup.bash"
+Environment="OMNI_TRAJ_SEND_HZ=10"
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/nickolas/ros2_ws/install/local_setup.bash && exec python3 /home/nickolas/ros2_ws/src/omni_src/pi_comm_server/run_udp_server.py'
 KillSignal=SIGINT
-TimeoutStartSec=10
+TimeoutStartSec=30
 TimeoutStopSec=5
-Restart=on-failure
-RestartSec=2
+Restart=always
+RestartSec=1
 StandardOutput=journal
 StandardError=journal
 

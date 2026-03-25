@@ -1,0 +1,33 @@
+running develop
+running egg_info
+creating omni_traj.egg-info
+writing omni_traj.egg-info/PKG-INFO
+writing dependency_links to omni_traj.egg-info/dependency_links.txt
+writing entry points to omni_traj.egg-info/entry_points.txt
+writing requirements to omni_traj.egg-info/requires.txt
+writing top-level names to omni_traj.egg-info/top_level.txt
+writing manifest file 'omni_traj.egg-info/SOURCES.txt'
+reading manifest file 'omni_traj.egg-info/SOURCES.txt'
+writing manifest file 'omni_traj.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages/omni-traj.egg-link (link to .)
+Installing empty_scan_pub script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+Installing lidar_watchdog script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+Installing map_odom_startup_fallback script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+Installing waypoint_traj script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+
+Installed /home/nickolas/ros2_ws/build/omni_traj
+running symlink_data
+creating /home/nickolas/ros2_ws/install/omni_traj/share/ament_index
+creating /home/nickolas/ros2_ws/install/omni_traj/share/ament_index/resource_index
+creating /home/nickolas/ros2_ws/install/omni_traj/share/ament_index/resource_index/packages
+symbolically linking /home/nickolas/ros2_ws/build/omni_traj/resource/omni_traj -> /home/nickolas/ros2_ws/install/omni_traj/share/ament_index/resource_index/packages
+symbolically linking /home/nickolas/ros2_ws/build/omni_traj/package.xml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj
+creating /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/launch
+symbolically linking /home/nickolas/ros2_ws/build/omni_traj/launch/omni_bringup.launch.py -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/launch
+symbolically linking /home/nickolas/ros2_ws/build/omni_traj/launch/dual_sllidar_with_mock_and_traj.launch.py -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/launch
+creating /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+symbolically linking /home/nickolas/ros2_ws/build/omni_traj/config/slam_toolbox_online_async.yaml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+symbolically linking /home/nickolas/ros2_ws/build/omni_traj/config/waypoint_traj.yaml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+symbolically linking /home/nickolas/ros2_ws/build/omni_traj/config/amcl_localization.yaml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+symbolically linking /home/nickolas/ros2_ws/build/omni_traj/config/nav2_dual_scan_costmaps.yaml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config

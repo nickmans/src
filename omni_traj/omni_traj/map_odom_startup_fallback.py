@@ -9,7 +9,7 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from tf2_ros import TransformBroadcaster
 
 
@@ -65,8 +65,8 @@ class MapOdomStartupFallback(Node):
 
         if self._seed_initial_pose:
             initial_pose_qos = QoSProfile(depth=1)
-            initial_pose_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-            initial_pose_qos.reliability = ReliabilityPolicy.RELIABLE
+            initial_pose_qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+            initial_pose_qos.reliability = QoSReliabilityPolicy.RELIABLE
 
             self._initial_pose_pub = self.create_publisher(
                 PoseWithCovarianceStamped,

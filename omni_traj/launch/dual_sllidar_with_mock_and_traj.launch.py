@@ -26,6 +26,8 @@ def generate_launch_description() -> LaunchDescription:
     enable_amcl_localization = LaunchConfiguration("enable_amcl_localization")
     amcl_params_file = LaunchConfiguration("amcl_params_file")
     enable_slam_toolbox = LaunchConfiguration("enable_slam_toolbox")
+    enable_nav2_costmaps = LaunchConfiguration("enable_nav2_costmaps")
+    nav2_costmaps_params_file = LaunchConfiguration("nav2_costmaps_params_file")
     scan_match_topic = LaunchConfiguration("scan_match_topic")
     enable_map_odom_startup_fallback = LaunchConfiguration("enable_map_odom_startup_fallback")
     map_odom_startup_fallback_grace_s = LaunchConfiguration("map_odom_startup_fallback_grace_s")
@@ -187,7 +189,8 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(
             PythonExpression([
                 '"', enable_map_odom_startup_fallback, '" == "true" and "',
-                enable_amcl_localization, '" == "true"'
+                enable_amcl_localization, '" == "true" or "',
+                enable_slam_toolbox, '" == "true"'
             ])
         ),
     )
@@ -266,6 +269,8 @@ def generate_launch_description() -> LaunchDescription:
                 "rolling_map_enable": ParameterValue(rolling_map_enable, value_type=bool),
                 "rolling_map_margin_m": ParameterValue(rolling_map_margin_m, value_type=float),
                 "persistent_obstacles_enable": ParameterValue(persistent_obstacles_enable, value_type=bool),
+                "lidar1_frame_id": lidar1_frame_id,
+                "lidar2_frame_id": lidar2_frame_id,
             }
         ],
     )
@@ -364,6 +369,35 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(enable_slam_toolbox),
     )
 
+    nav2_local_costmap = Node(
+        package="nav2_costmap_2d",
+        executable="nav2_costmap_2d",
+        name="local_costmap",
+        namespace="local_costmap",
+        output="screen",
+        parameters=[nav2_costmaps_params_file],
+        condition=IfCondition(enable_nav2_costmaps),
+    )
+
+    nav2_global_costmap = Node(
+        package="nav2_costmap_2d",
+        executable="nav2_costmap_2d",
+        name="global_costmap",
+        namespace="global_costmap",
+        output="screen",
+        parameters=[nav2_costmaps_params_file],
+        condition=IfCondition(enable_nav2_costmaps),
+    )
+
+    nav2_costmaps_start = TimerAction(
+        period=8.0,
+        actions=[
+            nav2_local_costmap,
+            nav2_global_costmap,
+        ],
+        condition=IfCondition(enable_nav2_costmaps),
+    )
+
     rviz = Node(
         package="rviz2",
         executable="rviz2",
@@ -388,6 +422,11 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("persistent_obstacles_enable", default_value="false"),
             DeclareLaunchArgument("enable_amcl_localization", default_value="false"),
             DeclareLaunchArgument("enable_slam_toolbox", default_value="true"),
+            DeclareLaunchArgument("enable_nav2_costmaps", default_value="true"),
+            DeclareLaunchArgument(
+                "nav2_costmaps_params_file",
+                default_value=os.path.join(get_package_share_directory("omni_traj"), "config", "nav2_dual_scan_costmaps.yaml"),
+            ),
             DeclareLaunchArgument("scan_match_topic", default_value="/scan_match"),
             DeclareLaunchArgument("enable_map_odom_startup_fallback", default_value="true"),
             DeclareLaunchArgument("map_odom_startup_fallback_grace_s", default_value="25.0"),
@@ -414,7 +453,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("lidar2_frame_id", default_value="lidar2_link"),
             DeclareLaunchArgument("lidar1_y_m", default_value="0.10"),
             DeclareLaunchArgument("lidar2_y_m", default_value="-0.10"),
-            DeclareLaunchArgument("lidar_yaw_rad", default_value="0.0"),
+            DeclareLaunchArgument("lidar_yaw_rad", default_value="3.141592653589793"),
 
             lidar1_real,
             lidar2_real,
@@ -434,6 +473,7 @@ def generate_launch_description() -> LaunchDescription:
             amcl_lifecycle,
             slam_toolbox,
             slam_lifecycle,
+            nav2_costmaps_start,
             rviz,
         ]
     )

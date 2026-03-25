@@ -6,10 +6,11 @@ waypoint_traj:
     publish_odom_to_base_tf: true
     prefer_tf_pose: true
     pose_tf_timeout_s: 0.20
+    odom_stale_timeout_s: 0.35
     odom_yaw_offset_rad: 0.0
 
     robot_exclusion_enable: true
-    robot_exclusion_radius_m: 0.23
+    robot_exclusion_radius_m: 0.22
 
     waypoint_reached_tol_m: 0.10
     remove_waypoint_radius_m: 0.50
@@ -32,12 +33,15 @@ waypoint_traj:
     auto_load_saved_map: true
     default_frozen_map_mode: false
     mapping_area_size_m: 7.0
-    mapping_res_m: 0.025
-    mapping_hit_logodd_inc: 4
+    mapping_res_m: 0.05
+    mapping_hit_logodd_inc: 5
     mapping_free_logodd_dec: 1
+    mapping_no_return_free_ratio: 0.0
     mapping_logodd_min: -50
     mapping_logodd_max: 50
     mapping_occ_threshold: 8
+    mapping_occ_set_threshold: 8
+    mapping_occ_clear_threshold: 2
     geofence_enable: false
     geofence_box_size_m: 1.5
     geofence_stop_margin_m: 0.02
@@ -63,20 +67,21 @@ waypoint_traj:
 
     scan_max_age_s: 0.25
     use_arrival_stamp_for_scan_timing: true
-    max_scan_pair_skew_s: 0.07
-    scan_sync_queue_size: 12
+    max_scan_pair_skew_s: 0.12
+    scan_sync_queue_size: 20
     scan_beam_stride: 1
     scan_no_hit_eps_m: 0.02
     max_lidar_range_m: 5.0
 
     publish_fused_scan: true
     publish_scan_match: true
+    publish_legacy_costmap: false
     fused_angle_min: -3.14159
     fused_angle_max: 3.14159
     fused_angle_increment_deg: 0.5
     scan_match_angle_increment_deg: 1.0
     fused_voxel_merge_resolution_m: 0.04
-    motion_compensate: true
+    motion_compensate: false
 
     start_pose: [0.0, 0.0, 0.0]
 
@@ -86,3 +91,5 @@ waypoint_traj:
 
     lidar1_topic: /lidar1/scan
     lidar2_topic: /lidar2/scan
+    lidar1_frame_id: lidar1_link
+    lidar2_frame_id: lidar2_link

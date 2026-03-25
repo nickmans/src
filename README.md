@@ -7,7 +7,7 @@ It explains what each major part does, how data moves through the system, and ho
 
 `omni_src` contains two main runtime parts:
 
-- **`omni_traj/`**: ROS2 package for dual-LiDAR fusion, costmap generation, waypoint handling, and trajectory output.
+- **`omni_traj/`**: ROS2 package for dual-LiDAR fusion, Nav2 local/global costmaps, waypoint handling, and trajectory output.
 - **`pi_comm_server/`**: Raspberry Pi communication bridge (TCP/UDP) between STM32 and ROS2.
 
 Supporting markdown files in the workspace document previous LiDAR fusion fixes and validation details.
@@ -34,7 +34,8 @@ Supporting markdown files in the workspace document previous LiDAR fusion fixes 
 2. **Transform alignment**
    - Static TFs place both sensors relative to `base_link`; optional world/odom anchoring is enabled by launch args.
 3. **Fusion + mapping + planning**
-   - `waypoint_traj` fuses scans into `/scan_fused`, builds `/costmap` (and map outputs), and computes path/trajectory products.
+  - `waypoint_traj` fuses scans into `/scan_fused` and computes path/trajectory products.
+  - Nav2 publishes local/global costmaps on `/local_costmap/costmap` and `/global_costmap/costmap`.
 4. **ROS2↔STM32 bridge (Pi side)**
    - `pi_comm_server` receives POSE/CMD from STM32 and sends TRAJ/STATUS back.
 5. **Robot execution loop**
@@ -54,8 +55,8 @@ ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py use_mock_lidar:=
 ```
 
 Expected:
-- `/lidar1/scan`, `/lidar2/scan`, `/scan_fused`, `/costmap` are present.
-- RViz shows fused scan and map/costmap layers.
+- `/lidar1/scan`, `/lidar2/scan`, `/scan_fused`, `/local_costmap/costmap`, `/global_costmap/costmap` are present.
+- RViz shows fused scan, `/map`, local costmap, and global costmap layers.
 
 ### B) ROS2 with real LiDAR hardware
 
@@ -89,9 +90,10 @@ Production deployment (systemd) is available via scripts in `pi_comm_server/` (`
 Run these after launch:
 
 ```bash
-ros2 topic list | grep -E "lidar|scan_fused|costmap|map|planned_path"
+ros2 topic list | grep -E "lidar|scan_fused|local_costmap/costmap|global_costmap/costmap|map|planned_path"
 ros2 topic hz /scan_fused
-ros2 topic hz /costmap
+ros2 topic hz /local_costmap/costmap
+ros2 topic hz /global_costmap/costmap
 ros2 run tf2_tools view_frames.py
 ```
 
@@ -106,7 +108,7 @@ cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
 Success criteria:
 - Stable TF tree (`world/map/odom/base_link/lidar*` as configured).
 - Fused scan publishes consistently.
-- Costmap updates continuously.
+- Nav2 local and global costmaps update continuously.
 - Pi server accepts client/STM32 and exchanges frames without parser errors.
 
 ## 6) Common Operational Workflow
@@ -124,11 +126,12 @@ Success criteria:
 
 When operating with CM7 + Pi trajectory flow:
 
-- Send `traj 1` to start trajectory generation/recording while staying in manual driving mode.
-- Send `map 0` when mapping is complete; STM32 switches to trajectory-follow mode (manual disabled).
-- Send `traj 0` to re-enable manual driving mode.
+- Send `map 1` to enter dedicated mapping mode while staying in manual driving mode.
+- Send `traj 1` to switch to autonomous localization/follow mode using the current saved map.
+- Send `traj2 2` to keep localization active while returning STM32 to manual driving mode.
+- Send `traj 0` to return to idle/manual standby mode.
 
-Use this exact order when you need to drive during mapping, then execute only the received trajectory.
+Use this sequence when switching between mapping, autonomous localization, and manual-localization operation.
 
 ## 7) Troubleshooting First Responses
 
@@ -136,8 +139,8 @@ Use this exact order when you need to drive during mapping, then execute only th
   - Verify both LiDAR topics exist and frame IDs match launch configuration.
 - **RViz frame errors**
   - Check `map_frame`, `odom_frame`, and whether `publish_world_to_odom_tf` is enabled.
-- **Costmap empty/stale**
-  - Confirm fused scan rates and valid ranges.
+- **Costmaps empty/stale**
+  - Confirm fused scan rates and valid ranges, then check `/local_costmap/costmap` and `/global_costmap/costmap` rates.
 - **STM32 not connected**
   - Verify IP/port, Ethernet route, firewall, and server bind host.
 - **No trajectory returned**

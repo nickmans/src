@@ -109,6 +109,7 @@ class WaypointTrajNode(Node):
         self.declare_parameter("base_frame", cfg("base_frame"))
         self.declare_parameter("prefer_tf_pose", cfg("prefer_tf_pose"))
         self.declare_parameter("pose_tf_timeout_s", cfg("pose_tf_timeout_s"))
+        self.declare_parameter("odom_stale_timeout_s", cfg("odom_stale_timeout_s"))
         self.declare_parameter("odom_yaw_offset_rad", cfg("odom_yaw_offset_rad"))
 
         # If YOU already publish odom->base_link elsewhere, keep this false
@@ -144,9 +145,12 @@ class WaypointTrajNode(Node):
         self.declare_parameter("mapping_res_m", cfg("mapping_res_m"))
         self.declare_parameter("mapping_hit_logodd_inc", cfg("mapping_hit_logodd_inc"))
         self.declare_parameter("mapping_free_logodd_dec", cfg("mapping_free_logodd_dec"))
+        self.declare_parameter("mapping_no_return_free_ratio", cfg("mapping_no_return_free_ratio"))
         self.declare_parameter("mapping_logodd_min", cfg("mapping_logodd_min"))
         self.declare_parameter("mapping_logodd_max", cfg("mapping_logodd_max"))
         self.declare_parameter("mapping_occ_threshold", cfg("mapping_occ_threshold"))
+        self.declare_parameter("mapping_occ_set_threshold", cfg("mapping_occ_set_threshold"))
+        self.declare_parameter("mapping_occ_clear_threshold", cfg("mapping_occ_clear_threshold"))
         self.declare_parameter("geofence_enable", cfg("geofence_enable"))
         self.declare_parameter("geofence_box_size_m", cfg("geofence_box_size_m"))
         self.declare_parameter("geofence_stop_margin_m", cfg("geofence_stop_margin_m"))
@@ -154,6 +158,8 @@ class WaypointTrajNode(Node):
         # ===== Scans =====
         self.declare_parameter("lidar1_topic", cfg("lidar1_topic"))
         self.declare_parameter("lidar2_topic", cfg("lidar2_topic"))
+        self.declare_parameter("lidar1_frame_id", cfg("lidar1_frame_id"))
+        self.declare_parameter("lidar2_frame_id", cfg("lidar2_frame_id"))
         self.declare_parameter("scan_max_age_s", cfg("scan_max_age_s"))
         self.declare_parameter("use_arrival_stamp_for_scan_timing", cfg("use_arrival_stamp_for_scan_timing"))
         self.declare_parameter("max_scan_pair_skew_s", cfg("max_scan_pair_skew_s"))
@@ -165,6 +171,7 @@ class WaypointTrajNode(Node):
         # ===== Fused scan output =====
         self.declare_parameter("publish_fused_scan", cfg("publish_fused_scan"))
         self.declare_parameter("publish_scan_match", cfg("publish_scan_match"))
+        self.declare_parameter("publish_legacy_costmap", cfg("publish_legacy_costmap"))
         self.declare_parameter("fused_angle_min", cfg("fused_angle_min"))
         self.declare_parameter("fused_angle_max", cfg("fused_angle_max"))
         self.declare_parameter("fused_angle_increment_deg", cfg("fused_angle_increment_deg"))  # 0.5 degree bins
@@ -219,11 +226,13 @@ class WaypointTrajNode(Node):
         self._T_base_from_scan: Dict[str, object] = {}
 
         # ===== Odom =====
-        self.odom_sub = self.create_subscription(Odometry, "/odom", self.on_odom, 50)
+        self.odom_sub = self.create_subscription(Odometry, "/odom", self.on_odom, 1)
         self.odom_pose_latest = Pose2D(0.0, 0.0, 0.0)
         self.odom_vel_body_latest: Tuple[float, float] = (0.0, 0.0)
         self.odom_vel_map_latest: Tuple[float, float] = (0.0, 0.0)
         self.have_odom_pose = False
+        self._last_odom_rx_ns: int = 0
+        self._last_global_pose: Optional[Pose2D] = None
         self._odom_hist: Deque[Tuple[int, Pose2D]] = deque()
 
         # ===== LiDAR subs =====
@@ -252,6 +261,7 @@ class WaypointTrajNode(Node):
         self.use_saved_map_only = False
         self.mapping_grid_spec: Optional[GridSpec] = None
         self.mapping_logodds: Optional[np.ndarray] = None
+        self._mapping_occ_state: Optional[np.ndarray] = None
         self.saved_map_bounds: Optional[Tuple[float, float, float, float]] = None
         self.active_geofence_bounds: Optional[Tuple[float, float, float, float]] = None
         self.geofence_anchor_corner: Optional[Tuple[float, float]] = None
@@ -283,10 +293,28 @@ class WaypointTrajNode(Node):
             reliability=QoSReliabilityPolicy.RELIABLE
         )
         self.map_pub = self.create_publisher(OccupancyGrid, "/map", map_qos)
-        self.costmap_pub = self.create_publisher(OccupancyGrid, "/costmap", 1)
+        self.publish_legacy_costmap = bool(self.get_parameter("publish_legacy_costmap").value)
+        self.costmap_pub = (
+            self.create_publisher(OccupancyGrid, "/costmap", 1)
+            if self.publish_legacy_costmap
+            else None
+        )
         self.scan_fused_pub = self.create_publisher(LaserScan, "/scan_fused", 10)
         self.scan_match_pub = self.create_publisher(LaserScan, "/scan_match", 10)
         self.points_fused_pub = self.create_publisher(PointCloud2, "/points_fused", 10)
+        slam_map_qos = QoSProfile(
+            depth=1,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+        )
+        self.slam_map_sub = self.create_subscription(
+            OccupancyGrid,
+            "/slam_map",
+            self.on_slam_map,
+            slam_map_qos,
+        )
+        self._latest_slam_map: Optional[OccupancyGrid] = None
+        self._latest_slam_map_ns: int = 0
 
         self.wp_marker_pub = self.create_publisher(MarkerArray, "/waypoint_markers", 1)
         self.path_pub = self.create_publisher(Path, "/planned_path", 1)
@@ -334,6 +362,8 @@ class WaypointTrajNode(Node):
         self._last_plan_wps_sig: Optional[Tuple[Tuple[int, int], ...]] = None
         self._last_pose_for_waypoint_pop: Optional[Pose2D] = None
         self._last_published_map_crc: Optional[int] = None
+        self._last_map_publish_ns: int = 0
+        self._map_republish_period_ns: int = int(2.0 * 1e9)
         self._latest_fused_points_base: List[Tuple[float, float]] = []
         self._latest_scan_pairs: List[Tuple[LaserScan, int]] = []
 
@@ -685,6 +715,7 @@ class WaypointTrajNode(Node):
     # Odom
     # =======================
     def on_odom(self, msg: Odometry) -> None:
+        self._last_odom_rx_ns = self.get_clock().now().nanoseconds
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -721,6 +752,10 @@ class WaypointTrajNode(Node):
         while len(self._odom_hist) > 2 and self._odom_hist[0][0] < min_ns:
             self._odom_hist.popleft()
 
+        # Publish odom->base_link immediately on fresh odometry so RViz/base pose
+        # updates are not limited by the slower main-loop timer under CPU load.
+        self._publish_odom_to_base_tf(stamp=msg.header.stamp)
+
     def _odom_pose_at(self, t_ns: int) -> Optional[Pose2D]:
         if not self.have_odom_pose:
             return None
@@ -748,11 +783,36 @@ class WaypointTrajNode(Node):
         return self.odom_pose_latest
 
     def _base_pose_now(self) -> Pose2D:
-        if bool(self.get_parameter("prefer_tf_pose").value):
-            map_frame = str(self.get_parameter("map_frame").value).lstrip("/")
-            base_frame = str(self.get_parameter("base_frame").value).lstrip("/")
-            timeout_s = max(0.0, float(self.get_parameter("pose_tf_timeout_s").value))
+        if self.mapping_active and self.have_odom_pose:
+            odom_stale_timeout_s = max(0.05, float(self.get_parameter("odom_stale_timeout_s").value))
+            odom_is_fresh = (
+                self._last_odom_rx_ns > 0
+                and (self.get_clock().now().nanoseconds - self._last_odom_rx_ns) <= int(odom_stale_timeout_s * 1e9)
+            )
+            timeout_s = 0.0
+            if odom_is_fresh:
+                pose_from_odom = self._odom_pose_in_map_frame(self.odom_pose_latest, timeout_s)
+                if pose_from_odom is not None:
+                    self._last_global_pose = pose_from_odom
+                    return pose_from_odom
 
+            tf_pose = self._lookup_tf_pose_in_map_frame(0, timeout_s)
+            if tf_pose is not None:
+                self._last_global_pose = tf_pose
+                return tf_pose
+
+            self._warn_tf_throttled(
+                "Mapping active but fresh odom/map transform unavailable; using raw odom pose as temporary fallback."
+            )
+            pose = self.odom_pose_latest
+            self._last_global_pose = pose
+            return pose
+
+        map_frame = str(self.get_parameter("map_frame").value).lstrip("/")
+        base_frame = str(self.get_parameter("base_frame").value).lstrip("/")
+        timeout_s = max(0.0, float(self.get_parameter("pose_tf_timeout_s").value))
+
+        if bool(self.get_parameter("prefer_tf_pose").value):
             if map_frame and base_frame:
                 try:
                     tf = self.tf_buffer.lookup_transform(
@@ -771,19 +831,129 @@ class WaypointTrajNode(Node):
                     siny_cosp = 2.0 * (qw * qz + qx * qy)
                     cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
                     yaw = math.atan2(siny_cosp, cosy_cosp)
-                    return Pose2D(tx, ty, yaw)
+                    pose = Pose2D(tx, ty, yaw)
+                    self._last_global_pose = pose
+                    return pose
                 except Exception:
                     pass
 
         if self.have_odom_pose:
-            return self.odom_pose_latest
+            pose_from_odom = self._odom_pose_in_map_frame(self.odom_pose_latest, timeout_s)
+            if pose_from_odom is not None:
+                self._last_global_pose = pose_from_odom
+                return pose_from_odom
+
+        if self._last_global_pose is not None:
+            self._warn_tf_throttled(
+                "Unable to resolve current pose in map frame; reusing last valid global pose."
+            )
+            return self._last_global_pose
+
+        self._warn_tf_throttled(
+            "Unable to resolve current pose in map frame; falling back to start_pose until TF is available."
+        )
         sp = self.get_parameter("start_pose").value
         return Pose2D(float(sp[0]), float(sp[1]), float(sp[2]))
+
+    def _odom_pose_in_map_frame(self, odom_pose: Pose2D, timeout_s: float) -> Optional[Pose2D]:
+        map_frame = str(self.get_parameter("map_frame").value).lstrip("/")
+        odom_frame = str(self.get_parameter("odom_frame").value).lstrip("/")
+
+        if not map_frame or not odom_frame:
+            return None
+
+        if map_frame == odom_frame:
+            return odom_pose
+
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                map_frame,
+                odom_frame,
+                Time(),
+                timeout=Duration(seconds=timeout_s),
+            )
+            return self._apply_transform_to_pose_2d(tf.transform, odom_pose)
+        except Exception:
+            return None
+
+    def _odom_pose_at_in_map_frame(self, t_ns: int, timeout_s: float) -> Optional[Pose2D]:
+        odom_pose = self._odom_pose_at(t_ns)
+        if odom_pose is None:
+            return None
+
+        map_frame = str(self.get_parameter("map_frame").value).lstrip("/")
+        odom_frame = str(self.get_parameter("odom_frame").value).lstrip("/")
+
+        if not map_frame or not odom_frame:
+            return None
+        if map_frame == odom_frame:
+            return odom_pose
+
+        try:
+            stamp = Time(nanoseconds=int(t_ns)) if int(t_ns) > 0 else Time()
+            tf = self.tf_buffer.lookup_transform(
+                map_frame,
+                odom_frame,
+                stamp,
+                timeout=Duration(seconds=timeout_s),
+            )
+            return self._apply_transform_to_pose_2d(tf.transform, odom_pose)
+        except Exception:
+            # Fallback to latest transform if exact-time lookup is unavailable
+            return self._odom_pose_in_map_frame(odom_pose, timeout_s)
+
+    def _lookup_tf_pose_in_map_frame(self, t_ns: int, timeout_s: float) -> Optional[Pose2D]:
+        map_frame = str(self.get_parameter("map_frame").value).lstrip("/")
+        base_frame = str(self.get_parameter("base_frame").value).lstrip("/")
+        if not map_frame or not base_frame:
+            return None
+
+        try:
+            stamp = Time(nanoseconds=int(t_ns)) if int(t_ns) > 0 else Time()
+            tf = self.tf_buffer.lookup_transform(
+                map_frame,
+                base_frame,
+                stamp,
+                timeout=Duration(seconds=timeout_s),
+            )
+        except Exception:
+            if int(t_ns) > 0:
+                try:
+                    tf = self.tf_buffer.lookup_transform(
+                        map_frame,
+                        base_frame,
+                        Time(),
+                        timeout=Duration(seconds=timeout_s),
+                    )
+                except Exception:
+                    return None
+            else:
+                return None
+
+        tx = float(tf.transform.translation.x)
+        ty = float(tf.transform.translation.y)
+        yaw = self._yaw_from_transform_quaternion(tf.transform)
+        return Pose2D(tx, ty, yaw)
+
+    @staticmethod
+    def _yaw_from_transform_quaternion(transform: object) -> float:
+        qx = float(transform.rotation.x)
+        qy = float(transform.rotation.y)
+        qz = float(transform.rotation.z)
+        qw = float(transform.rotation.w)
+        siny_cosp = 2.0 * (qw * qz + qx * qy)
+        cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def _apply_transform_to_pose_2d(self, transform: object, pose: Pose2D) -> Pose2D:
+        x, y = self._apply_transform_2d(transform, pose.x, pose.y)
+        yaw_offset = self._yaw_from_transform_quaternion(transform)
+        return Pose2D(x, y, wrap_to_pi(pose.yaw + yaw_offset))
 
     # =======================
     # TF publishing (odom->base_link)
     # =======================
-    def _publish_odom_to_base_tf(self) -> None:
+    def _publish_odom_to_base_tf(self, stamp=None) -> None:
         if not bool(self.get_parameter("publish_odom_to_base_tf").value):
             return
 
@@ -796,7 +966,7 @@ class WaypointTrajNode(Node):
             sp = self.get_parameter("start_pose").value
             pose_for_tf = Pose2D(float(sp[0]), float(sp[1]), float(sp[2]))
 
-        now = self.get_clock().now().to_msg()
+        now = stamp if stamp is not None else self.get_clock().now().to_msg()
         t = TransformStamped()
         t.header.stamp = now
         t.header.frame_id = odom_frame
@@ -882,6 +1052,9 @@ class WaypointTrajNode(Node):
             return [(newest_1.scan, t1)]
 
         t1 = self._sample_time_ns(newest_1, use_arrival_stamp)
+        t2 = self._sample_time_ns(newest_2, use_arrival_stamp)
+
+        # Build best pair candidates in both directions and keep the lower-skew pair.
         best_2: Optional[ScanSample] = None
         best_skew_ns = sys.maxsize
         for candidate in self._scan2_buffer:
@@ -891,11 +1064,6 @@ class WaypointTrajNode(Node):
                 best_skew_ns = skew
                 best_2 = candidate
 
-        if best_2 is not None and (max_scan_pair_skew_ns <= 0 or best_skew_ns <= max_scan_pair_skew_ns):
-            t2 = self._sample_time_ns(best_2, use_arrival_stamp)
-            return [(newest_1.scan, t1), (best_2.scan, t2)]
-
-        t2 = self._sample_time_ns(newest_2, use_arrival_stamp)
         best_1: Optional[ScanSample] = None
         best_skew_ns_rev = sys.maxsize
         for candidate in self._scan1_buffer:
@@ -905,26 +1073,62 @@ class WaypointTrajNode(Node):
                 best_skew_ns_rev = skew
                 best_1 = candidate
 
-        if best_1 is not None and (max_scan_pair_skew_ns <= 0 or best_skew_ns_rev <= max_scan_pair_skew_ns):
+        candidates: List[Tuple[int, ScanSample, int, ScanSample, int]] = []
+        if best_2 is not None:
+            t2_best = self._sample_time_ns(best_2, use_arrival_stamp)
+            candidates.append((best_skew_ns, newest_1, t1, best_2, t2_best))
+        if best_1 is not None:
             t1_best = self._sample_time_ns(best_1, use_arrival_stamp)
-            return [(best_1.scan, t1_best), (newest_2.scan, t2)]
+            candidates.append((best_skew_ns_rev, best_1, t1_best, newest_2, t2))
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0])
+            pair_skew_ns, scan_a, t_a, scan_b, t_b = candidates[0]
+            if max_scan_pair_skew_ns > 0 and pair_skew_ns > max_scan_pair_skew_ns:
+                pair_skew_s = pair_skew_ns * 1e-9
+                self._warn_lidar_throttled(
+                    "LiDAR streams out of sync; dropping over-skewed pair and using newest scan only "
+                    f"({pair_skew_s:.3f}s skew > {max_scan_pair_skew_s:.3f}s)"
+                )
+                newer_scan = scan_a if t_a >= t_b else scan_b
+                t_newer = self._sample_time_ns(newer_scan, use_arrival_stamp)
+                return [(newer_scan.scan, t_newer)]
+            return [(scan_a.scan, t_a), (scan_b.scan, t_b)]
 
         newer_scan = newest_1 if t1 >= t2 else newest_2
-        older_scan = newest_2 if t1 >= t2 else newest_1
         pair_skew_s = abs(t1 - t2) * 1e-9
         self._warn_lidar_throttled(
-            "LiDAR streams out of sync; using newest scan only "
-            f"({pair_skew_s:.3f}s skew > {max_scan_pair_skew_s:.3f}s): "
-            f"keeping {newer_scan.scan.header.frame_id}, dropping {older_scan.scan.header.frame_id}"
+            "LiDAR streams out of sync and pairing candidate unavailable; using newest scan only "
+            f"({pair_skew_s:.3f}s skew)"
         )
 
         t_newer = self._sample_time_ns(newer_scan, use_arrival_stamp)
         return [(newer_scan.scan, t_newer)]
 
     def on_scan1(self, msg: LaserScan) -> None:
+        expected_frame = str(self.get_parameter("lidar1_frame_id").value).lstrip("/")
+        frame = (msg.header.frame_id or "").lstrip("/")
+        if not frame:
+            self._warn_lidar_throttled("LiDAR1 scan received with empty frame_id; dropping sample")
+            return
+        if expected_frame and frame != expected_frame:
+            self._warn_lidar_throttled(
+                f"LiDAR1 frame_id mismatch: received '{frame}', expected '{expected_frame}'; dropping sample"
+            )
+            return
         self._push_scan_sample(self._scan1_buffer, msg)
 
     def on_scan2(self, msg: LaserScan) -> None:
+        expected_frame = str(self.get_parameter("lidar2_frame_id").value).lstrip("/")
+        frame = (msg.header.frame_id or "").lstrip("/")
+        if not frame:
+            self._warn_lidar_throttled("LiDAR2 scan received with empty frame_id; dropping sample")
+            return
+        if expected_frame and frame != expected_frame:
+            self._warn_lidar_throttled(
+                f"LiDAR2 frame_id mismatch: received '{frame}', expected '{expected_frame}'; dropping sample"
+            )
+            return
         self._push_scan_sample(self._scan2_buffer, msg)
 
     # =======================
@@ -1220,7 +1424,7 @@ class WaypointTrajNode(Node):
         self._latest_fused_points_base = list(fused_points)
         return self._build_scan_from_points(
             fused_points,
-            now_t.to_msg(),
+            self.get_clock().now().to_msg(),
             str(self.get_parameter("base_frame").value),
             float(self.get_parameter("fused_angle_increment_deg").value),
         )
@@ -1446,6 +1650,8 @@ class WaypointTrajNode(Node):
         self.persistent_evidence.fill(0)
         if self.mapping_logodds is not None:
             self.mapping_logodds.fill(0)
+        if self._mapping_occ_state is not None:
+            self._mapping_occ_state.fill(0)
 
     def _init_mapping_grid(self, center_pose: Pose2D) -> None:
         area_m = max(1.0, float(self.get_parameter("mapping_area_size_m").value))
@@ -1464,6 +1670,7 @@ class WaypointTrajNode(Node):
             origin_y=origin_y,
         )
         self.mapping_logodds = np.zeros((height, width), dtype=np.int16)
+        self._mapping_occ_state = np.zeros((height, width), dtype=np.uint8)
 
     def _mapping_world_to_grid(self, x: float, y: float) -> Tuple[int, int]:
         if self.mapping_grid_spec is None:
@@ -1494,7 +1701,14 @@ class WaypointTrajNode(Node):
         lo_free = max(1, int(self.get_parameter("mapping_free_logodd_dec").value))
         lo_min = int(self.get_parameter("mapping_logodd_min").value)
         lo_max = int(self.get_parameter("mapping_logodd_max").value)
-        range_max = float(fused.range_max)
+        no_return_free_ratio = min(1.0, max(0.0, float(self.get_parameter("mapping_no_return_free_ratio").value)))
+        no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
+        max_range = float(self.get_parameter("max_lidar_range_m").value)
+        rmin = float(fused.range_min)
+        use_excl = bool(self.get_parameter("robot_exclusion_enable").value)
+        excl_r = float(self.get_parameter("robot_exclusion_radius_m").value)
+        excl_r2 = excl_r * excl_r
+        range_max = min(float(fused.range_max), max_range)
         step_m = max(self.mapping_grid_spec.res * 0.8, 0.02)
 
         a = float(fused.angle_min)
@@ -1502,8 +1716,16 @@ class WaypointTrajNode(Node):
 
         for r in fused.ranges:
             rr = float(r)
-            finite_hit = math.isfinite(rr)
-            free_to = max(0.0, rr - 0.5 * self.mapping_grid_spec.res) if finite_hit else max(0.0, range_max)
+            finite_hit = (
+                math.isfinite(rr)
+                and rr >= rmin
+                and rr < (float(fused.range_max) - no_hit_eps)
+                and rr <= max_range
+            )
+            if finite_hit:
+                free_to = max(0.0, rr - 0.5 * self.mapping_grid_spec.res)
+            else:
+                free_to = max(0.0, range_max * no_return_free_ratio)
 
             if free_to > 1e-6:
                 n_steps = max(1, int(math.floor(free_to / step_m)))
@@ -1511,6 +1733,8 @@ class WaypointTrajNode(Node):
                     d = min(free_to, j * step_m)
                     xb = d * math.cos(a)
                     yb = d * math.sin(a)
+                    if use_excl and (xb * xb + yb * yb) <= excl_r2:
+                        continue
                     xm, ym = self._se2_apply(base_pose_now, xb, yb)
                     ix, iy = self._mapping_world_to_grid(xm, ym)
                     if not self._mapping_in_bounds(ix, iy):
@@ -1520,6 +1744,9 @@ class WaypointTrajNode(Node):
             if finite_hit:
                 xb = rr * math.cos(a)
                 yb = rr * math.sin(a)
+                if use_excl and (xb * xb + yb * yb) <= excl_r2:
+                    a += inc
+                    continue
                 xm, ym = self._se2_apply(base_pose_now, xb, yb)
                 ix, iy = self._mapping_world_to_grid(xm, ym)
                 if self._mapping_in_bounds(ix, iy):
@@ -1537,36 +1764,77 @@ class WaypointTrajNode(Node):
         lo_free = max(1, int(self.get_parameter("mapping_free_logodd_dec").value))
         lo_min = int(self.get_parameter("mapping_logodd_min").value)
         lo_max = int(self.get_parameter("mapping_logodd_max").value)
+        no_return_free_ratio = min(1.0, max(0.0, float(self.get_parameter("mapping_no_return_free_ratio").value)))
+        use_excl = bool(self.get_parameter("robot_exclusion_enable").value)
+        excl_r = float(self.get_parameter("robot_exclusion_radius_m").value)
+        excl_r2 = excl_r * excl_r
         step_m = max(self.mapping_grid_spec.res * 0.8, 0.02)
         max_range = float(self.get_parameter("max_lidar_range_m").value)
         no_hit_eps = float(self.get_parameter("scan_no_hit_eps_m").value)
-        motion_comp = bool(self.get_parameter("motion_compensate").value) and self.have_odom_pose
+        timeout_s = max(0.0, float(self.get_parameter("pose_tf_timeout_s").value))
+        odom_stale_timeout_s = max(0.05, float(self.get_parameter("odom_stale_timeout_s").value))
+        map_frame = str(self.get_parameter("map_frame").value).lstrip("/")
+        odom_frame = str(self.get_parameter("odom_frame").value).lstrip("/")
+        base_stride = max(1, int(self.get_parameter("scan_beam_stride").value))
+        stride = max(base_stride, int(self._effective_scan_stride))
+        beam_budget = max(64, int(self._scan_beam_budget_per_scan))
 
         for scan_msg, stamp_ns in scan_pairs:
             tr = self._lookup_base_from_scan(scan_msg.header.frame_id)
             if tr is None:
                 continue
 
-            if motion_comp:
-                base_pose_scan = self._odom_pose_at(stamp_ns) or base_pose_now
-            else:
-                base_pose_scan = base_pose_now
+            # Mapping always integrates each scan at its own odom-timestamped pose
+            # (encoder-driven STM32 state estimator), so obstacles persist globally
+            # as the robot moves.
+            odom_is_fresh = (
+                self._last_odom_rx_ns > 0
+                and (self.get_clock().now().nanoseconds - self._last_odom_rx_ns) <= int(odom_stale_timeout_s * 1e9)
+            )
 
-            a = float(scan_msg.angle_min)
+            base_pose_scan: Optional[Pose2D] = None
+            if odom_is_fresh:
+                base_pose_scan = self._odom_pose_at_in_map_frame(stamp_ns, timeout_s)
+
+            if base_pose_scan is None:
+                base_pose_scan = self._lookup_tf_pose_in_map_frame(stamp_ns, timeout_s)
+
+            if base_pose_scan is None:
+                if map_frame == odom_frame:
+                    base_pose_scan = self._odom_pose_at(stamp_ns) or base_pose_now
+                else:
+                    self._warn_tf_throttled(
+                        "Skipping mapping scan integration: cannot resolve scan-time pose into map frame."
+                    )
+                    continue
+
+            a0 = float(scan_msg.angle_min)
             inc = float(scan_msg.angle_increment)
             rmin = float(scan_msg.range_min)
             rmax = min(float(scan_msg.range_max), max_range)
 
-            for r in scan_msg.ranges:
-                rr = float(r)
+            processed = 0
+            ranges = scan_msg.ranges
+            for i in range(0, len(ranges), stride):
+                if processed >= beam_budget:
+                    break
+                processed += 1
+
+                a = a0 + i * inc
+                rr = float(ranges[i])
                 finite_hit = math.isfinite(rr) and rr >= rmin and rr < (float(scan_msg.range_max) - no_hit_eps) and rr <= max_range
-                free_to = max(0.0, rr - 0.5 * self.mapping_grid_spec.res) if finite_hit else max(0.0, rmax)
+                if finite_hit:
+                    free_to = max(0.0, rr - 0.5 * self.mapping_grid_spec.res)
+                else:
+                    free_to = max(0.0, rmax * no_return_free_ratio)
 
                 if free_to > 1e-6:
                     n_steps = max(1, int(math.floor(free_to / step_m)))
                     for j in range(1, n_steps + 1):
                         d = min(free_to, j * step_m)
                         xb, yb = self._apply_transform_2d(tr, d * math.cos(a), d * math.sin(a))
+                        if use_excl and (xb * xb + yb * yb) <= excl_r2:
+                            continue
                         xm, ym = self._se2_apply(base_pose_scan, xb, yb)
                         ix, iy = self._mapping_world_to_grid(xm, ym)
                         if not self._mapping_in_bounds(ix, iy):
@@ -1575,19 +1843,29 @@ class WaypointTrajNode(Node):
 
                 if finite_hit:
                     xb, yb = self._apply_transform_2d(tr, rr * math.cos(a), rr * math.sin(a))
+                    if use_excl and (xb * xb + yb * yb) <= excl_r2:
+                        continue
                     xm, ym = self._se2_apply(base_pose_scan, xb, yb)
                     ix, iy = self._mapping_world_to_grid(xm, ym)
                     if self._mapping_in_bounds(ix, iy):
                         self._mapping_update_cell(iy, ix, lo_hit, lo_min, lo_max)
 
-                a += inc
-
     def _mapping_occ_grid(self) -> np.ndarray:
         if self.mapping_logodds is None:
             return np.zeros((1, 1), dtype=np.int8)
-        occ_thresh = int(self.get_parameter("mapping_occ_threshold").value)
+        occ_set = int(self.get_parameter("mapping_occ_set_threshold").value)
+        occ_clear = int(self.get_parameter("mapping_occ_clear_threshold").value)
+        if occ_clear >= occ_set:
+            occ_clear = occ_set - 1
+
+        if self._mapping_occ_state is None or self._mapping_occ_state.shape != self.mapping_logodds.shape:
+            self._mapping_occ_state = np.zeros(self.mapping_logodds.shape, dtype=np.uint8)
+
+        self._mapping_occ_state[self.mapping_logodds >= occ_set] = 1
+        self._mapping_occ_state[self.mapping_logodds <= occ_clear] = 0
+
         occ = np.zeros(self.mapping_logodds.shape, dtype=np.int8)
-        occ[self.mapping_logodds >= occ_thresh] = 100
+        occ[self._mapping_occ_state > 0] = 100
         return occ
 
     def _project_saved_map_to_static(self, saved_occ: np.ndarray, saved_meta: Dict[str, float]) -> None:
@@ -1618,12 +1896,90 @@ class WaypointTrajNode(Node):
         self.static_occ = out
         self.persistent_evidence.fill(0)
 
-    def _save_static_map(self, output_path: str) -> None:
-        if self.mapping_grid_spec is None:
-            raise RuntimeError("Mapping grid not initialized")
+    def _project_slam_map_to_static(self, slam_msg: OccupancyGrid) -> None:
+        """Project a live SLAM map into runtime static layer; unknown cells do not overwrite prior state."""
+        width = int(slam_msg.info.width)
+        height = int(slam_msg.info.height)
+        if width <= 0 or height <= 0:
+            return
 
-        mapping_occ = self._mapping_occ_grid()
-        gs = self.mapping_grid_spec
+        raw = np.asarray(slam_msg.data, dtype=np.int16)
+        if raw.size != width * height:
+            return
+
+        raw = raw.reshape((height, width))
+        occ_mask = raw >= 50
+        free_mask = (raw >= 0) & (raw < 50)
+
+        src_gs = GridSpec(
+            res=float(slam_msg.info.resolution),
+            width=width,
+            height=height,
+            origin_x=float(slam_msg.info.origin.position.x),
+            origin_y=float(slam_msg.info.origin.position.y),
+        )
+
+        out = self.static_occ.copy()
+
+        if np.any(free_mask):
+            ys, xs = np.where(free_mask)
+            wx = src_gs.origin_x + (xs.astype(np.float64) + 0.5) * src_gs.res
+            wy = src_gs.origin_y + (ys.astype(np.float64) + 0.5) * src_gs.res
+            gx = ((wx - self.gs_map.origin_x) / self.gs_map.res).astype(np.int32)
+            gy = ((wy - self.gs_map.origin_y) / self.gs_map.res).astype(np.int32)
+            valid = (gx >= 0) & (gx < self.gs_map.width) & (gy >= 0) & (gy < self.gs_map.height)
+            out[gy[valid], gx[valid]] = 0
+
+        if np.any(occ_mask):
+            ys, xs = np.where(occ_mask)
+            wx = src_gs.origin_x + (xs.astype(np.float64) + 0.5) * src_gs.res
+            wy = src_gs.origin_y + (ys.astype(np.float64) + 0.5) * src_gs.res
+            gx = ((wx - self.gs_map.origin_x) / self.gs_map.res).astype(np.int32)
+            gy = ((wy - self.gs_map.origin_y) / self.gs_map.res).astype(np.int32)
+            valid = (gx >= 0) & (gx < self.gs_map.width) & (gy >= 0) & (gy < self.gs_map.height)
+            out[gy[valid], gx[valid]] = 100
+
+        self.static_occ = out
+
+    def _save_static_map(self, output_path: str) -> None:
+        mapping_occ: np.ndarray
+        gs: GridSpec
+        logodds_to_save: np.ndarray
+
+        if self.mapping_active and self._latest_slam_map is not None:
+            slam_msg = self._latest_slam_map
+            width = int(slam_msg.info.width)
+            height = int(slam_msg.info.height)
+            if width <= 0 or height <= 0:
+                raise RuntimeError("Latest SLAM map has invalid dimensions")
+
+            raw = np.asarray(slam_msg.data, dtype=np.int16)
+            if raw.size != width * height:
+                raise RuntimeError("Latest SLAM map data size mismatch")
+
+            raw = raw.reshape((height, width))
+            mapping_occ = np.where(raw >= 50, 100, 0).astype(np.int8)
+            gs = GridSpec(
+                res=float(slam_msg.info.resolution),
+                width=width,
+                height=height,
+                origin_x=float(slam_msg.info.origin.position.x),
+                origin_y=float(slam_msg.info.origin.position.y),
+            )
+            logodds_to_save = np.zeros((height, width), dtype=np.int16)
+            self.mapping_grid_spec = gs
+            self.mapping_logodds = logodds_to_save.copy()
+        else:
+            if self.mapping_grid_spec is None:
+                raise RuntimeError("Mapping grid not initialized")
+            mapping_occ = self._mapping_occ_grid()
+            gs = self.mapping_grid_spec
+            logodds_to_save = (
+                self.mapping_logodds.astype(np.int16)
+                if self.mapping_logodds is not None
+                else np.zeros((gs.height, gs.width), dtype=np.int16)
+            )
+
         meta = {
             "frame": self.get_parameter("map_frame").value,
             "base_frame": self.get_parameter("base_frame").value,
@@ -1641,7 +1997,7 @@ class WaypointTrajNode(Node):
         np.savez_compressed(
             output_path,
             occ=mapping_occ.astype(np.int8),
-            logodds=self.mapping_logodds.astype(np.int16) if self.mapping_logodds is not None else np.zeros((1, 1), dtype=np.int16),
+            logodds=logodds_to_save,
             meta=json.dumps(meta),
         )
 
@@ -1717,6 +2073,9 @@ class WaypointTrajNode(Node):
                         self.mapping_logodds = np.zeros((self.mapping_grid_spec.height, self.mapping_grid_spec.width), dtype=np.int16)
                 else:
                     self.mapping_logodds = np.zeros((self.mapping_grid_spec.height, self.mapping_grid_spec.width), dtype=np.int16)
+
+                self._mapping_occ_state = np.zeros((self.mapping_grid_spec.height, self.mapping_grid_spec.width), dtype=np.uint8)
+                self._mapping_occ_state[np.asarray(occ, dtype=np.int8) >= 100] = 1
 
                 return True, f"Loaded saved map and projected to runtime grid: {input_path}"
 
@@ -1845,30 +2204,51 @@ class WaypointTrajNode(Node):
     # =======================
     # Waypoints parsing + removal
     # =======================
-    def _transform_point_to_map(self, x: float, y: float, src_frame: str) -> Optional[Tuple[float, float]]:
+    def _transform_point_to_map(
+        self,
+        x: float,
+        y: float,
+        src_frame: str,
+        stamp: Optional[Time] = None,
+    ) -> Optional[Tuple[float, float]]:
         map_frame = self.get_parameter("map_frame").value
         sf = (src_frame or "").lstrip("/")
-        if sf == "" or sf == map_frame:
+
+        if sf == "":
+            self._warn_tf_throttled("Received waypoint with empty frame_id; dropping waypoint.")
+            return None
+
+        if sf == map_frame:
             return (x, y)
 
-        try:
-            tf = self.tf_buffer.lookup_transform(
-                map_frame,
-                sf,
-                Time(),
-                timeout=Duration(seconds=0.2),
-            )
-            return self._apply_transform_2d(tf.transform, x, y)
-        except Exception as e:
-            # RViz tools often emit in fixed frame (map/odom/world). If TF is not yet available
-            # between these aliases, accept the point as-is instead of silently dropping it.
-            if sf in {"map", "odom", "world"} and map_frame in {"map", "odom", "world"}:
-                self._warn_tf_throttled(
-                    f"No TF {map_frame} <- {sf}; using point without transform (assuming aligned frames)."
+        lookup_times: List[Time] = []
+        if stamp is not None:
+            lookup_times.append(stamp)
+            if stamp.nanoseconds != 0:
+                lookup_times.append(Time())
+        else:
+            lookup_times.append(Time())
+
+        last_exc: Optional[Exception] = None
+        for lookup_time in lookup_times:
+            try:
+                tf = self.tf_buffer.lookup_transform(
+                    map_frame,
+                    sf,
+                    lookup_time,
+                    timeout=Duration(seconds=0.2),
                 )
-                return (x, y)
-            self._warn_tf_throttled(f"No TF {map_frame} <- {sf} for RViz point. ({e})")
-            return None
+                return self._apply_transform_2d(tf.transform, x, y)
+            except Exception as exc:
+                last_exc = exc
+
+        if len(lookup_times) > 1:
+            self._warn_tf_throttled(
+                f"Failed to transform waypoint {sf} -> {map_frame} at stamped time and latest TF; dropping waypoint. ({last_exc})"
+            )
+        else:
+            self._warn_tf_throttled(f"No TF {map_frame} <- {sf} for waypoint; dropping waypoint. ({last_exc})")
+        return None
 
     def _queue_waypoint(self, x: float, y: float) -> None:
         self._pending_waypoints.append((float(x), float(y)))
@@ -1940,13 +2320,23 @@ class WaypointTrajNode(Node):
         return True
 
     def on_clicked_point(self, msg: PointStamped) -> None:
-        pt = self._transform_point_to_map(float(msg.point.x), float(msg.point.y), msg.header.frame_id)
+        pt = self._transform_point_to_map(
+            float(msg.point.x),
+            float(msg.point.y),
+            msg.header.frame_id,
+            Time.from_msg(msg.header.stamp),
+        )
         if pt is None:
             return
         self._queue_waypoint(pt[0], pt[1])
 
     def on_nav_goal(self, msg: PoseStamped) -> None:
-        pt = self._transform_point_to_map(float(msg.pose.position.x), float(msg.pose.position.y), msg.header.frame_id)
+        pt = self._transform_point_to_map(
+            float(msg.pose.position.x),
+            float(msg.pose.position.y),
+            msg.header.frame_id,
+            Time.from_msg(msg.header.stamp),
+        )
         if pt is None:
             return
         self._queue_waypoint(pt[0], pt[1])
@@ -1954,7 +2344,7 @@ class WaypointTrajNode(Node):
     def on_remove_waypoint_pose(self, msg: PoseWithCovarianceStamped) -> None:
         raw_x = float(msg.pose.pose.position.x)
         raw_y = float(msg.pose.pose.position.y)
-        pt = self._transform_point_to_map(raw_x, raw_y, msg.header.frame_id)
+        pt = self._transform_point_to_map(raw_x, raw_y, msg.header.frame_id, Time.from_msg(msg.header.stamp))
         remove_radius = float(self.get_parameter("remove_waypoint_radius_m").value)
 
         candidates: List[Tuple[float, float, str]] = []
@@ -3461,12 +3851,46 @@ class WaypointTrajNode(Node):
         self._safe_publish(pub, msg, "grid")
 
     def _publish_map_if_needed(self, frame_id: str) -> None:
-        map_crc = zlib.crc32(self.static_occ.tobytes())
-        if self._last_published_map_crc == map_crc:
+        now_ns = self.get_clock().now().nanoseconds
+        if self._latest_slam_map is not None and (now_ns - self._latest_slam_map_ns) < int(3.0 * 1e9):
+            msg = self._latest_slam_map
+            map_crc = zlib.crc32(np.asarray(msg.data, dtype=np.int8).tobytes())
+            unchanged = (self._last_published_map_crc == map_crc)
+            if unchanged and (now_ns - self._last_map_publish_ns) < self._map_republish_period_ns:
+                return
+            self._safe_publish(self.map_pub, msg, "map")
+            self._last_published_map_crc = map_crc
+            self._last_map_publish_ns = now_ns
             return
 
-        self._publish_grid(self.map_pub, frame_id, self.static_occ)
+        map_grid = self.static_occ
+        map_gs = self.gs_map
+
+        if self.mapping_active and self.mapping_grid_spec is not None and self.mapping_logodds is not None:
+            map_grid = self._mapping_occ_grid()
+            map_gs = self.mapping_grid_spec
+
+        map_crc = zlib.crc32(map_grid.tobytes())
+        unchanged = (self._last_published_map_crc == map_crc)
+        if unchanged and (now_ns - self._last_map_publish_ns) < self._map_republish_period_ns:
+            return
+
+        self._publish_grid(self.map_pub, frame_id, map_grid, gs=map_gs)
         self._last_published_map_crc = map_crc
+        self._last_map_publish_ns = now_ns
+
+    def _has_fresh_slam_map(self, now_ns: Optional[int] = None, max_age_s: float = 3.0) -> bool:
+        if self._latest_slam_map is None:
+            return False
+        if now_ns is None:
+            now_ns = self.get_clock().now().nanoseconds
+        return (now_ns - self._latest_slam_map_ns) < int(max_age_s * 1e9)
+
+    def on_slam_map(self, msg: OccupancyGrid) -> None:
+        self._latest_slam_map = msg
+        self._latest_slam_map_ns = self.get_clock().now().nanoseconds
+        if self.mapping_active:
+            self._project_slam_map_to_static(msg)
 
     def publish_waypoints(self, wps: List[Tuple[float, float]]) -> None:
         ma = MarkerArray()
@@ -3725,6 +4149,7 @@ class WaypointTrajNode(Node):
     # =======================
     def on_timer(self) -> None:
         timer_start_ns = self.get_clock().now().nanoseconds
+        now_ns = timer_start_ns
         self.consume_add_wp()
 
         # base pose now (in odom/map_frame)
@@ -3739,8 +4164,10 @@ class WaypointTrajNode(Node):
         # remove reached waypoints
         self._pop_reached_waypoints(base_pose_now)
 
-        # publish odom->base tf if requested
-        self._publish_odom_to_base_tf()
+        # publish odom->base tf fallback only when odometry has not arrived yet;
+        # normal runtime publishing happens in on_odom at odometry rate.
+        if not self.have_odom_pose:
+            self._publish_odom_to_base_tf()
 
         # publish robot visualization (footprint circle + orientation arrow)
         self._publish_robot_visualization(base_pose_now)
@@ -3753,7 +4180,7 @@ class WaypointTrajNode(Node):
             if bool(self.get_parameter("publish_scan_match").value) and self._latest_fused_points_base:
                 scan_match = self._build_scan_from_points(
                     self._latest_fused_points_base,
-                    fused.header.stamp,
+                    self.get_clock().now().to_msg(),
                     fused.header.frame_id,
                     float(self.get_parameter("scan_match_angle_increment_deg").value),
                 )
@@ -3802,14 +4229,16 @@ class WaypointTrajNode(Node):
             local_gs = self._make_local_costmap_spec(base_pose_now)
             empty_costmap = np.zeros((local_gs.height, local_gs.width), dtype=np.int8)
             self._apply_geofence_to_costmap(empty_costmap, local_gs)
-            self._publish_grid(self.costmap_pub, frame, empty_costmap, gs=local_gs)
+            if self.costmap_pub is not None:
+                self._publish_grid(self.costmap_pub, frame, empty_costmap, gs=local_gs)
             self._finish_timer_cycle(timer_start_ns)
             return
 
         local_gs = self._make_local_costmap_spec(base_pose_now)
         local_costmap = self._build_local_costmap_from_points(self._latest_fused_points_base, base_pose_now, local_gs)
         self._apply_geofence_to_costmap(local_costmap, local_gs)
-        self._publish_grid(self.costmap_pub, frame, local_costmap, gs=local_gs)
+        if self.costmap_pub is not None:
+            self._publish_grid(self.costmap_pub, frame, local_costmap, gs=local_gs)
 
         if not self._pose_inside_geofence(
             base_pose_now,
@@ -3826,7 +4255,7 @@ class WaypointTrajNode(Node):
 
         # plan if waypoints exist
         if not wps:
-            if self.mapping_active:
+            if self.mapping_active and not self._has_fresh_slam_map(now_ns):
                 self._update_mapping_logodds_from_scan_pairs(self._latest_scan_pairs, base_pose_now)
             self._cached_traj = None
             self._last_plan_wps_sig = None
@@ -3834,7 +4263,7 @@ class WaypointTrajNode(Node):
             self._finish_timer_cycle(timer_start_ns)
             return
 
-        if self.mapping_active:
+        if self.mapping_active and not self._has_fresh_slam_map(now_ns):
             self._update_mapping_logodds_from_scan_pairs(self._latest_scan_pairs, base_pose_now)
 
         planning_costmap = self._build_planning_costmap_from_local(local_costmap, local_gs)

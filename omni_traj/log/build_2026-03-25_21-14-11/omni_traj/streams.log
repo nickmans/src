@@ -1,0 +1,35 @@
+[1.902s] Invoking command in '/home/nickolas/ros2_ws/build/omni_traj': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/nickolas/ros2_ws/build/omni_traj/build --no-deps symlink_data
+[2.508s] running develop
+[2.857s] running egg_info
+[2.857s] creating omni_traj.egg-info
+[2.892s] writing omni_traj.egg-info/PKG-INFO
+[2.893s] writing dependency_links to omni_traj.egg-info/dependency_links.txt
+[2.894s] writing entry points to omni_traj.egg-info/entry_points.txt
+[2.894s] writing requirements to omni_traj.egg-info/requires.txt
+[2.897s] writing top-level names to omni_traj.egg-info/top_level.txt
+[2.897s] writing manifest file 'omni_traj.egg-info/SOURCES.txt'
+[2.963s] reading manifest file 'omni_traj.egg-info/SOURCES.txt'
+[2.966s] writing manifest file 'omni_traj.egg-info/SOURCES.txt'
+[3.001s] running build_ext
+[3.002s] Creating /home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages/omni-traj.egg-link (link to .)
+[3.002s] Installing empty_scan_pub script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+[3.003s] Installing lidar_watchdog script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+[3.003s] Installing map_odom_startup_fallback script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+[3.005s] Installing waypoint_traj script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+[3.005s] 
+[3.005s] Installed /home/nickolas/ros2_ws/build/omni_traj
+[3.006s] running symlink_data
+[3.006s] creating /home/nickolas/ros2_ws/install/omni_traj/share/ament_index
+[3.006s] creating /home/nickolas/ros2_ws/install/omni_traj/share/ament_index/resource_index
+[3.006s] creating /home/nickolas/ros2_ws/install/omni_traj/share/ament_index/resource_index/packages
+[3.006s] symbolically linking /home/nickolas/ros2_ws/build/omni_traj/resource/omni_traj -> /home/nickolas/ros2_ws/install/omni_traj/share/ament_index/resource_index/packages
+[3.006s] symbolically linking /home/nickolas/ros2_ws/build/omni_traj/package.xml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj
+[3.006s] creating /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/launch
+[3.006s] symbolically linking /home/nickolas/ros2_ws/build/omni_traj/launch/omni_bringup.launch.py -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/launch
+[3.006s] symbolically linking /home/nickolas/ros2_ws/build/omni_traj/launch/dual_sllidar_with_mock_and_traj.launch.py -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/launch
+[3.007s] creating /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+[3.007s] symbolically linking /home/nickolas/ros2_ws/build/omni_traj/config/slam_toolbox_online_async.yaml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+[3.007s] symbolically linking /home/nickolas/ros2_ws/build/omni_traj/config/waypoint_traj.yaml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+[3.007s] symbolically linking /home/nickolas/ros2_ws/build/omni_traj/config/amcl_localization.yaml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+[3.007s] symbolically linking /home/nickolas/ros2_ws/build/omni_traj/config/nav2_dual_scan_costmaps.yaml -> /home/nickolas/ros2_ws/install/omni_traj/share/omni_traj/config
+[3.168s] Invoked command in '/home/nickolas/ros2_ws/build/omni_traj' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/nickolas/ros2_ws/build/omni_traj/build --no-deps symlink_data

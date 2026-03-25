@@ -144,11 +144,11 @@ Trajectory payload starts with a 20-byte trajectory header, followed by `n_knots
 | ID | Name | Argument | Purpose |
 |----|------|----------|---------|
 | 0 | STOP_ROS2 | optional | Stop ROS2 stack |
-| 1 | START_TRAJ | optional | Start mapping-mode trajectory generation flow |
+| 1 | START_TRAJ | optional | Autonomous localization mode (saved map + trajectory output enabled) |
 | 2 | STOP_TRAJ | optional | Stop trajectory generation/output (standby) |
-| 3 | START_RESTART_ROS2 | optional | Start/restart ROS2 stack |
+| 3 | START_RESTART_ROS2 | optional | Manual localization mode (saved map + trajectory output disabled) |
 | 4 | SHUTDOWN_PI5 | optional | Safe Pi shutdown command |
-| 5 | START_MAPPING | optional | Switch to mapping mode |
+| 5 | START_MAPPING | optional | Switch to dedicated mapping mode |
 | 6 | FINISH_MAPPING | optional | Finish mapping and switch to localization/frozen map |
 | 7 | USE_LIVE_MAP | optional | Use live mapping mode |
 | 8 | USE_FROZEN_MAP | optional | Use frozen map localization mode |
@@ -328,11 +328,12 @@ ros2 topic echo /robot/odom
 
 Current CM7 + Pi sequence:
 
-1. `traj 1` on STM32: Pi enters mapping mode and pauses trajectory output while STM32 remains in manual driving mode.
-2. `map 0` on STM32: Pi finalizes mapping, switches to localization/frozen-map mode, then resumes trajectory output.
-3. `traj 0` on STM32: Pi stops trajectory output and returns to standby behavior.
+1. `map 1` on STM32: Pi enters mapping mode and pauses trajectory output while STM32 remains in manual driving mode.
+2. `traj 1` on STM32: Pi switches to autonomous localization using the current saved map and enables trajectory output.
+3. `traj 2` on STM32: Pi switches to localization with trajectory output disabled (manual drive on STM32).
+4. `traj 0` on STM32: Pi disables trajectory output and returns to standby/manual behavior.
 
-Use this order for "manual drive while mapping, then follow only received trajectory" operation.
+Use this order for "dedicated mapping mode + explicit autonomous/manual localization modes" operation.
 
 ### Testing Connection
 

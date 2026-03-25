@@ -182,9 +182,12 @@ void handle_traj_message(uint8_t *payload, uint32_t payload_len) {
 
 ```c
 typedef enum {
-    CMD_STOP_ROS2  = 0,   // Stop ROS2 stack (phone sends this)
-    CMD_START_TRAJ = 1,   // START ROS2 stack ← Phone sends this
-    CMD_STOP_TRAJ  = 2    // STOP ROS2 stack (also accepted)
+    CMD_STOP_ROS2  = 0,   // Optional hard stop of ROS2 stack
+    CMD_START_TRAJ = 1,   // traj 1: autonomous localization/follow mode
+    CMD_STOP_TRAJ  = 2,   // traj 0: idle/manual standby mode
+    CMD_START_RESTART_ROS2 = 3, // traj2 2: manual + localization mode
+    CMD_START_MAPPING = 5, // map 1: start dedicated mapping mode
+    CMD_FINISH_MAPPING = 6 // map 0: finish mapping -> autonomous localization
 } CommandID;
 
 typedef struct __attribute__((packed)) {
@@ -213,7 +216,7 @@ void forward_phone_command_to_pi5(CommandID cmd) {
     // Send to Pi5 (non-blocking UDP)
     udp_send_nonblocking(buffer, sizeof(buffer), PI5_IP_ADDR, PI5_PORT);
     
-    log_info("Forwarded %s to Pi5", cmd == CMD_START_TRAJ ? "START" : "STOP");
+    log_info("Forwarded cmd_id=%u to Pi5", (unsigned)cmd);
 }
 ```
 
@@ -230,35 +233,26 @@ void forward_phone_command_to_pi5(CommandID cmd) {
 [forward_phone_command_to_pi5()]
     ↓ Ethernet UDP
 [Pi5 UDP Server]
-    ↓ Starts/stops ROS2 stack (dual_sllidar_with_mock_and_traj.launch.py)
+    ↓ Switches stack mode (mapping / localization / standby)
 [Pi5 sends TRAJ messages back to STM32]
 ```
 
 ### Expected Integration Points in cmd.c
 ```c
-// When phone sends START command (button press, joystick mode, etc.)
-void on_phone_start_command(void) {
-    // Your existing robot startup logic here...
-    
-    // NEW: Notify Pi5 to start trajectory generation
-    forward_phone_command_to_pi5(CMD_START_TRAJ);
-}
-
-// When phone sends STOP command (button release, safe mode, etc.)
-void on_phone_stop_command(void) {
-    // Your existing robot stop logic here...
-    
-    // NEW: Notify Pi5 to stop trajectory generation
-    forward_phone_command_to_pi5(CMD_STOP_TRAJ);
-}
+// Example mappings used by the current CM7 command parser:
+// traj 1  -> forward_phone_command_to_pi5(CMD_START_TRAJ)
+// traj 0  -> forward_phone_command_to_pi5(CMD_STOP_TRAJ)
+// traj2 2 -> forward_phone_command_to_pi5(CMD_START_RESTART_ROS2)
+// map 1   -> forward_phone_command_to_pi5(CMD_START_MAPPING)
+// map 0   -> forward_phone_command_to_pi5(CMD_FINISH_MAPPING)
 ```
 
-**CRITICAL:** The Pi5 START/STOP commands are:
-- **CMD_START_TRAJ = 1** (tells Pi5 to launch the ROS2 stack)
-- **CMD_STOP_ROS2 = 0** (tells Pi5 to stop the ROS2 stack)
-- **CMD_STOP_TRAJ = 2** (also accepted to stop the ROS2 stack)
-
-These are the ONLY commands the phone should trigger for Pi5 communication.
+**CRITICAL:** Current operational command meanings are:
+- **CMD_START_TRAJ = 1** (`traj 1`): autonomous localization/follow mode
+- **CMD_STOP_TRAJ = 2** (`traj 0`): idle/manual standby mode
+- **CMD_START_RESTART_ROS2 = 3** (`traj2 2`): manual + localization mode
+- **CMD_START_MAPPING = 5** (`map 1`): dedicated mapping mode
+- **CMD_FINISH_MAPPING = 6** (`map 0`): finish mapping and return to autonomous localization mode
 
 ---
 

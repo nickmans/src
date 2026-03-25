@@ -1,0 +1,21 @@
+[2.312s] Invoking command in '/home/nickolas/ros2_ws/build/omni_traj': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/nickolas/ros2_ws/build/omni_traj/build --no-deps symlink_data
+[2.923s] running develop
+[3.279s] running egg_info
+[3.315s] writing omni_traj.egg-info/PKG-INFO
+[3.315s] writing dependency_links to omni_traj.egg-info/dependency_links.txt
+[3.316s] writing entry points to omni_traj.egg-info/entry_points.txt
+[3.318s] writing requirements to omni_traj.egg-info/requires.txt
+[3.318s] writing top-level names to omni_traj.egg-info/top_level.txt
+[3.396s] reading manifest file 'omni_traj.egg-info/SOURCES.txt'
+[3.398s] writing manifest file 'omni_traj.egg-info/SOURCES.txt'
+[3.432s] running build_ext
+[3.435s] Creating /home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages/omni-traj.egg-link (link to .)
+[3.436s] Installing empty_scan_pub script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+[3.437s] Installing lidar_watchdog script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+[3.438s] Installing map_odom_startup_fallback script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+[3.438s] Installing waypoint_traj script to /home/nickolas/ros2_ws/install/omni_traj/lib/omni_traj
+[3.438s] 
+[3.438s] Installed /home/nickolas/ros2_ws/build/omni_traj
+[3.439s] error: can't copy '/home/nickolas/ros2_ws/build/omni_traj/launch/room_sim_mapping_rviz.launch.py': doesn't exist or not a regular file
+[3.439s] running symlink_data
+[3.587s] Invoked command in '/home/nickolas/ros2_ws/build/omni_traj' returned '1': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/nickolas/ros2_ws/build/omni_traj/build --no-deps symlink_data
