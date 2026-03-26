@@ -10,6 +10,7 @@ import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+from rclpy.time import Time
 from tf2_ros import TransformBroadcaster
 
 
@@ -28,6 +29,7 @@ class MapOdomStartupFallback(Node):
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("publish_rate_hz", 10.0)
         self.declare_parameter("grace_period_s", 25.0)
+        self.declare_parameter("timestamp_backdate_s", 0.25)
         self.declare_parameter("seed_initial_pose", True)
         self.declare_parameter("initial_pose_publish_rate_hz", 2.0)
         self.declare_parameter("initial_pose_min_duration_s", 8.0)
@@ -38,6 +40,7 @@ class MapOdomStartupFallback(Node):
         self._odom_frame = str(self.get_parameter("odom_frame").value)
         self._base_frame = str(self.get_parameter("base_frame").value)
         self._grace_period = max(0.0, float(self.get_parameter("grace_period_s").value))
+        self._timestamp_backdate_s = max(0.0, float(self.get_parameter("timestamp_backdate_s").value))
         publish_rate_hz = max(1.0, float(self.get_parameter("publish_rate_hz").value))
         self._seed_initial_pose = bool(self.get_parameter("seed_initial_pose").value)
         self._initial_pose_min_duration_s = max(
@@ -166,7 +169,9 @@ class MapOdomStartupFallback(Node):
             return
 
         t = TransformStamped()
-        t.header.stamp = self.get_clock().now().to_msg()
+        now_ns = self.get_clock().now().nanoseconds
+        stamp_ns = max(0, now_ns - int(self._timestamp_backdate_s * 1e9))
+        t.header.stamp = Time(nanoseconds=stamp_ns).to_msg()
         t.header.frame_id = self._map_frame
         t.child_frame_id = self._odom_frame
         t.transform.translation.x = 0.0

@@ -41,6 +41,16 @@ Supporting markdown files in the workspace document previous LiDAR fusion fixes 
 5. **Robot execution loop**
    - STM32 runs low-level control; Pi/ROS2 provides high-level fused perception and trajectory references.
 
+## 3.1) Frame Conventions (authoritative)
+
+- ROS2 navigation convention is used throughout mapping/planning: `base_link` +x forward, +y left, +z up.
+- LiDAR static TFs are defined in that convention (both lidars forward-facing in `base_link`).
+- STM32 pose enters via `pi_comm_server` and is converted into ROS odom convention before publication.
+  - Current default bridge transform is a `-90 deg` planar rotation (configurable).
+- IMU on CM7 is **BNO086 in UART-RVC mode** and estimator yaw is IMU-driven.
+
+If observed map motion appears rotated (e.g., robot forward appears right), verify the bridge pose-conversion parameters first.
+
 ## 4) Bringup Modes
 
 ### A) ROS2-only bench test (no hardware LiDAR)

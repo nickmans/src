@@ -31,6 +31,7 @@ def generate_launch_description() -> LaunchDescription:
     scan_match_topic = LaunchConfiguration("scan_match_topic")
     enable_map_odom_startup_fallback = LaunchConfiguration("enable_map_odom_startup_fallback")
     map_odom_startup_fallback_grace_s = LaunchConfiguration("map_odom_startup_fallback_grace_s")
+    map_odom_startup_fallback_backdate_s = LaunchConfiguration("map_odom_startup_fallback_backdate_s")
     slam_params_file = LaunchConfiguration("slam_params_file")
     enable_lidar_watchdog = LaunchConfiguration("enable_lidar_watchdog")
     lidar_watchdog_scan_timeout_s = LaunchConfiguration("lidar_watchdog_scan_timeout_s")
@@ -184,13 +185,16 @@ def generate_launch_description() -> LaunchDescription:
                 "odom_frame": odom_frame,
                 "publish_rate_hz": 12.0,
                 "grace_period_s": ParameterValue(map_odom_startup_fallback_grace_s, value_type=float),
+                "timestamp_backdate_s": ParameterValue(map_odom_startup_fallback_backdate_s, value_type=float),
             }
         ],
         condition=IfCondition(
             PythonExpression([
-                '"', enable_map_odom_startup_fallback, '" == "true" and "',
-                enable_amcl_localization, '" == "true" or "',
-                enable_slam_toolbox, '" == "true"'
+                '"', enable_map_odom_startup_fallback, '" == "true" and ((',
+                '"', enable_amcl_localization, '" == "true" and "',
+                enable_slam_toolbox, '" == "false") or ("',
+                enable_amcl_localization, '" == "false" and "',
+                enable_slam_toolbox, '" == "true"))'
             ])
         ),
     )
@@ -430,6 +434,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("scan_match_topic", default_value="/scan_match"),
             DeclareLaunchArgument("enable_map_odom_startup_fallback", default_value="true"),
             DeclareLaunchArgument("map_odom_startup_fallback_grace_s", default_value="25.0"),
+            DeclareLaunchArgument("map_odom_startup_fallback_backdate_s", default_value="0.25"),
             DeclareLaunchArgument("enable_lidar_watchdog", default_value="true"),
             DeclareLaunchArgument("lidar_watchdog_scan_timeout_s", default_value="5.0"),
             DeclareLaunchArgument("lidar_watchdog_start_retry_s", default_value="12.0"),

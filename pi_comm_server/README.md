@@ -58,8 +58,12 @@ Production-ready UDP communication server for OMNI robot stack. Runs on Raspberr
 
 **STM32 → Pi (5 Hz):**
 - POSE messages: Robot pose and twist
-    - Pose: `x,y,yaw` interpreted in `odom` frame
-    - Twist: `vx,vy,wz` interpreted in `base_link` (body) frame
+    - Incoming `x,y,yaw,vx,vy,wz` are STM32-estimator values.
+    - Bridge converts STM32 pose convention to ROS odom/base_link convention before publishing `/odom`.
+        - Runtime defaults in `ros2_pose_node.py`:
+            - `stm32_pose_rotation_deg = 180.0` (XY position/velocity rotation)
+            - `stm32_yaw_rotation_deg = -90.0` (heading rotation)
+            - `stm32_yaw_offset_deg = 0.0`
 - CMD messages: Commands (`START_TRAJ`, `STOP_TRAJ`, `START_RESTART_ROS2`, mapping mode commands)
 
 **Pi → STM32 (5 Hz):**
@@ -104,12 +108,21 @@ Production-ready UDP communication server for OMNI robot stack. Runs on Raspberr
 | Offset | Size | Type   | Name      | Description                    |
 |--------|------|--------|-----------|--------------------------------|
 | 24-27  | 4    | uint32 | pose_t_ms | Pose timestamp (ms)            |
-| 28-31  | 4    | float  | x         | Position x (meters, odom frame) |
-| 32-35  | 4    | float  | y         | Position y (meters, odom frame) |
-| 36-39  | 4    | float  | yaw       | Orientation (radians, [-π, π]) |
-| 40-43  | 4    | float  | vx        | Linear x (m/s, base_link/body frame) |
-| 44-47  | 4    | float  | vy        | Linear y (m/s, base_link/body frame) |
-| 48-51  | 4    | float  | wz        | Angular z (rad/s, base_link/body frame) |
+| 28-31  | 4    | float  | x         | Position x (meters, STM32 frame; converted by bridge) |
+| 32-35  | 4    | float  | y         | Position y (meters, STM32 frame; converted by bridge) |
+| 36-39  | 4    | float  | yaw       | Orientation (radians, STM32 frame; converted by bridge) |
+| 40-43  | 4    | float  | vx        | Linear x (m/s, STM32 body frame; converted by bridge) |
+| 44-47  | 4    | float  | vy        | Linear y (m/s, STM32 body frame; converted by bridge) |
+| 48-51  | 4    | float  | wz        | Angular z (rad/s) |
+
+### Frame Convention Notes
+
+- Published ROS convention remains `base_link` +x forward, +y left, +z up.
+- The STM32 IMU source is **BNO086 in UART-RVC mode**; estimator yaw is IMU-driven on CM7.
+- If mapping appears rotated while obstacles are correct, tune bridge parameters in `ros2_pose_node.py`:
+    - `stm32_pose_rotation_deg`
+    - `stm32_yaw_rotation_deg`
+    - `stm32_yaw_offset_deg`
 
 ### TRAJ Message (Variable Length)
 
