@@ -57,10 +57,6 @@ waypoint_traj:
     max_wheel_jerk_rs3: 180.0
     braking_decel_safety_factor: 0.75
     max_linear_velocity_ms: 0.4
-    stm32_max_wheel_speed_rs: 11.0
-    stm32_max_wheel_accel_rs2: 13.3333333333
-    stm32_max_wheel_jerk_rs3: 200.0
-    trajectory_limit_margin: 0.95
     max_lateral_accel: 1.0
     trajectory_replan_hz: 1.5
     trajectory_replan_min_move_m: 0.05
