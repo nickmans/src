@@ -139,6 +139,7 @@ When operating with CM7 + Pi trajectory flow:
 - Send `map 1` to enter dedicated mapping mode while staying in manual driving mode.
 - Send `traj 1` to switch to autonomous localization/follow mode using the current saved map.
 - Send `traj2 2` to keep localization active while returning STM32 to manual driving mode.
+- Send `traj 3` to run autonomous waypoint following with a blank global planning map and live local costmap obstacle avoidance.
 - Send `traj 0` to return to idle/manual standby mode.
 
 Use this sequence when switching between mapping, autonomous localization, and manual-localization operation.

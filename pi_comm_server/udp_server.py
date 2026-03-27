@@ -702,6 +702,8 @@ class OMNIUDPServer:
         #   traj 1 -> autonomous trajectory following with localization on saved map
         #   traj 0 -> disable trajectory generation/sending (idle/manual standby)
         #   traj2 2 -> manual driving on STM32 with AMCL localization active on Pi
+        #   traj 3 -> autonomous trajectory following with blank global map
+        #             and local costmap obstacle avoidance
         #   map 1 -> dedicated mapping mode
         if cmd.cmd_id == CommandID.START_TRAJ:
             logger.info("START_TRAJ received; enabling autonomous localization mode using saved map")
@@ -789,6 +791,44 @@ class OMNIUDPServer:
                     pre_wait_s=0.3,
                 )
                 logger.info("Localization mode active; STM32 remains in manual mode (no trajectory streaming)")
+            return
+
+        if cmd.cmd_id == CommandID.START_TRAJ_LOCAL:
+            logger.info(
+                "START_TRAJ_LOCAL received; enabling autonomous mode with blank global map "
+                "and local costmap avoidance"
+            )
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+
+            self.set_trajectory_active(False)
+            with self.traj_lock:
+                self._active_traj_signature = None
+                self._active_traj_t0_ms = None
+                self._last_valid_traj = None
+
+            ok_stack = self._switch_stack_mode_with_retries("standby", attempts=2, retry_delay_s=2.0)
+            if not ok_stack:
+                logger.warning("START_TRAJ_LOCAL failed to switch ROS2 stack to standby mode")
+
+            ok_blank = False
+            if ok_stack:
+                ok_blank = self._call_mapping_service_with_retries(
+                    service_label="START_TRAJ_LOCAL->/mapping/use_blank",
+                    call_fn=self.ros2_bridge.use_blank_map_mode,
+                    attempts=4,
+                    retry_delay_s=0.6,
+                    pre_wait_s=0.3,
+                )
+
+            if not ok_blank:
+                logger.warning(
+                    "START_TRAJ_LOCAL could not confirm blank global map mode; "
+                    "trajectory output remains disabled"
+                )
+                return
+
+            self.set_trajectory_active(True)
+            logger.info("Blank global map mode active; trajectory streaming enabled")
             return
 
         if cmd.cmd_id == CommandID.STOP_ROS2:
@@ -1101,12 +1141,20 @@ class OMNIUDPServer:
                 return None
 
             vx, vy = path_velocities[idx]
-            knots.append((float(x), float(y), float(yaw_opt), float(vx), float(vy)))
+            x_stm, y_stm, yaw_stm, vx_stm, vy_stm, _ = self.ros2_bridge.pose_node.transform_ros_pose_to_stm(
+                float(x),
+                float(y),
+                float(yaw_opt),
+                float(vx),
+                float(vy),
+                0.0,
+            )
+            knots.append((x_stm, y_stm, yaw_stm, vx_stm, vy_stm))
 
         # Keep a stable trajectory start timestamp until knots materially change.
         # Resetting t0 every send causes STM32 to keep replaying early knots.
-        first_x, first_y, _ = path_points[0]
-        last_x, last_y, _ = path_points[-1]
+        first_x, first_y = knots[0][0], knots[0][1]
+        last_x, last_y = knots[-1][0], knots[-1][1]
         traj_signature = (
             len(path_points),
             round(float(first_x), 4),
@@ -1162,6 +1210,7 @@ class ROS2Bridge:
         self.mapping_finish_client = self.path_node.create_client(Trigger, "/mapping/finish")
         self.mapping_use_live_client = self.path_node.create_client(Trigger, "/mapping/use_live")
         self.mapping_use_frozen_client = self.path_node.create_client(Trigger, "/mapping/use_frozen")
+        self.mapping_use_blank_client = self.path_node.create_client(Trigger, "/mapping/use_blank")
 
         self.executor = MultiThreadedExecutor()
         self.executor.add_node(self.pose_node)
@@ -1345,6 +1394,16 @@ class ROS2Bridge:
         return self._call_trigger(
             self.mapping_use_frozen_client,
             "/mapping/use_frozen",
+            timeout_sec=2.0,
+            attempts=3,
+            availability_wait_sec=1.0,
+            retry_delay_sec=0.3,
+        )
+
+    def use_blank_map_mode(self) -> bool:
+        return self._call_trigger(
+            self.mapping_use_blank_client,
+            "/mapping/use_blank",
             timeout_sec=2.0,
             attempts=3,
             availability_wait_sec=1.0,

@@ -228,6 +228,27 @@ class PosePublisherNode(Node):
         yaw_ros = self._wrap_to_pi(float(yaw) + self._yaw_rotation_rad + self._yaw_offset_rad)
         return x_ros, y_ros, yaw_ros, vx_ros, vy_ros, float(wz)
 
+    def transform_ros_pose_to_stm(
+        self,
+        x_ros: float,
+        y_ros: float,
+        yaw_ros: float,
+        vx_ros: float,
+        vy_ros: float,
+        wz_ros: float,
+    ) -> tuple[float, float, float, float, float, float]:
+        """Convert ROS odom-frame pose/twist back into STM32 convention."""
+        c = math.cos(-self._pose_rotation_rad)
+        s = math.sin(-self._pose_rotation_rad)
+
+        x_stm = c * float(x_ros) - s * float(y_ros)
+        y_stm = s * float(x_ros) + c * float(y_ros)
+        vx_stm = c * float(vx_ros) - s * float(vy_ros)
+        vy_stm = s * float(vx_ros) + c * float(vy_ros)
+        yaw_stm = self._wrap_to_pi(float(yaw_ros) - self._yaw_rotation_rad - self._yaw_offset_rad)
+
+        return x_stm, y_stm, yaw_stm, vx_stm, vy_stm, float(wz_ros)
+
     def _build_odom_covariances(self, vx: float, vy: float, wz: float):
         speed = math.hypot(float(vx), float(vy))
         wz_abs = abs(float(wz))

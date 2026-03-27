@@ -165,6 +165,7 @@ Trajectory payload starts with a 20-byte trajectory header, followed by `n_knots
 | 6 | FINISH_MAPPING | optional | Finish mapping and switch to localization/frozen map |
 | 7 | USE_LIVE_MAP | optional | Use live mapping mode |
 | 8 | USE_FROZEN_MAP | optional | Use frozen map localization mode |
+| 9 | START_TRAJ_LOCAL | optional | Autonomous waypoint mode with blank global map + local costmap avoidance |
 
 ---
 
@@ -343,8 +344,9 @@ Current CM7 + Pi sequence:
 
 1. `map 1` on STM32: Pi enters mapping mode and pauses trajectory output while STM32 remains in manual driving mode.
 2. `traj 1` on STM32: Pi switches to autonomous localization using the current saved map and enables trajectory output.
-3. `traj 2` on STM32: Pi switches to localization with trajectory output disabled (manual drive on STM32).
-4. `traj 0` on STM32: Pi disables trajectory output and returns to standby/manual behavior.
+3. `traj2 2` on STM32: Pi switches to localization with trajectory output disabled (manual drive on STM32).
+4. `traj 3` on STM32: Pi enables autonomous waypoint following on a blank global map while keeping live local costmap obstacle avoidance.
+5. `traj 0` on STM32: Pi disables trajectory output and returns to standby/manual behavior.
 
 Use this order for "dedicated mapping mode + explicit autonomous/manual localization modes" operation.
 

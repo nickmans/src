@@ -37,6 +37,7 @@ class CommandID(IntEnum):
     #   1 = traj 1 (autonomous localization on saved map)
     #   2 = traj 0 (standby/manual)
     #   3 = traj 2 (manual + localization)
+    #   9 = traj 3 (autonomous with blank global map + local costmap avoidance)
     # Historically, id=1 was named START_ROS2. Keep alias for backward
     # compatibility with legacy tooling.
     START_ROS2 = 1
@@ -48,6 +49,7 @@ class CommandID(IntEnum):
     FINISH_MAPPING = 6
     USE_LIVE_MAP = 7
     USE_FROZEN_MAP = 8
+    START_TRAJ_LOCAL = 9
 
 
 @dataclass

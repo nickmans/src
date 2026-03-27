@@ -192,6 +192,10 @@ class WaypointTrajNode(Node):
         self.declare_parameter("max_wheel_jerk_rs3", cfg("max_wheel_jerk_rs3")) # Max wheel angular jerk (rad/s^3)
         self.declare_parameter("braking_decel_safety_factor", cfg("braking_decel_safety_factor")) # Derate braking to match closed-loop realizability
         self.declare_parameter("max_linear_velocity_ms", cfg("max_linear_velocity_ms"))    # Max linear velocity (m/s)
+        self.declare_parameter("stm32_max_wheel_speed_rs", cfg("stm32_max_wheel_speed_rs"))
+        self.declare_parameter("stm32_max_wheel_accel_rs2", cfg("stm32_max_wheel_accel_rs2"))
+        self.declare_parameter("stm32_max_wheel_jerk_rs3", cfg("stm32_max_wheel_jerk_rs3"))
+        self.declare_parameter("trajectory_limit_margin", cfg("trajectory_limit_margin"))
         self.declare_parameter("max_lateral_accel", cfg("max_lateral_accel"))        # Max lateral (centripetal) accel (m/s^2)
         self.declare_parameter("trajectory_replan_hz", cfg("trajectory_replan_hz"))     # Limit heavy trajectory re-generation frequency
         self.declare_parameter("trajectory_replan_min_move_m", cfg("trajectory_replan_min_move_m"))  # Replan sooner when robot moves this far
@@ -334,6 +338,7 @@ class WaypointTrajNode(Node):
         self.srv_mapping_finish = self.create_service(Trigger, "/mapping/finish", self.handle_mapping_finish)
         self.srv_mapping_use_live = self.create_service(Trigger, "/mapping/use_live", self.handle_mapping_use_live)
         self.srv_mapping_use_frozen = self.create_service(Trigger, "/mapping/use_frozen", self.handle_mapping_use_frozen)
+        self.srv_mapping_use_blank = self.create_service(Trigger, "/mapping/use_blank", self.handle_mapping_use_blank)
 
         # Main loop rate is configurable; higher rates reduce visible pose lag.
         self._main_loop_hz = max(1.0, float(self.get_parameter("main_loop_hz").value))
@@ -2870,6 +2875,27 @@ class WaypointTrajNode(Node):
         self.get_logger().info(response.message)
         return response
 
+    def handle_mapping_use_blank(self, request, response):
+        self.mapping_active = False
+        self.use_saved_map_only = False
+        self._mapping_pose_anchor_tf = None
+        self._cached_traj = None
+        self._last_plan_wps_sig = None
+
+        # Clear any prior static/global map so planning uses blank global space.
+        self.static_occ.fill(0)
+        self.persistent_evidence.fill(0)
+        self.saved_map_bounds = None
+        self.active_geofence_bounds = None
+        self.geofence_anchor_corner = None
+        self._latest_slam_map = None
+        self._latest_slam_map_ns = 0
+
+        response.success = True
+        response.message = "Switched to blank global map mode; local LiDAR costmap avoidance remains active."
+        self.get_logger().info(response.message)
+        return response
+
     # =======================
     # Planning (A*) — unchanged / minimal
     # =======================
@@ -2947,6 +2973,31 @@ class WaypointTrajNode(Node):
         omega = r * (w1 + w2 + w3) / (3.0 * L)
         
         return vx_body, vy_body, omega
+
+    def _effective_motion_limits(self) -> Tuple[float, float, float]:
+        """Return trajectory limits clamped below STM32 controller limits."""
+        wheel_radius = max(1e-6, float(self.get_parameter("wheel_radius_m").value))
+        margin = float(self.get_parameter("trajectory_limit_margin").value)
+        margin = min(0.999, max(0.5, margin))
+
+        user_max_linear = max(1e-6, float(self.get_parameter("max_linear_velocity_ms").value))
+        user_max_accel_lin = max(1e-6, float(self.get_parameter("max_wheel_acceleration_ms2").value))
+        user_max_jerk_rs3 = max(1e-6, float(self.get_parameter("max_wheel_jerk_rs3").value))
+
+        stm32_wheel_speed = max(1e-6, float(self.get_parameter("stm32_max_wheel_speed_rs").value))
+        stm32_wheel_accel = max(1e-6, float(self.get_parameter("stm32_max_wheel_accel_rs2").value))
+        stm32_wheel_jerk = max(1e-6, float(self.get_parameter("stm32_max_wheel_jerk_rs3").value))
+
+        # Conservative omni bound: for omega=0, |wheel_speed| <= |v_body|/r.
+        max_linear_from_stm = margin * wheel_radius * stm32_wheel_speed
+        max_accel_from_stm = margin * wheel_radius * stm32_wheel_accel
+        max_jerk_from_stm = margin * stm32_wheel_jerk
+
+        max_linear = min(user_max_linear, max_linear_from_stm)
+        max_accel_lin = min(user_max_accel_lin, max_accel_from_stm)
+        max_jerk_rs3 = min(user_max_jerk_rs3, max_jerk_from_stm)
+
+        return max_linear, max_accel_lin, max_jerk_rs3
 
     def max_velocity_for_acceleration(self, v_current: float, distance: float, max_accel: float) -> float:
         """
@@ -3032,9 +3083,7 @@ class WaypointTrajNode(Node):
             v1 = [float(vys[0])]
             return v0, v1, [math.hypot(v0[0], v1[0])]
 
-        max_wheel_accel = float(self.get_parameter("max_wheel_acceleration_ms2").value)
-        max_wheel_jerk = float(self.get_parameter("max_wheel_jerk_rs3").value)
-        max_linear_vel = float(self.get_parameter("max_linear_velocity_ms").value)
+        max_linear_vel, max_wheel_accel, max_wheel_jerk = self._effective_motion_limits()
         wheel_radius = float(self.get_parameter("wheel_radius_m").value)
         wheel_radius = max(1e-6, wheel_radius)
         max_wheel_accel_rs2 = max_wheel_accel / wheel_radius
@@ -3158,8 +3207,7 @@ class WaypointTrajNode(Node):
         Assumes omega=0 (no rotation for now).
         Returns constrained (vx, vy).
         """
-        max_wheel_accel = float(self.get_parameter("max_wheel_acceleration_ms2").value)
-        max_linear_vel = float(self.get_parameter("max_linear_velocity_ms").value)
+        max_linear_vel, max_wheel_accel, _ = self._effective_motion_limits()
         
         # Magnitude of desired velocity
         v_mag = math.hypot(vx, vy)
@@ -3425,7 +3473,8 @@ class WaypointTrajNode(Node):
             alignment = vdir[0] * first_seg_tan[0] + vdir[1] * first_seg_tan[1]
             # Blend velocity direction with geometric path tangent while
             # preventing a full reverse tangent if the two are opposite.
-            w = min(0.85, speed_now / max(0.1, float(self.get_parameter("max_linear_velocity_ms").value)))
+            max_linear_vel, _, _ = self._effective_motion_limits()
+            w = min(0.85, speed_now / max(0.1, max_linear_vel))
             if alignment < -0.25:
                 w = min(w, 0.35)
             start_tan = self._normalize_vec2(
@@ -3506,11 +3555,9 @@ class WaypointTrajNode(Node):
         if len(path) < 2:
             return [], [], [], [], [], []
 
-        max_wheel_accel = float(self.get_parameter("max_wheel_acceleration_ms2").value)
-        max_wheel_jerk_rs3 = float(self.get_parameter("max_wheel_jerk_rs3").value)
+        max_linear_vel, max_wheel_accel, max_wheel_jerk_rs3 = self._effective_motion_limits()
         braking_decel_safety_factor = float(self.get_parameter("braking_decel_safety_factor").value)
         braking_decel_safety_factor = max(0.2, min(1.0, braking_decel_safety_factor))
-        max_linear_vel = float(self.get_parameter("max_linear_velocity_ms").value)
         max_lateral_accel = float(self.get_parameter("max_lateral_accel").value)
         wheel_radius = max(1e-6, float(self.get_parameter("wheel_radius_m").value))
 
@@ -3680,6 +3727,9 @@ class WaypointTrajNode(Node):
             xs, ys, yaws, velocities, dists, dt=0.01
         )
 
+        # Yaw stays tied to BNO odometry heading for this robot revision.
+        yaws_resampled = [yaw_ref] * len(xs_resampled)
+
         # Preserve STM32-reported body velocity at the first knot, converted to map frame.
         if xs_resampled:
             vx_body_start, vy_body_start = self.odom_vel_body_latest
@@ -3733,9 +3783,10 @@ class WaypointTrajNode(Node):
             return [], [], []
 
         dt_eff = max(1e-4, dt)
-        max_tan_accel = max(1e-6, float(self.get_parameter("max_wheel_acceleration_ms2").value))
+        max_linear_vel, max_tan_accel, _ = self._effective_motion_limits()
+        max_tan_accel = max(1e-6, max_tan_accel)
         max_norm_accel = max(1e-6, float(self.get_parameter("max_lateral_accel").value))
-        max_linear_vel = max(1e-6, float(self.get_parameter("max_linear_velocity_ms").value))
+        max_linear_vel = max(1e-6, max_linear_vel)
 
         out_vx = list(vxs)
         out_vy = list(vys)
