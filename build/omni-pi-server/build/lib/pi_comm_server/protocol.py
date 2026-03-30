@@ -33,13 +33,13 @@ class MessageType(IntEnum):
 class CommandID(IntEnum):
     """Command IDs for CMD messages."""
     STOP_ROS2 = 0
-    # NOTE: STM32 uses these IDs over UDP:
-    #   1 = start trajectory generation
-    #   2 = stop trajectory generation
-    #   3 = start/restart ROS2 stack
-    # Historically, this code used 1 as START_ROS2. Keep the alias for backward
-    # compatibility with existing legacy tooling, but prefer START_TRAJ/STOP_TRAJ
-    # for STM32 command semantics.
+    # STM32 runtime semantics:
+    #   1 = traj 1 (autonomous localization on saved map)
+    #   2 = traj 0 (standby/manual)
+    #   3 = traj 2 (manual + localization)
+    #   9 = traj 3 (autonomous with blank global map + local costmap avoidance)
+    # Historically, id=1 was named START_ROS2. Keep alias for backward
+    # compatibility with legacy tooling.
     START_ROS2 = 1
     START_TRAJ = 1
     STOP_TRAJ = 2
@@ -49,6 +49,7 @@ class CommandID(IntEnum):
     FINISH_MAPPING = 6
     USE_LIVE_MAP = 7
     USE_FROZEN_MAP = 8
+    START_TRAJ_LOCAL = 9
 
 
 @dataclass

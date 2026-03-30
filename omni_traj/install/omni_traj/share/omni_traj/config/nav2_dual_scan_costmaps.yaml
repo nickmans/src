@@ -1,1 +1,71 @@
-/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/config/nav2_dual_scan_costmaps.yaml
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      autostart_node: true
+      update_frequency: 3.0
+      publish_frequency: 10.0
+      global_frame: odom
+      robot_base_frame: base_link
+      transform_tolerance: 0.25
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.05
+      footprint_padding: 0.03
+      always_send_full_costmap: true
+      plugins: ["obstacle_layer", "inflation_layer"]
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan_match
+        scan_match:
+          topic: /scan_match
+          data_type: LaserScan
+          clearing: true
+          marking: true
+          inf_is_valid: true
+          obstacle_max_range: 5.0
+          raytrace_max_range: 6.0
+          expected_update_rate: 0.0
+          max_obstacle_height: 2.0
+          min_obstacle_height: 0.0
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        enabled: true
+        inflation_radius: 0.28
+        cost_scaling_factor: 3.0
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      autostart_node: true
+      update_frequency: 3.0
+      publish_frequency: 2.0
+      global_frame: map
+      robot_base_frame: base_link
+      transform_tolerance: 0.25
+      rolling_window: false
+      track_unknown_space: false
+      resolution: 0.05
+      width: 7
+      height: 7
+      footprint_padding: 0.03
+      always_send_full_costmap: true
+      plugins: ["static_layer", "inflation_layer"]
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_topic: /map
+        subscribe_to_updates: true
+        map_subscribe_transient_local: true
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        enabled: true
+        inflation_radius: 0.32
+        cost_scaling_factor: 3.0

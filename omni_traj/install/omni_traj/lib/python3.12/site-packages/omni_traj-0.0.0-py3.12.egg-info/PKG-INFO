@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: omni-traj
+Version: 0.0.0
+Summary: Waypoint -> costmap -> A* -> dt trajectory generator for omni robot
+Maintainer: nickolas
+Maintainer-email: nickolas@todo.todo
+License: TODO: License declaration

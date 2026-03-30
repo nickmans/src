@@ -61,9 +61,12 @@ Production-ready UDP communication server for OMNI robot stack. Runs on Raspberr
     - Incoming `x,y,yaw,vx,vy,wz` are STM32-estimator values.
     - Bridge converts STM32 pose convention to ROS odom/base_link convention before publishing `/odom`.
         - Runtime defaults in `ros2_pose_node.py`:
-            - `stm32_pose_rotation_deg = 180.0` (XY position/velocity rotation)
+            - `stm32_pose_rotation_deg = -90.0` (XY position/velocity rotation)
             - `stm32_yaw_rotation_deg = -90.0` (heading rotation)
             - `stm32_yaw_offset_deg = 0.0`
+            - `stm32_traj_rotation_deg = 0.0` (outgoing trajectory XY rotation)
+            - `stm32_traj_yaw_rotation_deg = -90.0` (outgoing trajectory yaw rotation)
+            - `stm32_traj_yaw_offset_deg = 0.0`
 - CMD messages: Commands (`START_TRAJ`, `STOP_TRAJ`, `START_RESTART_ROS2`, mapping mode commands)
 
 **Pi → STM32 (5 Hz):**
@@ -161,6 +164,9 @@ Trajectory payload starts with a 20-byte trajectory header, followed by `n_knots
 | 2 | STOP_TRAJ | optional | Stop trajectory generation/output (standby) |
 | 3 | START_RESTART_ROS2 | optional | Manual localization mode (saved map + trajectory output disabled) |
 | 4 | SHUTDOWN_PI5 | optional | Safe Pi shutdown command |
+| 10 | START_TERMINAL_PASSTHROUGH | optional | Start interactive Pi shell passthrough over the STM32 Bluetooth UART |
+| 11 | TERMINAL_PASSTHROUGH_DATA | bytes | Raw terminal byte stream chunk for active passthrough session |
+| 12 | STOP_TERMINAL_PASSTHROUGH | optional | Stop the active Pi shell passthrough session |
 | 5 | START_MAPPING | optional | Switch to dedicated mapping mode |
 | 6 | FINISH_MAPPING | optional | Finish mapping and switch to localization/frozen map |
 | 7 | USE_LIVE_MAP | optional | Use live mapping mode |
@@ -347,6 +353,7 @@ Current CM7 + Pi sequence:
 3. `traj2 2` on STM32: Pi switches to localization with trajectory output disabled (manual drive on STM32).
 4. `traj 3` on STM32: Pi enables autonomous waypoint following on a blank global map while keeping live local costmap obstacle avoidance.
 5. `traj 0` on STM32: Pi disables trajectory output and returns to standby/manual behavior.
+6. `term` on STM32: Pi opens an interactive shell behind a PTY and streams bytes over UDP; sending `*` from the phone exits passthrough mode on both sides.
 
 Use this order for "dedicated mapping mode + explicit autonomous/manual localization modes" operation.
 

@@ -1,1 +1,96 @@
-/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/launch/omni_bringup.launch.py
+import os
+
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    pkg_share = get_package_share_directory('omni_traj')
+    installed_traj_params_path = os.path.join(pkg_share, 'config', 'waypoint_traj.yaml')
+
+    pkg_prefix = get_package_prefix('omni_traj')
+    source_root_guess = os.path.dirname(os.path.dirname(pkg_prefix))
+    source_traj_params_path = os.path.join(source_root_guess, 'config', 'waypoint_traj.yaml')
+    traj_params_path = source_traj_params_path if os.path.exists(source_traj_params_path) else installed_traj_params_path
+
+    # Use stable by-id paths (recommended)
+    lidar1_port = '/dev/serial/by-id/USB_ID_FOR_LIDAR1'
+    lidar2_port = '/dev/serial/by-id/USB_ID_FOR_LIDAR2'
+
+    # IMPORTANT: copy the exact params (baud/scan_mode/etc) from:
+    # ~/ros2_ws/src/sllidar_ros2/launch/view_sllidar_c1_launch.py
+    lidar1 = Node(
+        package='sllidar_ros2',
+        executable='sllidar_node',
+        name='lidar1',
+        output='screen',
+        parameters=[{
+            'serial_port': lidar1_port,
+            'frame_id': 'lidar1_link',
+            # 'serial_baudrate': <COPY FROM view_sllidar_c1_launch.py>,
+            # other params: <COPY FROM view_sllidar_c1_launch.py>
+        }],
+        remappings=[
+            ('scan', '/lidar1/scan'),
+        ]
+    )
+
+    lidar2 = Node(
+        package='sllidar_ros2',
+        executable='sllidar_node',
+        name='lidar2',
+        output='screen',
+        parameters=[{
+            'serial_port': lidar2_port,
+            'frame_id': 'lidar2_link',
+            # 'serial_baudrate': <COPY FROM view_sllidar_c1_launch.py>,
+            # other params: <COPY FROM view_sllidar_c1_launch.py>
+        }],
+        remappings=[
+            ('scan', '/lidar2/scan'),
+        ]
+    )
+
+    # 500ms stagger
+    lidar2_staggered = TimerAction(period=0.5, actions=[lidar2])
+
+    # Lidar extrinsics must match dual_sllidar_with_mock_and_traj.launch.py.
+    # Robot-forward convention: +x forward, +y left.
+    # lidar1 is on the left at y=+0.10 m, lidar2 is on the right at y=-0.10 m,
+    # and both lidars face forward in base_link.
+    base_to_lidar1 = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_to_lidar1',
+        arguments=['--x', '0.0', '--y', '0.10', '--z', '0.0', '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0', '--frame-id', 'base_link', '--child-frame-id', 'lidar1_link']
+    )
+
+    base_to_lidar2 = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_to_lidar2',
+        arguments=['--x', '0.0', '--y', '-0.10', '--z', '0.0', '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0', '--frame-id', 'base_link', '--child-frame-id', 'lidar2_link']
+    )
+
+    traj = Node(
+        package='omni_traj',
+        executable='waypoint_traj',
+        name='waypoint_traj',
+        output='screen',
+        parameters=[
+            traj_params_path,
+            {
+                'lidar1_topic': '/lidar1/scan',
+                'lidar2_topic': '/lidar2/scan',
+            },
+        ]
+    )
+
+    return LaunchDescription([
+        lidar1,
+        lidar2_staggered,
+        base_to_lidar1,
+        base_to_lidar2,
+        traj,
+    ])

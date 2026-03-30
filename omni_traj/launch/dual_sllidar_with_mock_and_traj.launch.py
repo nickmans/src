@@ -62,11 +62,9 @@ def generate_launch_description() -> LaunchDescription:
     source_traj_params_path = os.path.join(source_root_guess, "config", "waypoint_traj.yaml")
     traj_params_path = source_traj_params_path if os.path.exists(source_traj_params_path) else installed_traj_params_path
 
-    rviz_config_path = os.path.join(
-        get_package_share_directory("sllidar_ros2"),
-        "rviz",
-        "sllidar_ros2.rviz",
-    )
+    installed_rviz_config_path = os.path.join(pkg_share, "rviz", "omni_nav.rviz")
+    source_rviz_config_path = os.path.join(source_root_guess, "rviz", "omni_nav.rviz")
+    rviz_config_path = source_rviz_config_path if os.path.exists(source_rviz_config_path) else installed_rviz_config_path
 
     sllidar_common_params = {
         "channel_type": channel_type,

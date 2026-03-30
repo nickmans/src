@@ -1,0 +1,62 @@
+[0.000000] (-) TimerEvent: {}
+[0.001018] (omni-pi-server) JobQueued: {'identifier': 'omni-pi-server', 'dependencies': OrderedDict()}
+[0.001356] (omni-pi-server) JobStarted: {'identifier': 'omni-pi-server'}
+[0.095473] (-) TimerEvent: {}
+[0.195813] (-) TimerEvent: {}
+[0.296132] (-) TimerEvent: {}
+[0.396417] (-) TimerEvent: {}
+[0.496706] (-) TimerEvent: {}
+[0.597186] (-) TimerEvent: {}
+[0.697674] (-) TimerEvent: {}
+[0.798143] (-) TimerEvent: {}
+[0.899413] (-) TimerEvent: {}
+[0.999762] (-) TimerEvent: {}
+[1.100014] (-) TimerEvent: {}
+[1.200371] (-) TimerEvent: {}
+[1.301760] (-) TimerEvent: {}
+[1.402223] (-) TimerEvent: {}
+[1.502737] (-) TimerEvent: {}
+[1.603102] (-) TimerEvent: {}
+[1.703647] (-) TimerEvent: {}
+[1.803949] (-) TimerEvent: {}
+[1.904220] (-) TimerEvent: {}
+[2.006351] (-) TimerEvent: {}
+[2.071176] (omni-pi-server) Command: {'cmd': ['/usr/bin/python3', '-W', 'ignore:setup.py install is deprecated', '-W', 'ignore:easy_install command is deprecated', 'setup.py', 'egg_info', '--egg-base', 'build/omni-pi-server', 'build', '--build-base', '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build', 'install', '--record', '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/install.log', '--single-version-externally-managed'], 'cwd': '/home/nickolas/ros2_ws/src/omni_src', 'env': {'LESSOPEN': '| /usr/bin/lesspipe %s', 'CODEX_CI': '1', 'USER': 'nickolas', 'GZ_CONFIG_PATH': '/opt/ros/jazzy/opt/gz_sim_vendor/share/gz:/opt/ros/jazzy/opt/sdformat_vendor/share/gz:/opt/ros/jazzy/opt/gz_gui_vendor/share/gz:/opt/ros/jazzy/opt/gz_transport_vendor/share/gz:/opt/ros/jazzy/opt/gz_rendering_vendor/share/gz:/opt/ros/jazzy/opt/gz_plugin_vendor/share/gz:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/share/gz:/opt/ros/jazzy/opt/gz_msgs_vendor/share/gz:/opt/ros/jazzy/opt/gz_common_vendor/share/gz', 'SSH_AGENT_PID': '2034', 'XDG_SESSION_TYPE': 'x11', 'SHLVL': '1', 'LD_LIBRARY_PATH': '/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/aarch64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib', 'HOME': '/home/nickolas', 'DESKTOP_SESSION': 'xfce', 'PANEL_GDK_CORE_DEVICE_EVENTS': '0', 'ROS_PYTHON_VERSION': '3', 'PAGER': 'cat', 'LC_CTYPE': 'C.UTF-8', 'XRDP_PULSE_SOURCE_SOCKET': 'xrdp_chansrv_audio_in_socket_10', 'XRDP_PULSE_SINK_SOCKET': 'xrdp_chansrv_audio_out_socket_10', 'NO_COLOR': '1', 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/tmp/dbus-S6jwagmqQc,guid=5c6253b425d247dc893ca2b169c610a9', 'COLORTERM': '', 'DEBUGINFOD_URLS': 'https://debuginfod.ubuntu.com', 'PULSE_SCRIPT': '/etc/xrdp/pulse/default.pa', 'COLCON_PREFIX_PATH': '/home/nickolas/ros2_ws/install:/home/nickolas/ros2_ws/src/omni_src/install', 'ROS_DISTRO': 'jazzy', 'LOGNAME': 'nickolas', 'WINDOWID': '56623106', '_': '/usr/bin/colcon', 'ROS_VERSION': '2', 'XDG_SESSION_CLASS': 'user', 'TERM': 'dumb', 'XDG_SESSION_ID': 'c1', 'PATH': '/home/nickolas/.local/bin:/home/nickolas/.codex/tmp/arg0/codex-arg0l7IaCk:/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/path:/home/nickolas/.local/bin:/home/nickolas/ros2_ws/install/omni-pi-server/bin:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin:/opt/ros/jazzy/opt/gz_msgs_vendor/bin:/opt/ros/jazzy/opt/gz_tools_vendor/bin:/opt/ros/jazzy/opt/gz_ogre_next_vendor/bin:/opt/ros/jazzy/bin:/home/nickolas/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin', 'SESSION_MANAGER': 'local/OMNI-BOT:@/tmp/.ICE-unix/1953,unix/OMNI-BOT:/tmp/.ICE-unix/1953', 'ZUTTY_VERSION': '0.14-DEBUG', 'XDG_MENU_PREFIX': 'xfce-', 'XRDP_SOCKET_PATH': '/run/xrdp/sockdir', 'XDG_RUNTIME_DIR': '/run/user/1000', 'DISPLAY': ':10', 'CODEX_SANDBOX_NETWORK_DISABLED': '1', 'DESKTOP_STARTUP_ID': 'xfce4-panel/exo-open/2108-0-OMNI-BOT_TIME50634', 'LANG': 'C.UTF-8', 'XDG_CURRENT_DESKTOP': 'XFCE', 'GH_PAGER': 'cat', 'XDG_SESSION_DESKTOP': 'xfce', 'LS_COLORS': 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.avif=01;35:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:*~=00;90:*#=00;90:*.bak=00;90:*.crdownload=00;90:*.dpkg-dist=00;90:*.dpkg-new=00;90:*.dpkg-old=00;90:*.dpkg-tmp=00;90:*.old=00;90:*.orig=00;90:*.part=00;90:*.rej=00;90:*.rpmnew=00;90:*.rpmorig=00;90:*.rpmsave=00;90:*.swp=00;90:*.tmp=00;90:*.ucf-dist=00;90:*.ucf-new=00;90:*.ucf-old=00;90:', 'SSH_AUTH_SOCK': '/tmp/ssh-iurJvDJtU9nK/agent.1953', 'AMENT_PREFIX_PATH': '/home/nickolas/ros2_ws/install/sllidar_ros2:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy', 'UID': '1000', 'SHELL': '/bin/bash', 'QT_ACCESSIBILITY': '1', 'LESSCLOSE': '/usr/bin/lesspipe %s %s', 'XRDP_SESSION': '1', 'CODEX_THREAD_ID': '019d2db1-e496-7c72-a115-7db28af3a13a', 'ROS_AUTOMATIC_DISCOVERY_RANGE': 'SUBNET', 'GIT_PAGER': 'cat', 'PWD': '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server', 'LC_ALL': 'C.UTF-8', 'XDG_CONFIG_DIRS': '/etc/xdg', 'XDG_DATA_DIRS': '/usr/local/share:/usr/share:/var/lib/snapd/desktop:/usr/share', 'PYTHONPATH': '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:/home/nickolas/ros2_ws/build/omni_traj:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/install/omni-pi-server/lib/python3.12/site-packages:/home/nickolas/ros2_ws/src/omni_src/build/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages', 'COLCON': '1', 'CODEX_MANAGED_BY_NPM': '1', 'CMAKE_PREFIX_PATH': '/home/nickolas/ros2_ws/install/sllidar_ros2:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor'}, 'shell': False}
+[2.106514] (-) TimerEvent: {}
+[2.206911] (-) TimerEvent: {}
+[2.307231] (-) TimerEvent: {}
+[2.407513] (-) TimerEvent: {}
+[2.507987] (-) TimerEvent: {}
+[2.608597] (-) TimerEvent: {}
+[2.611512] (omni-pi-server) StdoutLine: {'line': b'running egg_info\n'}
+[2.647519] (omni-pi-server) StdoutLine: {'line': b'writing build/omni-pi-server/omni_pi_server.egg-info/PKG-INFO\n'}
+[2.648558] (omni-pi-server) StdoutLine: {'line': b'writing dependency_links to build/omni-pi-server/omni_pi_server.egg-info/dependency_links.txt\n'}
+[2.684129] (omni-pi-server) StdoutLine: {'line': b'writing entry points to build/omni-pi-server/omni_pi_server.egg-info/entry_points.txt\n'}
+[2.684776] (omni-pi-server) StdoutLine: {'line': b'writing top-level names to build/omni-pi-server/omni_pi_server.egg-info/top_level.txt\n'}
+[2.708817] (-) TimerEvent: {}
+[2.769783] (omni-pi-server) StdoutLine: {'line': b"reading manifest file 'build/omni-pi-server/omni_pi_server.egg-info/SOURCES.txt'\n"}
+[2.771037] (omni-pi-server) StdoutLine: {'line': b"writing manifest file 'build/omni-pi-server/omni_pi_server.egg-info/SOURCES.txt'\n"}
+[2.775688] (omni-pi-server) StdoutLine: {'line': b'running build\n'}
+[2.776269] (omni-pi-server) StdoutLine: {'line': b'running build_py\n'}
+[2.776474] (omni-pi-server) StdoutLine: {'line': b'copying pi_comm_server/ros2_pose_node.py -> /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server\n'}
+[2.776579] (omni-pi-server) StdoutLine: {'line': b'running install\n'}
+[2.790619] (omni-pi-server) StdoutLine: {'line': b'running install_lib\n'}
+[2.809014] (-) TimerEvent: {}
+[2.831265] (omni-pi-server) StdoutLine: {'line': b'copying /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/build/lib/pi_comm_server/ros2_pose_node.py -> /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server\n'}
+[2.833878] (omni-pi-server) StdoutLine: {'line': b'byte-compiling /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/pi_comm_server/ros2_pose_node.py to ros2_pose_node.cpython-312.pyc\n'}
+[2.842736] (omni-pi-server) StdoutLine: {'line': b'running install_egg_info\n'}
+[2.888181] (omni-pi-server) StdoutLine: {'line': b"removing '/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/omni_pi_server-1.0.0-py3.12.egg-info' (and everything under it)\n"}
+[2.888799] (omni-pi-server) StdoutLine: {'line': b'Copying build/omni-pi-server/omni_pi_server.egg-info to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/omni_pi_server-1.0.0-py3.12.egg-info\n'}
+[2.890006] (omni-pi-server) StdoutLine: {'line': b'running install_scripts\n'}
+[2.909135] (-) TimerEvent: {}
+[3.009450] (-) TimerEvent: {}
+[3.169864] (omni-pi-server) StdoutLine: {'line': b'Installing omni-test-client script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin\n'}
+[3.171564] (-) TimerEvent: {}
+[3.171622] (omni-pi-server) StdoutLine: {'line': b'Installing omni-udp-server script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin\n'}
+[3.172559] (omni-pi-server) StdoutLine: {'line': b"writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server/install.log'\n"}
+[3.271786] (-) TimerEvent: {}
+[3.372222] (-) TimerEvent: {}
+[3.420791] (omni-pi-server) CommandEnded: {'returncode': 0}
+[3.473895] (-) TimerEvent: {}
+[3.552360] (omni-pi-server) JobEnded: {'identifier': 'omni-pi-server', 'rc': 0}
+[3.553469] (-) EventReactorShutdown: {}

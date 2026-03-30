@@ -11,6 +11,7 @@ import fcntl
 import logging
 import math
 import os
+import queue
 import socket
 import subprocess
 import threading
@@ -78,8 +79,10 @@ class OMNIUDPServer:
         self.running = False
         self.recv_thread: Optional[threading.Thread] = None
         self.send_thread: Optional[threading.Thread] = None
+        self.cmd_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._send_wakeup = threading.Event()
+        self._cmd_queue: "queue.Queue[Tuple[Header, bytes, tuple]]" = queue.Queue(maxsize=128)
         self._ros2_retry_thread: Optional[threading.Thread] = None
         self._ros2_retry_interval_s = 5.0
         self._ros2_retry_enabled = False
@@ -116,6 +119,17 @@ class OMNIUDPServer:
         self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
         self._loop_thread.start()
         self._active_stack_mode = "standby"
+        self._last_mode_switch_monotonic = 0.0
+        self._last_mode_request_monotonic = 0.0
+        self._last_mode_request_target: Optional[str] = None
+        self._last_mode_request_result = False
+        self._mode_request_debounce_s = 1.0
+        self._mode_health_cache_ttl_s = 1.5
+        self._last_mode_health_check_monotonic = 0.0
+        self._last_mode_health_check_target: Optional[str] = None
+        self._last_mode_health_check_result = False
+        self._warmup_guard_s = 20.0
+        self._throttled_log_last_ts: dict[str, float] = {}
         self._stack_transition_lock = threading.Lock()
         self._stack_lock_path = "/tmp/omni_ros2_stack_controller.lock"
         self._stack_lock_fd: Optional[int] = None
@@ -123,7 +137,31 @@ class OMNIUDPServer:
         self._server_lock_path = "/tmp/omni_udp_server.lock"
         self._server_lock_fd: Optional[int] = None
 
-        logger.info(f"OMNIUDPServer initialized: {self.host}:{self.port}")
+        # Trajectory send cadence (default 10 Hz) can be overridden with
+        # environment variable OMNI_TRAJ_SEND_HZ.
+        send_hz_raw = os.getenv("OMNI_TRAJ_SEND_HZ", "10")
+        try:
+            send_hz = float(send_hz_raw)
+            if send_hz <= 0.0:
+                raise ValueError("non-positive")
+        except Exception:
+            logger.warning(
+                "Invalid OMNI_TRAJ_SEND_HZ='%s'; falling back to 10 Hz",
+                send_hz_raw,
+            )
+            send_hz = 10.0
+        self._traj_send_hz = send_hz
+        self._traj_send_interval_s = 1.0 / self._traj_send_hz
+        self._traj_idle_interval_s = 5.0
+        self._traj_tx_count = 0
+        self._traj_tx_window_start = time.monotonic()
+
+        logger.info(
+            "OMNIUDPServer initialized: %s:%s (traj_send_hz=%.2f)",
+            self.host,
+            self.port,
+            self._traj_send_hz,
+        )
 
     def _switch_stack_mode(self, stack_mode: str) -> bool:
         if not self._stack_control_enabled:
@@ -136,26 +174,56 @@ class OMNIUDPServer:
             return False
 
         with self._stack_transition_lock:
+            now = time.monotonic()
+            if (
+                self._last_mode_request_target == target_mode
+                and (now - float(self._last_mode_request_monotonic)) < float(self._mode_request_debounce_s)
+            ):
+                return bool(self._last_mode_request_result)
+
+            self._last_mode_request_target = target_mode
+            self._last_mode_request_monotonic = now
+
             self._set_ros2_retry_enabled(False, reason=f"mode transition to {target_mode}")
 
             try:
                 changed = self.ros2_mgr.set_stack_mode(target_mode)
             except Exception as exc:
                 logger.error(f"Failed to set ROS2 stack mode '{target_mode}': {exc}")
+                self._last_mode_request_result = False
                 return False
 
             is_running = self._run_ros2(self.ros2_mgr.is_running)
             needs_restart = True
 
             if is_running and not changed:
-                async def _healthy_check() -> bool:
-                    return await self.ros2_mgr.is_mode_healthy(target_mode)
+                since_last_switch_s = now - float(self._last_mode_switch_monotonic)
+                if self._active_stack_mode == target_mode and since_last_switch_s < float(self._warmup_guard_s):
+                    self._log_throttled(
+                        f"mode-warmup-{target_mode}",
+                        logging.WARNING,
+                        (
+                            f"ROS2 stack in {target_mode} is still warming up "
+                            f"({since_last_switch_s:.1f}s); skipping forced restart"
+                        ),
+                        interval_s=2.0,
+                    )
+                    self._last_mode_request_result = True
+                    return True
 
-                if self._run_ros2(_healthy_check):
+                healthy = self._is_mode_healthy_cached(target_mode, now)
+                if healthy:
                     logger.info(f"ROS2 stack already healthy in {target_mode} mode")
                     self._active_stack_mode = target_mode
+                    self._last_mode_request_result = True
                     return True
-                logger.warning(f"ROS2 stack running but unhealthy in {target_mode} mode; forcing restart")
+
+                self._log_throttled(
+                    f"mode-unhealthy-{target_mode}",
+                    logging.WARNING,
+                    f"ROS2 stack running but unhealthy in {target_mode} mode; forcing restart",
+                    interval_s=2.0,
+                )
 
             if is_running and needs_restart:
                 logger.info(f"Switching ROS2 stack from {self._active_stack_mode} to {target_mode}")
@@ -163,18 +231,74 @@ class OMNIUDPServer:
                 if not stopped:
                     logger.error("Failed to stop ROS2 stack during mode switch")
                     self._set_ros2_retry_enabled(True, reason="stop failed during transition")
+                    self._last_mode_request_result = False
                     return False
-                time.sleep(0.5)
+                # Allow serial devices/process groups to settle before relaunch,
+                # reducing immediate start/stop oscillation on LiDAR drivers.
+                    time.sleep(0.3)
 
             started = self._run_ros2(self.ros2_mgr.start)
             if not started:
                 logger.error(f"Failed to start ROS2 stack in {target_mode} mode")
                 self._set_ros2_retry_enabled(True, reason="start failed during transition")
+                self._last_mode_request_result = False
                 return False
 
             self._active_stack_mode = target_mode
+            self._last_mode_switch_monotonic = time.monotonic()
+            self._last_mode_health_check_target = target_mode
+            self._last_mode_health_check_monotonic = self._last_mode_switch_monotonic
+            self._last_mode_health_check_result = True
             self._set_ros2_retry_enabled(False, reason="mode transition complete")
+            self._last_mode_request_result = True
             return True
+
+    def _switch_stack_mode_with_retries(
+        self,
+        stack_mode: str,
+        attempts: int = 2,
+        retry_delay_s: float = 2.0,
+    ) -> bool:
+        attempts = max(1, int(attempts))
+        for attempt in range(1, attempts + 1):
+            if self._switch_stack_mode(stack_mode):
+                return True
+
+            if attempt >= attempts:
+                break
+
+            logger.warning(
+                f"ROS2 stack switch to {stack_mode} failed on attempt {attempt}/{attempts}; "
+                f"retrying in {retry_delay_s:.1f}s"
+            )
+            time.sleep(max(0.0, float(retry_delay_s)))
+
+        return False
+
+    def _is_mode_healthy_cached(self, target_mode: str, now_monotonic: Optional[float] = None) -> bool:
+        now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+        if (
+            self._last_mode_health_check_target == target_mode
+            and (now - float(self._last_mode_health_check_monotonic)) < float(self._mode_health_cache_ttl_s)
+        ):
+            return bool(self._last_mode_health_check_result)
+
+        async def _healthy_check() -> bool:
+            return await self.ros2_mgr.is_mode_healthy(target_mode)
+
+        healthy = bool(self._run_ros2(_healthy_check))
+        self._last_mode_health_check_target = target_mode
+        self._last_mode_health_check_monotonic = now
+        self._last_mode_health_check_result = healthy
+        return healthy
+
+    def _log_throttled(self, key: str, level: int, message: str, interval_s: float = 1.0) -> None:
+        now = time.monotonic()
+        last_ts = float(self._throttled_log_last_ts.get(key, 0.0))
+        if (now - last_ts) < float(interval_s):
+            return
+        self._throttled_log_last_ts[key] = now
+        logger.log(level, message)
 
     def start(self):
         if self.running:
@@ -228,6 +352,9 @@ class OMNIUDPServer:
         self.send_thread = threading.Thread(target=self._send_loop, daemon=True)
         self.send_thread.start()
 
+        self.cmd_thread = threading.Thread(target=self._cmd_loop, daemon=True)
+        self.cmd_thread.start()
+
     def stop(self, stop_ros2_stack: bool = True):
         logger.info("Stopping UDP server...")
         self.running = False
@@ -255,6 +382,8 @@ class OMNIUDPServer:
             self.recv_thread.join(timeout=1.0)
         if self.send_thread and self.send_thread.is_alive():
             self.send_thread.join(timeout=1.0)
+        if self.cmd_thread and self.cmd_thread.is_alive():
+            self.cmd_thread.join(timeout=1.0)
         if self._ros2_retry_thread and self._ros2_retry_thread.is_alive():
             self._ros2_retry_thread.join(timeout=1.0)
 
@@ -365,10 +494,12 @@ class OMNIUDPServer:
 
     def set_trajectory_active(self, active: bool):
         with self.traj_lock:
+            changed = (self.trajectory_active != active)
             self.trajectory_active = active
         # Wake sender immediately so mode changes are reflected without idle delay.
         self._send_wakeup.set()
-        logger.info(f"Trajectory sending: {'active' if active else 'inactive'}")
+        if changed:
+            logger.info(f"Trajectory sending: {'active' if active else 'inactive'}")
 
     @staticmethod
     def _now_ms() -> int:
@@ -408,8 +539,8 @@ class OMNIUDPServer:
                 break
 
     def _send_loop(self):
-        send_interval = 0.2  # 5 Hz
-        idle_interval = 5.0
+        send_interval = self._traj_send_interval_s
+        idle_interval = self._traj_idle_interval_s
 
         while self.running:
             try:
@@ -437,11 +568,32 @@ class OMNIUDPServer:
             if header.msg_type == MessageType.POSE:
                 self._handle_pose(header, payload, addr)
             elif header.msg_type == MessageType.CMD:
-                self._handle_cmd(header, payload, addr)
+                try:
+                    self._cmd_queue.put_nowait((header, payload, addr))
+                except queue.Full:
+                    logger.error(
+                        "CMD queue full; dropping command seq=%d from %s",
+                        header.seq,
+                        addr,
+                    )
             else:
                 logger.warning(f"Unknown message type: {header.msg_type} from {addr}. Expected one of: {[e.value for e in MessageType]}")
         except Exception as e:
             logger.error(f"Error handling message: {e}")
+
+    def _cmd_loop(self):
+        while self.running and not self._stop_event.is_set():
+            try:
+                header, payload, addr = self._cmd_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+            try:
+                self._handle_cmd(header, payload, addr)
+            except Exception as exc:
+                logger.error(f"Error handling queued CMD seq={header.seq} from {addr}: {exc}")
+            finally:
+                self._cmd_queue.task_done()
 
     def _handle_pose(self, header: Header, payload: bytes, addr: tuple):
         pose = Pose.unpack(payload)
@@ -501,33 +653,93 @@ class OMNIUDPServer:
         except Exception as exc:
             logger.error(f"Failed to send CMD ack: {exc}")
 
+    def _call_mapping_service_with_retries(
+        self,
+        service_label: str,
+        call_fn: Callable[[], bool],
+        attempts: int = 4,
+        retry_delay_s: float = 0.7,
+        pre_wait_s: float = 0.0,
+    ) -> bool:
+        attempts = max(1, int(attempts))
+        wait_s = max(0.0, float(pre_wait_s))
+        if wait_s > 0.0:
+            time.sleep(wait_s)
+
+        for attempt in range(1, attempts + 1):
+            ok = False
+            try:
+                ok = bool(call_fn())
+            except Exception as exc:
+                logger.warning(f"{service_label} attempt {attempt}/{attempts} raised exception: {exc}")
+
+            if ok:
+                if attempt > 1:
+                    logger.info(f"{service_label} succeeded on retry {attempt}/{attempts}")
+                return True
+
+            if attempt < attempts:
+                logger.warning(
+                    f"{service_label} failed on attempt {attempt}/{attempts}; retrying in {retry_delay_s:.1f}s"
+                )
+                time.sleep(max(0.0, float(retry_delay_s)))
+
+        logger.warning(f"{service_label} failed after {attempts} attempts")
+        return False
+
     def _handle_cmd(self, header: Header, payload: bytes, addr: tuple):
         cmd = Command.unpack(payload)
-        logger.info(f"CMD received: command={cmd.cmd_id} (seq={header.seq}) from {addr}")
+        self._log_throttled(
+            key=f"cmd-rx-{int(cmd.cmd_id)}",
+            level=logging.INFO,
+            message=f"CMD received: command={cmd.cmd_id} (seq={header.seq}) from {addr}",
+            interval_s=0.5,
+        )
         if self.on_cmd_callback:
             self.on_cmd_callback(cmd.cmd_id)
 
         # STM32 semantics:
-        #   traj 1 -> enter global LiDAR mapping mode (map 1)
-        #   traj 0 -> disable trajectory generation/sending
-        #   traj2 2 -> start/restart ROS2 stack
+        #   traj 1 -> autonomous trajectory following with localization on saved map
+        #   traj 0 -> disable trajectory generation/sending (idle/manual standby)
+        #   traj2 2 -> manual driving on STM32 with AMCL localization active on Pi
+        #   traj 3 -> autonomous trajectory following with blank global map
+        #             and local costmap obstacle avoidance
+        #   map 1 -> dedicated mapping mode
         if cmd.cmd_id == CommandID.START_TRAJ:
-            logger.info("START_TRAJ received; entering mapping mode (equivalent to map 1)")
-            # Requested behavior:
-            # - traj 1 immediately switches to mapping mode
-            # - trajectory streaming is paused while mapping
-            self.set_trajectory_active(False)
-            ok_stack = self._switch_stack_mode("mapping")
-            if not ok_stack:
-                logger.warning("START_TRAJ failed to switch ROS2 stack to mapping mode")
-            ok = self.ros2_bridge.start_mapping_mode()
-            if not ok:
-                logger.warning("START_TRAJ->START_MAPPING failed: mapping service unavailable or rejected")
+            logger.info("START_TRAJ received; enabling autonomous localization mode using saved map")
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+            # Requested behavior:
+            # - traj 1 switches to localization mode
+            # - saved map is loaded/reloaded
+            # - trajectory streaming is enabled for autonomous following
+            self.set_trajectory_active(False)
+            ok_stack = self._switch_stack_mode_with_retries("localization", attempts=3, retry_delay_s=3.0)
+            if not ok_stack:
+                logger.warning("START_TRAJ failed to switch ROS2 stack to localization mode")
+            ok = False
+            if ok_stack:
+                ok = self._call_mapping_service_with_retries(
+                    service_label="START_TRAJ->/mapping/use_frozen",
+                    call_fn=self.ros2_bridge.use_frozen_map_mode,
+                    attempts=4,
+                    retry_delay_s=0.7,
+                    pre_wait_s=0.4,
+                )
+            if not ok:
+                logger.warning(
+                    "START_TRAJ could not confirm saved-map reload; continuing in localization mode"
+                )
+            if ok_stack:
+                self.set_trajectory_active(True)
+            else:
+                logger.warning(
+                    "START_TRAJ left trajectory output disabled because localization is not confirmed healthy"
+                )
             return
 
         if cmd.cmd_id == CommandID.STOP_TRAJ:
-            logger.info("STOP_TRAJ received; disabling trajectory output")
+            logger.info("STOP_TRAJ received; disabling trajectory output and returning to standby mode")
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             now_ms = self._now_ms()
             with self.pose_lock:
                 latest_pose = self.latest_pose
@@ -546,22 +758,77 @@ class OMNIUDPServer:
                 self._active_traj_t0_ms = None
                 self._last_valid_traj = None
             self.set_trajectory_active(False)
-            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+            ok_stack = self._switch_stack_mode("standby")
+            if not ok_stack:
+                logger.warning("STOP_TRAJ failed to switch ROS2 stack to standby mode")
             return
 
         if cmd.cmd_id == CommandID.START_RESTART_ROS2:
-            logger.info("START_RESTART_ROS2 received; restarting ROS2 stack in standby mode")
-            # Keep current trajectory_active state, but pause sending while restart happens.
-            with self.traj_lock:
-                resume_traj = bool(self.trajectory_active)
-            self.set_trajectory_active(False)
-
-            started = self._switch_stack_mode("standby")
-
-            if started and resume_traj:
-                self.set_trajectory_active(True)
-
+            logger.info(
+                "START_RESTART_ROS2 received; switching to manual localization mode "
+                "(trajectory output disabled)"
+            )
             self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+
+            self.set_trajectory_active(False)
+            with self.traj_lock:
+                self._active_traj_signature = None
+                self._active_traj_t0_ms = None
+                self._last_valid_traj = None
+
+            started = self._switch_stack_mode_with_retries("localization", attempts=3, retry_delay_s=3.0)
+            if not started:
+                logger.warning(
+                    "START_RESTART_ROS2 failed to switch ROS2 stack to localization mode; "
+                    "trajectory output remains disabled for manual safety"
+                )
+            else:
+                _ = self._call_mapping_service_with_retries(
+                    service_label="START_RESTART_ROS2->/mapping/use_frozen",
+                    call_fn=self.ros2_bridge.use_frozen_map_mode,
+                    attempts=3,
+                    retry_delay_s=0.5,
+                    pre_wait_s=0.3,
+                )
+                logger.info("Localization mode active; STM32 remains in manual mode (no trajectory streaming)")
+            return
+
+        if cmd.cmd_id == CommandID.START_TRAJ_LOCAL:
+            logger.info(
+                "START_TRAJ_LOCAL received; enabling autonomous mode with blank global map "
+                "and local costmap avoidance"
+            )
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+
+            self.set_trajectory_active(False)
+            with self.traj_lock:
+                self._active_traj_signature = None
+                self._active_traj_t0_ms = None
+                self._last_valid_traj = None
+
+            ok_stack = self._switch_stack_mode_with_retries("standby", attempts=2, retry_delay_s=2.0)
+            if not ok_stack:
+                logger.warning("START_TRAJ_LOCAL failed to switch ROS2 stack to standby mode")
+
+            ok_blank = False
+            if ok_stack:
+                ok_blank = self._call_mapping_service_with_retries(
+                    service_label="START_TRAJ_LOCAL->/mapping/use_blank",
+                    call_fn=self.ros2_bridge.use_blank_map_mode,
+                    attempts=4,
+                    retry_delay_s=0.6,
+                    pre_wait_s=0.3,
+                )
+
+            if not ok_blank:
+                logger.warning(
+                    "START_TRAJ_LOCAL could not confirm blank global map mode; "
+                    "trajectory output remains disabled"
+                )
+                return
+
+            self.set_trajectory_active(True)
+            logger.info("Blank global map mode active; trajectory streaming enabled")
             return
 
         if cmd.cmd_id == CommandID.STOP_ROS2:
@@ -581,63 +848,90 @@ class OMNIUDPServer:
 
         if cmd.cmd_id == CommandID.START_MAPPING:
             logger.info("START_MAPPING received; enabling mapping mode")
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             self.set_trajectory_active(False)
-            ok_stack = self._switch_stack_mode("mapping")
+            ok_stack = self._switch_stack_mode_with_retries("mapping", attempts=2, retry_delay_s=2.0)
             if not ok_stack:
                 logger.warning("START_MAPPING failed to switch ROS2 stack to mapping mode")
-            ok = self.ros2_bridge.start_mapping_mode()
+            ok = self._call_mapping_service_with_retries(
+                service_label="START_MAPPING->/mapping/start",
+                call_fn=self.ros2_bridge.start_mapping_mode,
+                attempts=5,
+                retry_delay_s=0.8,
+                pre_wait_s=0.8,
+            )
             if not ok:
                 logger.warning("START_MAPPING failed: mapping service unavailable or rejected")
-            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             return
 
         if cmd.cmd_id == CommandID.FINISH_MAPPING:
             logger.info("FINISH_MAPPING received; finalizing mapping and switching to AMCL localization mode")
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             # Requested behavior for map 0:
             # 1) finish map save
             # 2) restart stack into localization mode (AMCL only)
-            # 3) load saved/frozen map
-            # 4) resume trajectory following output
+            # 3) resume trajectory following output once localization stack is healthy
             self.set_trajectory_active(False)
-            ok_finish = self.ros2_bridge.finish_mapping_mode()
+            ok_finish = self._call_mapping_service_with_retries(
+                service_label="FINISH_MAPPING->/mapping/finish",
+                call_fn=self.ros2_bridge.finish_mapping_mode,
+                attempts=6,
+                retry_delay_s=1.0,
+                pre_wait_s=0.8,
+            )
             if not ok_finish:
-                logger.warning("FINISH_MAPPING failed: mapping service unavailable or rejected")
+                logger.warning(
+                    "FINISH_MAPPING could not confirm mapping finalization after retries; "
+                    "continuing localization transition for availability"
+                )
 
-            ok_stack = self._switch_stack_mode("localization")
+            ok_stack = self._switch_stack_mode_with_retries("localization", attempts=3, retry_delay_s=3.0)
             if not ok_stack:
                 logger.warning("FINISH_MAPPING failed to switch ROS2 stack to localization mode")
 
-            ok_frozen = self.ros2_bridge.use_frozen_map_mode()
-            if not ok_frozen:
-                logger.warning("FINISH_MAPPING->USE_FROZEN_MAP failed: service unavailable or rejected")
+            if ok_stack:
+                logger.info(
+                    "FINISH_MAPPING completed with localization mode; deprecated frozen-map service is skipped"
+                )
 
-            self.set_trajectory_active(True)
-            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+            if ok_stack:
+                self.set_trajectory_active(True)
+            else:
+                logger.warning("FINISH_MAPPING left trajectory output disabled because localization is not confirmed healthy")
             return
 
         if cmd.cmd_id == CommandID.USE_LIVE_MAP:
             logger.info("USE_LIVE_MAP received; switching to live LiDAR mode")
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             self.set_trajectory_active(False)
-            ok_stack = self._switch_stack_mode("mapping")
+            ok_stack = self._switch_stack_mode_with_retries("mapping", attempts=2, retry_delay_s=2.0)
             if not ok_stack:
                 logger.warning("USE_LIVE_MAP failed to switch ROS2 stack to mapping mode")
-            ok = self.ros2_bridge.use_live_map_mode()
+            ok = False
+            if ok_stack:
+                ok = self._call_mapping_service_with_retries(
+                    service_label="USE_LIVE_MAP->/mapping/use_live",
+                    call_fn=self.ros2_bridge.use_live_map_mode,
+                    attempts=4,
+                    retry_delay_s=0.7,
+                    pre_wait_s=0.4,
+                )
             if not ok:
                 logger.warning("USE_LIVE_MAP failed: service unavailable or rejected")
-            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             return
 
         if cmd.cmd_id == CommandID.USE_FROZEN_MAP:
-            logger.info("USE_FROZEN_MAP received; switching to AMCL localization on saved map")
+            logger.info("USE_FROZEN_MAP received; switching to AMCL localization mode")
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
             self.set_trajectory_active(False)
-            ok_stack = self._switch_stack_mode("localization")
+            ok_stack = self._switch_stack_mode_with_retries("localization", attempts=3, retry_delay_s=3.0)
             if not ok_stack:
                 logger.warning("USE_FROZEN_MAP failed to switch ROS2 stack to localization mode")
-            ok = self.ros2_bridge.use_frozen_map_mode()
-            if not ok:
-                logger.warning("USE_FROZEN_MAP failed: service unavailable or rejected")
-            self.set_trajectory_active(True)
-            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+            if ok_stack:
+                logger.info("USE_FROZEN_MAP now aliases to localization mode; deprecated frozen-map service is skipped")
+                self.set_trajectory_active(True)
+            else:
+                logger.warning("USE_FROZEN_MAP left trajectory output disabled because localization is not confirmed healthy")
             return
 
         logger.warning(f"Unhandled CMD id={cmd.cmd_id}; acking")
@@ -671,6 +965,20 @@ class OMNIUDPServer:
             message = make_message(MessageType.TRAJ, self.traj_seq, payload, crc_payload=False)
             if self.sock:
                 self.sock.sendto(message, addr)
+
+            self._traj_tx_count += 1
+            now_mono = time.monotonic()
+            elapsed = now_mono - self._traj_tx_window_start
+            if elapsed >= 5.0:
+                effective_hz = float(self._traj_tx_count) / elapsed
+                logger.info(
+                    "TRAJ TX effective_hz=%.2f seq=%d knots=%d",
+                    effective_hz,
+                    self.traj_seq,
+                    len(traj.knots),
+                )
+                self._traj_tx_count = 0
+                self._traj_tx_window_start = now_mono
 
             if self.traj_seq % 25 == 0:
                 logger.debug(
@@ -710,9 +1018,19 @@ class OMNIUDPServer:
             self._ros2_retry_enabled = enabled
 
         if enabled:
-            logger.warning("ROS2 retry enabled: %s", reason or "start failures")
+            self._log_throttled(
+                key="ros2-retry-enabled",
+                level=logging.WARNING,
+                message=f"ROS2 retry enabled: {reason or 'start failures'}",
+                interval_s=1.0,
+            )
         else:
-            logger.info("ROS2 retry disabled: %s", reason or "")
+            self._log_throttled(
+                key="ros2-retry-disabled",
+                level=logging.INFO,
+                message=f"ROS2 retry disabled: {reason or ''}",
+                interval_s=1.0,
+            )
 
     def _is_ros2_retry_enabled(self) -> bool:
         with self._ros2_retry_lock:
@@ -737,7 +1055,12 @@ class OMNIUDPServer:
                 self._set_ros2_retry_enabled(False, reason="stack is healthy")
                 continue
 
-            logger.warning(f"Retrying ROS2 stack recovery in mode={target_mode}...")
+            self._log_throttled(
+                key=f"ros2-retry-recover-{target_mode}",
+                level=logging.WARNING,
+                message=f"Retrying ROS2 stack recovery in mode={target_mode}...",
+                interval_s=2.0,
+            )
             recovered = self._switch_stack_mode(target_mode)
             if recovered:
                 self._set_ros2_retry_enabled(False, reason="retry recovery succeeded")
@@ -818,12 +1141,20 @@ class OMNIUDPServer:
                 return None
 
             vx, vy = path_velocities[idx]
-            knots.append((float(x), float(y), float(yaw_opt), float(vx), float(vy)))
+            x_stm, y_stm, yaw_stm, vx_stm, vy_stm, _ = self.ros2_bridge.pose_node.transform_ros_traj_to_stm(
+                float(x),
+                float(y),
+                float(yaw_opt),
+                float(vx),
+                float(vy),
+                0.0,
+            )
+            knots.append((x_stm, y_stm, yaw_stm, vx_stm, vy_stm))
 
         # Keep a stable trajectory start timestamp until knots materially change.
         # Resetting t0 every send causes STM32 to keep replaying early knots.
-        first_x, first_y, _ = path_points[0]
-        last_x, last_y, _ = path_points[-1]
+        first_x, first_y = knots[0][0], knots[0][1]
+        last_x, last_y = knots[-1][0], knots[-1][1]
         traj_signature = (
             len(path_points),
             round(float(first_x), 4),
@@ -879,6 +1210,7 @@ class ROS2Bridge:
         self.mapping_finish_client = self.path_node.create_client(Trigger, "/mapping/finish")
         self.mapping_use_live_client = self.path_node.create_client(Trigger, "/mapping/use_live")
         self.mapping_use_frozen_client = self.path_node.create_client(Trigger, "/mapping/use_frozen")
+        self.mapping_use_blank_client = self.path_node.create_client(Trigger, "/mapping/use_blank")
 
         self.executor = MultiThreadedExecutor()
         self.executor.add_node(self.pose_node)
@@ -957,45 +1289,126 @@ class ROS2Bridge:
 
         return vels[:max_points]
 
-    def _call_trigger(self, client, service_name: str, timeout_sec: float = 1.5) -> bool:
-        if not client.wait_for_service(timeout_sec=0.3):
-            logger.warning(f"Service not available: {service_name}")
-            return False
+    def _call_trigger(
+        self,
+        client,
+        service_name: str,
+        timeout_sec: float = 2.5,
+        attempts: int = 1,
+        availability_wait_sec: float = 1.0,
+        retry_delay_sec: float = 0.25,
+    ) -> bool:
+        attempts = max(1, int(attempts))
+        availability_wait_sec = max(0.1, float(availability_wait_sec))
+        timeout_sec = max(0.2, float(timeout_sec))
+        retry_delay_sec = max(0.0, float(retry_delay_sec))
 
-        future = client.call_async(Trigger.Request())
-        deadline = time.monotonic() + timeout_sec
-        while time.monotonic() < deadline:
-            if future.done():
-                break
-            time.sleep(0.01)
+        for attempt in range(1, attempts + 1):
+            if not client.wait_for_service(timeout_sec=availability_wait_sec):
+                logger.warning(
+                    f"Service not available: {service_name} "
+                    f"(attempt {attempt}/{attempts})"
+                )
+                if attempt < attempts and retry_delay_sec > 0.0:
+                    time.sleep(retry_delay_sec)
+                continue
 
-        if not future.done():
-            logger.warning(f"Service timeout: {service_name}")
-            return False
+            future = client.call_async(Trigger.Request())
+            deadline = time.monotonic() + timeout_sec
+            while time.monotonic() < deadline:
+                if future.done():
+                    break
+                time.sleep(0.01)
 
-        try:
-            result = future.result()
-            if result is None:
-                logger.warning(f"Service returned no result: {service_name}")
-                return False
-            if not result.success:
-                logger.warning(f"Service rejected request: {service_name} ({result.message})")
-            return bool(result.success)
-        except Exception as exc:
-            logger.error(f"Service call failed: {service_name}: {exc}")
-            return False
+            if not future.done():
+                logger.warning(
+                    f"Service timeout: {service_name} "
+                    f"(attempt {attempt}/{attempts})"
+                )
+                if attempt < attempts and retry_delay_sec > 0.0:
+                    time.sleep(retry_delay_sec)
+                continue
+
+            try:
+                result = future.result()
+                if result is None:
+                    logger.warning(
+                        f"Service returned no result: {service_name} "
+                        f"(attempt {attempt}/{attempts})"
+                    )
+                    if attempt < attempts and retry_delay_sec > 0.0:
+                        time.sleep(retry_delay_sec)
+                    continue
+
+                if not result.success:
+                    logger.warning(
+                        f"Service rejected request: {service_name} ({result.message}) "
+                        f"(attempt {attempt}/{attempts})"
+                    )
+                    if attempt < attempts and retry_delay_sec > 0.0:
+                        time.sleep(retry_delay_sec)
+                    continue
+
+                return True
+            except Exception as exc:
+                logger.error(
+                    f"Service call failed: {service_name}: {exc} "
+                    f"(attempt {attempt}/{attempts})"
+                )
+                if attempt < attempts and retry_delay_sec > 0.0:
+                    time.sleep(retry_delay_sec)
+
+        return False
 
     def start_mapping_mode(self) -> bool:
-        return self._call_trigger(self.mapping_start_client, "/mapping/start")
+        return self._call_trigger(
+            self.mapping_start_client,
+            "/mapping/start",
+            timeout_sec=2.0,
+            attempts=3,
+            availability_wait_sec=1.0,
+            retry_delay_sec=0.3,
+        )
 
     def finish_mapping_mode(self) -> bool:
-        return self._call_trigger(self.mapping_finish_client, "/mapping/finish")
+        return self._call_trigger(
+            self.mapping_finish_client,
+            "/mapping/finish",
+            timeout_sec=3.0,
+            attempts=5,
+            availability_wait_sec=1.0,
+            retry_delay_sec=0.4,
+        )
 
     def use_live_map_mode(self) -> bool:
-        return self._call_trigger(self.mapping_use_live_client, "/mapping/use_live")
+        return self._call_trigger(
+            self.mapping_use_live_client,
+            "/mapping/use_live",
+            timeout_sec=2.0,
+            attempts=3,
+            availability_wait_sec=1.0,
+            retry_delay_sec=0.3,
+        )
 
     def use_frozen_map_mode(self) -> bool:
-        return self._call_trigger(self.mapping_use_frozen_client, "/mapping/use_frozen")
+        return self._call_trigger(
+            self.mapping_use_frozen_client,
+            "/mapping/use_frozen",
+            timeout_sec=2.0,
+            attempts=3,
+            availability_wait_sec=1.0,
+            retry_delay_sec=0.3,
+        )
+
+    def use_blank_map_mode(self) -> bool:
+        return self._call_trigger(
+            self.mapping_use_blank_client,
+            "/mapping/use_blank",
+            timeout_sec=2.0,
+            attempts=3,
+            availability_wait_sec=1.0,
+            retry_delay_sec=0.3,
+        )
 
     def shutdown(self) -> None:
         self.running = False

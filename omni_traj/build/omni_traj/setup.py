@@ -1,1 +1,0 @@
-/home/nickolas/ros2_ws/src/omni_src/omni_traj/setup.py

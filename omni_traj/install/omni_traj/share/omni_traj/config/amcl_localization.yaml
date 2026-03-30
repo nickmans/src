@@ -1,1 +1,47 @@
-/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/config/amcl_localization.yaml
+amcl:
+  ros__parameters:
+    use_sim_time: false
+
+    # Frames and topics are overridden in launch, these are safe defaults.
+    global_frame_id: map
+    odom_frame_id: odom
+    base_frame_id: base_link
+    scan_topic: /scan_match
+
+    tf_broadcast: true
+    transform_tolerance: 0.2
+    save_pose_rate: 1.0
+
+    # Motion model noise (yaw-authoritative odom from STM32 BNO086 heading).
+    # Keep rotational noise low so AMCL does not "spin chase" while moving.
+    alpha1: 0.03
+    alpha2: 0.03
+    alpha3: 0.10
+    alpha4: 0.10
+    alpha5: 0.02
+
+    # Particle filter sizing.
+    min_particles: 300
+    max_particles: 2000
+    pf_err: 0.02
+    pf_z: 0.99
+    resample_interval: 1
+
+    # Recovery and update thresholds.
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0
+    update_min_d: 0.05
+    update_min_a: 0.20
+
+    # Likelihood field model for robust scan-to-map matching.
+    laser_model_type: likelihood_field
+    laser_max_range: 5.0
+    laser_min_range: 0.05
+    laser_likelihood_max_dist: 1.0
+    z_hit: 0.8
+    z_rand: 0.2
+    sigma_hit: 0.12
+    max_beams: 120
+
+    # Initial pose can be provided from RViz /initialpose.
+    set_initial_pose: false
