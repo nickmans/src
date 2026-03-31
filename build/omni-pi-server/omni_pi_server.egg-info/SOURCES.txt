@@ -1,10 +1,9 @@
-README.md
 setup.py
-build/omni-pi-server/omni_pi_server.egg-info/PKG-INFO
-build/omni-pi-server/omni_pi_server.egg-info/SOURCES.txt
-build/omni-pi-server/omni_pi_server.egg-info/dependency_links.txt
-build/omni-pi-server/omni_pi_server.egg-info/entry_points.txt
-build/omni-pi-server/omni_pi_server.egg-info/top_level.txt
+omni_pi_server.egg-info/PKG-INFO
+omni_pi_server.egg-info/SOURCES.txt
+omni_pi_server.egg-info/dependency_links.txt
+omni_pi_server.egg-info/entry_points.txt
+omni_pi_server.egg-info/top_level.txt
 pi_comm_server/__init__.py
 pi_comm_server/demo_udp_client.py
 pi_comm_server/planner_stub.py

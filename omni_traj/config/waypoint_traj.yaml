@@ -55,14 +55,14 @@ waypoint_traj:
     hard_inflate_radius: 0.25
     soft_inflate_radius: 0.0
 
-    wheel_radius_m: 0.075
+    wheel_radius_m: 0.09
     wheelbase_m: 0.200
     max_wheel_acceleration_ms2: 0.8
     max_wheel_jerk_rs3: 180.0
     braking_decel_safety_factor: 0.75
     max_linear_velocity_ms: 0.4
     stm32_max_wheel_speed_rs: 11.0
-    stm32_max_wheel_accel_rs2: 13.3333333333
+    stm32_max_wheel_accel_rs2: 11.1111111111
     stm32_max_wheel_jerk_rs3: 200.0
     trajectory_limit_margin: 0.95
     max_lateral_accel: 1.0

@@ -55,13 +55,13 @@ class TrajectoryFrame:
 class CM7Controller:
     """Python port of CM7 `Controller_Step` behavior."""
 
-    def __init__(self, rw: float = 0.075, wheel_base_l: float = 0.2) -> None:
+    def __init__(self, rw: float = 0.09, wheel_base_l: float = 0.2) -> None:
         self.rw = rw
         self.wheel_base_l = wheel_base_l
 
         self.k_p = 0.5
         self.umax = 11.0
-        self.aumax = 1.0 / 0.075
+        self.aumax = 1.0 / self.rw
         self.jerkmax = 200.0
         self.wmax = 2.0
         self.dwmax = 1.0
@@ -219,7 +219,7 @@ class CM7Controller:
 class CM7StateEstimator:
     """Python port of CM7 `StateEstimator_Update` behavior."""
 
-    def __init__(self, rw: float = 0.075) -> None:
+    def __init__(self, rw: float = 0.09) -> None:
         self.rw = rw
         self.x = 0.0
         self.y = 0.0
@@ -610,7 +610,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server-port", type=int, default=9000, help="Pi UDP server port")
     parser.add_argument("--local-host", default="0.0.0.0", help="Local bind host")
     parser.add_argument("--local-port", type=int, default=0, help="Local bind port (0 = ephemeral)")
-    parser.add_argument("--rw", type=float, default=0.075, help="Wheel radius (m)")
+    parser.add_argument("--rw", type=float, default=0.09, help="Wheel radius (m)")
     parser.add_argument("--wheel-base-l", type=float, default=0.2, help="Center-to-wheel distance L (m)")
     parser.add_argument("--cpr", type=float, default=5303.0, help="Encoder counts per revolution")
     parser.add_argument("--control-hz", type=float, default=100.0, help="Control loop rate")

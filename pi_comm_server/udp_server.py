@@ -1413,6 +1413,7 @@ class ROS2Bridge:
         self.latest_velocities: Optional[List[Tuple[float, float]]] = None
         self.latest_path_rx_ms: int = 0
         self.latest_vel_rx_ms: int = 0
+        self._last_plan_tf_warn_ms: int = 0
 
         self.path_node = rclpy.create_node("planned_path_sub")
         self.path_sub = self.path_node.create_subscription(Path, "/planned_path", self._on_path, 10)
@@ -1441,6 +1442,39 @@ class ROS2Bridge:
             self.pose_node.publish_pose(pose)
         except Exception as exc:
             logger.error(f"Failed to publish pose to ROS2: {exc}")
+
+    @staticmethod
+    def _normalize_frame_id(frame_id: Optional[str]) -> str:
+        frame = (frame_id or "").strip().lstrip("/")
+        return frame if frame else "odom"
+
+    @staticmethod
+    def _yaw_from_quaternion(quat: object) -> float:
+        siny_cosp = 2.0 * (quat.w * quat.z + quat.x * quat.y)
+        cosy_cosp = 1.0 - 2.0 * (quat.y * quat.y + quat.z * quat.z)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def _lookup_plan_to_odom_tf(self, source_frame: str) -> Optional[Tuple[float, float, float]]:
+        src = self._normalize_frame_id(source_frame)
+        if src == "odom":
+            return (0.0, 0.0, 0.0)
+
+        try:
+            tr = self.pose_node.tf_buffer.lookup_transform("odom", src, rclpy.time.Time())
+            tx = float(tr.transform.translation.x)
+            ty = float(tr.transform.translation.y)
+            yaw = self._yaw_from_quaternion(tr.transform.rotation)
+            return (tx, ty, yaw)
+        except Exception as exc:
+            now_ms = int(time.monotonic() * 1000)
+            if (now_ms - self._last_plan_tf_warn_ms) > 2000:
+                logger.warning(
+                    "Unable to transform planned path frame '%s' -> 'odom'; holding trajectory until TF is available (%s)",
+                    src,
+                    exc,
+                )
+                self._last_plan_tf_warn_ms = now_ms
+            return None
 
     def _on_path(self, msg: Path) -> None:
         with self.path_lock:
@@ -1476,10 +1510,20 @@ class ROS2Bridge:
         if path is None or not path.poses:
             return []
 
+        source_frame = self._normalize_frame_id(path.header.frame_id)
+        tf_plan_to_odom = self._lookup_plan_to_odom_tf(source_frame)
+        if tf_plan_to_odom is None:
+            return []
+        tx, ty, yaw_tf = tf_plan_to_odom
+        c = math.cos(yaw_tf)
+        s = math.sin(yaw_tf)
+
         pts: List[Tuple[float, float, Optional[float]]] = []
         for ps in path.poses[:max_points]:
-            x = ps.pose.position.x
-            y = ps.pose.position.y
+            x_src = float(ps.pose.position.x)
+            y_src = float(ps.pose.position.y)
+            x_odom = c * x_src - s * y_src + tx
+            y_odom = s * x_src + c * y_src + ty
             q = ps.pose.orientation
             # Some publishers leave orientation all-zeros; treat that as unknown.
             if q.x == 0.0 and q.y == 0.0 and q.z == 0.0 and q.w == 0.0:
@@ -1488,19 +1532,34 @@ class ROS2Bridge:
                 # yaw = atan2(2*(w*z + x*y), 1 - 2*(y^2 + z^2))
                 siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
                 cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-                yaw = math.atan2(siny_cosp, cosy_cosp)
-            pts.append((float(x), float(y), yaw))
+                yaw_src = math.atan2(siny_cosp, cosy_cosp)
+                yaw = PosePublisherNode._wrap_to_pi(yaw_src + yaw_tf)
+            pts.append((x_odom, y_odom, yaw))
         return pts
 
     def get_planned_path_velocities(self, max_points: int = 64) -> List[Tuple[float, float]]:
         """Return [(vx, vy), ...] from the latest /planned_path_velocities."""
         with self.path_lock:
             vels = self.latest_velocities
+            path = self.latest_path
 
-        if vels is None:
+        if vels is None or path is None:
             return []
 
-        return vels[:max_points]
+        source_frame = self._normalize_frame_id(path.header.frame_id)
+        tf_plan_to_odom = self._lookup_plan_to_odom_tf(source_frame)
+        if tf_plan_to_odom is None:
+            return []
+        _, _, yaw_tf = tf_plan_to_odom
+        c = math.cos(yaw_tf)
+        s = math.sin(yaw_tf)
+
+        out: List[Tuple[float, float]] = []
+        for vx_src, vy_src in vels[:max_points]:
+            vx_odom = c * float(vx_src) - s * float(vy_src)
+            vy_odom = s * float(vx_src) + c * float(vy_src)
+            out.append((vx_odom, vy_odom))
+        return out
 
     def _call_trigger(
         self,

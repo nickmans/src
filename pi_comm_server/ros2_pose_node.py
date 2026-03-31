@@ -27,11 +27,11 @@ class PosePublisherNode(Node):
     def __init__(self):
         super().__init__('pose_publisher')
 
-        self.declare_parameter('stm32_pose_rotation_deg', -90.0)
-        self.declare_parameter('stm32_yaw_rotation_deg', -90.0)
+        self.declare_parameter('stm32_pose_rotation_deg', 0.0)
+        self.declare_parameter('stm32_yaw_rotation_deg', 0.0)
         self.declare_parameter('stm32_yaw_offset_deg', 0.0)
         self.declare_parameter('stm32_traj_rotation_deg', 0.0)
-        self.declare_parameter('stm32_traj_yaw_rotation_deg', -90.0)
+        self.declare_parameter('stm32_traj_yaw_rotation_deg', 0.0)
         self.declare_parameter('stm32_traj_yaw_offset_deg', 0.0)
         self.declare_parameter('odom_stationary_linear_speed_thresh_ms', 0.03)
         self.declare_parameter('odom_stationary_angular_speed_thresh_rs', 0.05)
@@ -64,11 +64,19 @@ class PosePublisherNode(Node):
         self._traj_yaw_offset_rad = math.radians(float(self.get_parameter('stm32_traj_yaw_offset_deg').value))
         pose_rotation_deg = float(self.get_parameter('stm32_pose_rotation_deg').value)
         yaw_rotation_deg = float(self.get_parameter('stm32_yaw_rotation_deg').value)
+        traj_rotation_deg = float(self.get_parameter('stm32_traj_rotation_deg').value)
+        traj_yaw_rotation_deg = float(self.get_parameter('stm32_traj_yaw_rotation_deg').value)
         if abs(pose_rotation_deg - yaw_rotation_deg) > 1e-6:
             self.get_logger().warn(
                 "STM32->ROS transform uses different XY and yaw rotations; this can make map translation "
                 "appear mirrored or sideways. Set stm32_pose_rotation_deg and stm32_yaw_rotation_deg "
                 "to the same frame rotation unless you intentionally need a split calibration."
+            )
+        if abs(traj_rotation_deg - pose_rotation_deg) > 1e-6 or abs(traj_yaw_rotation_deg - yaw_rotation_deg) > 1e-6:
+            self.get_logger().warn(
+                "ROS->STM32 trajectory transform does not mirror STM32->ROS pose transform. "
+                "Set stm32_traj_rotation_deg == stm32_pose_rotation_deg and "
+                "stm32_traj_yaw_rotation_deg == stm32_yaw_rotation_deg unless intentionally offsetting trajectories."
             )
         self.get_logger().warn(
             f"Applying STM32->ROS pose transform: xy_rotation={pose_rotation_deg:.1f} deg, "
@@ -77,8 +85,8 @@ class PosePublisherNode(Node):
         )
         self.get_logger().warn(
             "Applying ROS->STM32 trajectory transform: "
-            f"xy_rotation={float(self.get_parameter('stm32_traj_rotation_deg').value):.1f} deg, "
-            f"yaw_rotation={float(self.get_parameter('stm32_traj_yaw_rotation_deg').value):.1f} deg, "
+            f"xy_rotation={traj_rotation_deg:.1f} deg, "
+            f"yaw_rotation={traj_yaw_rotation_deg:.1f} deg, "
             f"yaw_offset={float(self.get_parameter('stm32_traj_yaw_offset_deg').value):.1f} deg"
         )
         self.initial_pose_seed_started_ns = None
