@@ -7,6 +7,3 @@ source;share/omni-pi-server/hook/pythonpath.sh
 source;share/omni-pi-server/hook/pythonscriptspath.ps1
 source;share/omni-pi-server/hook/pythonscriptspath.dsv
 source;share/omni-pi-server/hook/pythonscriptspath.sh
-source;../../build/omni-pi-server/share/omni-pi-server/hook/pythonpath_develop.ps1
-source;../../build/omni-pi-server/share/omni-pi-server/hook/pythonpath_develop.dsv
-source;../../build/omni-pi-server/share/omni-pi-server/hook/pythonpath_develop.sh

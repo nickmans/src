@@ -272,6 +272,7 @@ launch_cmd=(
     use_rviz:=false
     enable_amcl_localization:=false
     enable_slam_toolbox:=false
+    enable_nav2_costmaps:=false
     map_frame:=map
     publish_odom_to_base_tf:=true
     publish_world_to_odom_tf:=false

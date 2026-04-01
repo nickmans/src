@@ -81,19 +81,19 @@ Visualization Manager:
       Color Scheme: costmap
       Draw Behind: false
       Enabled: true
-      Name: Local Costmap
+      Name: Stack Local Costmap
       Topic:
         Depth: 5
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /local_costmap/costmap
+        Value: /costmap
       Update Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /local_costmap/costmap_updates
+        Value: /costmap_updates
       Use Timestamp: false
       Value: true
     - Alpha: 0.35

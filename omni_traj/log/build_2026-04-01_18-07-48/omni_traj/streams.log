@@ -1,0 +1,28 @@
+[1.722s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src/omni_traj': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni_traj build --build-base /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build install --record /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log --single-version-externally-managed install_data
+[2.253s] running egg_info
+[2.288s] writing build/omni_traj/omni_traj.egg-info/PKG-INFO
+[2.288s] writing dependency_links to build/omni_traj/omni_traj.egg-info/dependency_links.txt
+[2.289s] writing entry points to build/omni_traj/omni_traj.egg-info/entry_points.txt
+[2.290s] writing requirements to build/omni_traj/omni_traj.egg-info/requires.txt
+[2.291s] writing top-level names to build/omni_traj/omni_traj.egg-info/top_level.txt
+[2.361s] reading manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+[2.364s] writing manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+[2.365s] running build
+[2.366s] running build_py
+[2.367s] copying omni_traj/waypoint_traj_node.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build/lib/omni_traj
+[2.368s] running install
+[2.380s] running install_lib
+[2.412s] copying /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build/lib/omni_traj/waypoint_traj_node.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj
+[2.414s] byte-compiling /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj/waypoint_traj_node.py to waypoint_traj_node.cpython-312.pyc
+[2.510s] running install_data
+[2.511s] copying config/waypoint_traj.yaml -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/share/omni_traj/config
+[2.511s] running install_egg_info
+[2.544s] removing '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info' (and everything under it)
+[2.546s] Copying build/omni_traj/omni_traj.egg-info to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info
+[2.546s] running install_scripts
+[2.805s] Installing empty_scan_pub script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[2.806s] Installing lidar_watchdog script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[2.809s] Installing map_odom_startup_fallback script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[2.810s] Installing waypoint_traj script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[2.811s] writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log'
+[2.956s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src/omni_traj' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni_traj build --build-base /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build install --record /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log --single-version-externally-managed install_data

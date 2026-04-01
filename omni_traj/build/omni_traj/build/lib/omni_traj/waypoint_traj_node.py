@@ -197,6 +197,10 @@ class WaypointTrajNode(Node):
         # ===== Inflation =====
         self.declare_parameter("hard_inflate_radius", cfg("hard_inflate_radius"))  # typical = robot radius
         self.declare_parameter("soft_inflate_radius", cfg("soft_inflate_radius"))
+        self.declare_parameter("planning_obstacle_hysteresis_enable", cfg("planning_obstacle_hysteresis_enable"))
+        self.declare_parameter("planning_hard_obstacle_confirm_scans", cfg("planning_hard_obstacle_confirm_scans"))
+        self.declare_parameter("planning_hard_obstacle_clear_scans", cfg("planning_hard_obstacle_clear_scans"))
+        self.declare_parameter("cached_traj_reject_confirm_iters", cfg("cached_traj_reject_confirm_iters"))
 
         # ===== Robot kinematics & constraints =====
         self.declare_parameter("wheel_radius_m", cfg("wheel_radius_m"))           # Wheel radius in meters
@@ -213,6 +217,7 @@ class WaypointTrajNode(Node):
         self.declare_parameter("trajectory_replan_hz", cfg("trajectory_replan_hz"))     # Limit heavy trajectory re-generation frequency
         self.declare_parameter("trajectory_replan_min_move_m", cfg("trajectory_replan_min_move_m"))  # Replan sooner when robot moves this far
         self.declare_parameter("trajectory_replan_min_yaw_rad", cfg("trajectory_replan_min_yaw_rad"))  # Replan sooner when heading changes this much
+        self.declare_parameter("trajectory_horizon_m", cfg("trajectory_horizon_m"))
         # Spline tuning knobs:
         # - For tighter turns / faster response: increase max_curvature, reduce blend_step, or reduce max_iters
         # - For gentler turns / less corner-cutting: decrease max_curvature, increase blend_step and/or max_iters
@@ -278,6 +283,7 @@ class WaypointTrajNode(Node):
         # Use NumPy arrays for 50-80% faster grid operations
         self.static_occ = np.zeros((self.gs_map.height, self.gs_map.width), dtype=np.int8)
         self.persistent_evidence = np.zeros((self.gs_map.height, self.gs_map.width), dtype=np.int16)
+        self._planning_hard_evidence = np.zeros((self.gs_map.height, self.gs_map.width), dtype=np.int16)
         self.mapping_active = False
         self.use_saved_map_only = False
         self.mapping_grid_spec: Optional[GridSpec] = None
@@ -318,7 +324,7 @@ class WaypointTrajNode(Node):
         self.map_pub = self.create_publisher(OccupancyGrid, "/map", map_qos)
         self.publish_legacy_costmap = bool(self.get_parameter("publish_legacy_costmap").value)
         self.costmap_pub = (
-            self.create_publisher(OccupancyGrid, "/costmap", 1)
+            self.create_publisher(OccupancyGrid, "/costmap", map_qos)
             if self.publish_legacy_costmap
             else None
         )
@@ -354,6 +360,11 @@ class WaypointTrajNode(Node):
         self.srv_mapping_use_live = self.create_service(Trigger, "/mapping/use_live", self.handle_mapping_use_live)
         self.srv_mapping_use_frozen = self.create_service(Trigger, "/mapping/use_frozen", self.handle_mapping_use_frozen)
         self.srv_mapping_use_blank = self.create_service(Trigger, "/mapping/use_blank", self.handle_mapping_use_blank)
+        self.srv_waypoint_test_pattern = self.create_service(
+            Trigger,
+            "/waypoints/generate_test_pattern",
+            self.handle_generate_test_pattern_waypoints,
+        )
 
         # Main loop rate is configurable; higher rates reduce visible pose lag.
         self._main_loop_hz = max(1.0, float(self.get_parameter("main_loop_hz").value))
@@ -375,12 +386,17 @@ class WaypointTrajNode(Node):
 
         # Queue RViz-clicked waypoints directly to avoid callback-time parameter write races
         self._pending_waypoints: Deque[Tuple[float, float]] = deque()
+        self._auto_test_waypoint_pool: Deque[Tuple[float, float]] = deque()
+        self._auto_test_waypoint_window: int = 5
+        self._auto_test_waypoint_active: bool = False
+        self._wp_test_toggle_armed: bool = False
 
         # Track consecutive iterations each waypoint sits in a hard cell
         self._wp_hard_cell_iters: Dict[Tuple[int, int], int] = {}
 
         # Trajectory planning cache (keeps publishers responsive under heavy planning load)
         self._cached_traj: Optional[Tuple[List[float], List[float], List[float], List[float], List[float], List[float]]] = None
+        self._cached_traj_collision_iters: int = 0
         self._last_plan_ns: int = 0
         self._last_plan_pose: Optional[Pose2D] = None
         self._last_plan_wps_sig: Optional[Tuple[Tuple[int, int], ...]] = None
@@ -421,6 +437,31 @@ class WaypointTrajNode(Node):
         origin_x = -0.5 * width * res
         origin_y = -0.5 * height * res
         return GridSpec(res=res, width=width, height=height, origin_x=origin_x, origin_y=origin_y)
+
+    def _center_global_grid_on_pose(self, center_pose: Pose2D) -> None:
+        """Re-center the fixed-size global grid window around a world pose."""
+        width_m = self.gs_map.width * self.gs_map.res
+        height_m = self.gs_map.height * self.gs_map.res
+        res = self.gs_map.res
+
+        origin_x = float(center_pose.x) - 0.5 * width_m
+        origin_y = float(center_pose.y) - 0.5 * height_m
+
+        # Keep origin aligned to whole cells so world<->grid indexing stays stable.
+        origin_x = round(origin_x / res) * res
+        origin_y = round(origin_y / res) * res
+
+        self.gs_map = GridSpec(
+            res=self.gs_map.res,
+            width=self.gs_map.width,
+            height=self.gs_map.height,
+            origin_x=origin_x,
+            origin_y=origin_y,
+        )
+
+        # Force /map publish after origin updates even if occupancy bytes are unchanged.
+        self._last_published_map_crc = None
+        self._last_map_publish_ns = 0
 
     def _make_local_costmap_spec(self, base_pose_now: Pose2D) -> GridSpec:
         res = max(0.01, float(self.get_parameter("local_costmap_res").value))
@@ -501,6 +542,13 @@ class WaypointTrajNode(Node):
         )
         self.persistent_evidence = self._shift_grid(
             self.persistent_evidence,
+            self.gs_map.width,
+            self.gs_map.height,
+            dx_cells,
+            dy_cells,
+        )
+        self._planning_hard_evidence = self._shift_grid(
+            self._planning_hard_evidence,
             self.gs_map.width,
             self.gs_map.height,
             dx_cells,
@@ -1844,21 +1892,53 @@ class WaypointTrajNode(Node):
         """
         planning = self.static_occ.copy()
 
-        occ_ys, occ_xs = np.where(local_costmap > 0)
-        if len(occ_xs) == 0:
+        use_hysteresis = bool(self.get_parameter("planning_obstacle_hysteresis_enable").value)
+        if not use_hysteresis:
+            occ_ys, occ_xs = np.where(local_costmap > 0)
+            if len(occ_xs) == 0:
+                return planning
+
+            for ix_l, iy_l in zip(occ_xs, occ_ys):
+                wx, wy = self.grid_to_world(local_gs, int(ix_l), int(iy_l))
+                ix_g, iy_g = self.world_to_grid(self.gs_map, wx, wy)
+                if self.in_bounds(self.gs_map, ix_g, iy_g):
+                    planning[iy_g, ix_g] = max(planning[iy_g, ix_g], local_costmap[iy_l, ix_l])
             return planning
 
-        for ix_l, iy_l in zip(occ_xs, occ_ys):
-            wx, wy = self.grid_to_world(local_gs, int(ix_l), int(iy_l))
-            ix_g, iy_g = self.world_to_grid(self.gs_map, wx, wy)
-            if self.in_bounds(self.gs_map, ix_g, iy_g):
-                planning[iy_g, ix_g] = max(planning[iy_g, ix_g], local_costmap[iy_l, ix_l])
+        confirm_scans = max(1, int(self.get_parameter("planning_hard_obstacle_confirm_scans").value))
+        clear_scans = max(1, int(self.get_parameter("planning_hard_obstacle_clear_scans").value))
+        evidence_cap = max(confirm_scans, clear_scans) + 4
+
+        for iy_l in range(local_gs.height):
+            for ix_l in range(local_gs.width):
+                wx, wy = self.grid_to_world(local_gs, ix_l, iy_l)
+                ix_g, iy_g = self.world_to_grid(self.gs_map, wx, wy)
+                if not self.in_bounds(self.gs_map, ix_g, iy_g):
+                    continue
+
+                cell_val = int(local_costmap[iy_l, ix_l])
+                evidence = int(self._planning_hard_evidence[iy_g, ix_g])
+                if cell_val >= 100:
+                    evidence = min(evidence_cap, evidence + 1)
+                else:
+                    evidence = max(-evidence_cap, evidence - 1)
+                self._planning_hard_evidence[iy_g, ix_g] = evidence
+
+                if 0 < cell_val < 100 and planning[iy_g, ix_g] < 100:
+                    planning[iy_g, ix_g] = max(planning[iy_g, ix_g], cell_val)
+
+                if evidence >= confirm_scans:
+                    planning[iy_g, ix_g] = 100
+                elif cell_val >= 100 and planning[iy_g, ix_g] < 100:
+                    # Treat new hard hits as soft hints until they persist.
+                    planning[iy_g, ix_g] = max(planning[iy_g, ix_g], 50)
 
         return planning
 
     def _reset_mapping_buffers(self) -> None:
         self.static_occ.fill(0)
         self.persistent_evidence.fill(0)
+        self._planning_hard_evidence.fill(0)
         if self.mapping_logodds is not None:
             self.mapping_logodds.fill(0)
         if self._mapping_occ_state is not None:
@@ -2090,6 +2170,7 @@ class WaypointTrajNode(Node):
         if len(xs) == 0:
             self.static_occ = out
             self.persistent_evidence.fill(0)
+            self._planning_hard_evidence.fill(0)
             return
 
         s_res = float(saved_meta["resolution_m"])
@@ -2120,6 +2201,7 @@ class WaypointTrajNode(Node):
 
         self.static_occ = out
         self.persistent_evidence.fill(0)
+        self._planning_hard_evidence.fill(0)
 
     def _project_slam_map_to_static(self, slam_msg: OccupancyGrid) -> None:
         """Project a live SLAM map into runtime static layer; unknown cells do not overwrite prior state."""
@@ -2325,6 +2407,7 @@ class WaypointTrajNode(Node):
             if occ.shape == (self.gs_map.height, self.gs_map.width):
                 self.static_occ = np.asarray(occ, dtype=np.int8)
                 self.persistent_evidence.fill(0)
+                self._planning_hard_evidence.fill(0)
                 self.saved_map_bounds = self._bounds_from_grid_spec(self.gs_map)
                 self.active_geofence_bounds = None
                 self.geofence_anchor_corner = None
@@ -2519,6 +2602,60 @@ class WaypointTrajNode(Node):
             ]
         )
         self.get_logger().info(f"Added waypoint ({x:.2f}, {y:.2f}). Total: {wp_n + 1}")
+
+    def _generate_test_waypoint_pattern(self, center_pose: Pose2D) -> List[Tuple[float, float]]:
+        """Build 100 waypoints as a bounded random walk centered on robot pose."""
+        area_size_m = 1.5
+        step_m = 0.5
+        n_waypoints = 100
+        half = 0.5 * area_size_m
+
+        min_x = float(center_pose.x) - half
+        max_x = float(center_pose.x) + half
+        min_y = float(center_pose.y) - half
+        max_y = float(center_pose.y) + half
+
+        rng = np.random.default_rng()
+
+        waypoints: List[Tuple[float, float]] = [(float(center_pose.x), float(center_pose.y))]
+        while len(waypoints) < n_waypoints:
+            last_x, last_y = waypoints[-1]
+
+            # Pick a random heading that keeps the next point inside the fixed 1.5m box.
+            next_pt: Optional[Tuple[float, float]] = None
+            for _ in range(256):
+                theta = float(rng.uniform(-math.pi, math.pi))
+                nx = last_x + step_m * math.cos(theta)
+                ny = last_y + step_m * math.sin(theta)
+                if min_x <= nx <= max_x and min_y <= ny <= max_y:
+                    next_pt = (nx, ny)
+                    break
+
+            if next_pt is None:
+                # Deterministic fallback points inward to keep progress guaranteed.
+                theta = math.atan2(center_pose.y - last_y, center_pose.x - last_x)
+                nx = last_x + step_m * math.cos(theta)
+                ny = last_y + step_m * math.sin(theta)
+                next_pt = (nx, ny)
+
+            waypoints.append((float(next_pt[0]), float(next_pt[1])))
+
+        return waypoints
+
+    def _refill_auto_test_waypoint_window(self) -> None:
+        if not self._auto_test_waypoint_active:
+            return
+
+        wp_n = int(self.get_parameter("wp_n").value)
+        while wp_n < self._auto_test_waypoint_window and self._auto_test_waypoint_pool:
+            x, y = self._auto_test_waypoint_pool.popleft()
+            self._append_waypoint(x, y)
+            wp_n += 1
+
+        if wp_n == 0 and not self._auto_test_waypoint_pool:
+            self._auto_test_waypoint_active = False
+            self._wp_test_toggle_armed = False
+            self.get_logger().info("Auto test waypoint run complete.")
 
     def _remove_nearest_waypoint(self, x: float, y: float, radius: float) -> bool:
         if radius <= 0.0:
@@ -2716,6 +2853,31 @@ class WaypointTrajNode(Node):
         if best_soft_xy is not None:
             return (best_soft_xy[0], best_soft_xy[1], "soft-forward")
 
+        # 3) Final fallback: nearest soft cell in any direction.
+        # This prevents permanent planning starvation when a waypoint is trapped
+        # in hard inflation and forward-only soft candidates are unavailable.
+        best_soft_any_xy: Optional[Tuple[float, float]] = None
+        best_soft_any_d2 = float("inf")
+
+        for dy in range(-max_cells, max_cells + 1):
+            for dx in range(-max_cells, max_cells + 1):
+                ix = w_ix + dx
+                iy = w_iy + dy
+                if not self.in_bounds(self.gs_map, ix, iy):
+                    continue
+                cell_val = costmap[iy, ix]
+                if cell_val < 50 or cell_val >= 100:
+                    continue
+
+                cx, cy = self.grid_to_world(self.gs_map, ix, iy)
+                d2_wp = (cx - wx) * (cx - wx) + (cy - wy) * (cy - wy)
+                if d2_wp < best_soft_any_d2:
+                    best_soft_any_d2 = d2_wp
+                    best_soft_any_xy = (cx, cy)
+
+        if best_soft_any_xy is not None:
+            return (best_soft_any_xy[0], best_soft_any_xy[1], "soft-any")
+
         return None
 
     def _relocate_stuck_waypoints(self, costmap: np.ndarray, base_pose_now: Pose2D) -> Optional[List[Tuple[float, float]]]:
@@ -2733,8 +2895,13 @@ class WaypointTrajNode(Node):
             return None
 
         hard_iters_required = 3
+        hard_r = float(self.get_parameter("hard_inflate_radius").value)
         soft_r = float(self.get_parameter("soft_inflate_radius").value)
-        max_search_m = max(self.gs_map.res, 2.0 * max(soft_r, self.gs_map.res))
+        max_search_m = max(
+            0.5,
+            self.gs_map.res,
+            2.0 * max(hard_r, soft_r, self.gs_map.res),
+        )
 
         active_keys: set[Tuple[int, int]] = set()
         changed = False
@@ -2865,6 +3032,9 @@ class WaypointTrajNode(Node):
 
     def handle_clear_all_waypoints(self, request, response):
         """Clear all waypoints."""
+        self._auto_test_waypoint_pool.clear()
+        self._auto_test_waypoint_active = False
+        self._wp_test_toggle_armed = False
         self.set_parameters(
             [
                 Parameter("waypoints", Parameter.Type.DOUBLE_ARRAY, [float("nan"), float("nan")]),
@@ -2902,6 +3072,48 @@ class WaypointTrajNode(Node):
             ]
         )
         self.get_logger().info(f"Popped next waypoint. {wp_n} remaining.")
+        self._refill_auto_test_waypoint_window()
+        return response
+
+    def handle_generate_test_pattern_waypoints(self, request, response):
+        if self._wp_test_toggle_armed:
+            # Deterministic toggle behavior: every second wp t clears.
+            self._auto_test_waypoint_pool.clear()
+            self._auto_test_waypoint_active = False
+            self._wp_test_toggle_armed = False
+            self.set_parameters(
+                [
+                    Parameter("waypoints", Parameter.Type.DOUBLE_ARRAY, [float("nan"), float("nan")]),
+                    Parameter("wp_n", Parameter.Type.INTEGER, 0),
+                ]
+            )
+            response.success = True
+            response.message = "Cleared all waypoints (wp t toggle)."
+            self.get_logger().info(response.message)
+            return response
+
+        center_pose = self._base_pose_now()
+        generated = self._generate_test_waypoint_pattern(center_pose)
+
+        self._auto_test_waypoint_pool = deque(generated)
+        self._auto_test_waypoint_active = True
+        self._wp_test_toggle_armed = True
+        self.set_parameters(
+            [
+                Parameter("waypoints", Parameter.Type.DOUBLE_ARRAY, [float("nan"), float("nan")]),
+                Parameter("wp_n", Parameter.Type.INTEGER, 0),
+            ]
+        )
+        self._refill_auto_test_waypoint_window()
+        queued_now = int(self.get_parameter("wp_n").value)
+
+        response.success = True
+        response.message = (
+            f"Generated {len(generated)} waypoints in a 1.5m x 1.5m area centered at "
+            f"({center_pose.x:.2f}, {center_pose.y:.2f}); queued {queued_now} now with rolling window "
+            f"{self._auto_test_waypoint_window}."
+        )
+        self.get_logger().info(response.message)
         return response
 
     def handle_mapping_start(self, request, response):
@@ -2914,6 +3126,7 @@ class WaypointTrajNode(Node):
         self._init_mapping_grid(base_pose_now)
         self._reset_mapping_buffers()
         self._cached_traj = None
+        self._cached_traj_collision_iters = 0
         self._last_plan_wps_sig = None
         response.success = True
         response.message = "Mapping started: accumulating robust 10x10m occupancy (log-odds) from fused LiDAR."
@@ -2934,6 +3147,7 @@ class WaypointTrajNode(Node):
             self.use_saved_map_only = False
             self._mapping_pose_anchor_tf = None
             self._cached_traj = None
+            self._cached_traj_collision_iters = 0
             self._last_plan_wps_sig = None
             self._clear_geofence()
             self.blank_mode_anchor_pose = None
@@ -2955,6 +3169,7 @@ class WaypointTrajNode(Node):
         self.use_saved_map_only = False
         self._mapping_pose_anchor_tf = None
         self._cached_traj = None
+        self._cached_traj_collision_iters = 0
         self._last_plan_wps_sig = None
         response.success = True
         response.message = "Switched to live LiDAR map mode."
@@ -2977,6 +3192,7 @@ class WaypointTrajNode(Node):
         self.use_saved_map_only = False
         self._mapping_pose_anchor_tf = None
         self._cached_traj = None
+        self._cached_traj_collision_iters = 0
         self._last_plan_wps_sig = None
         self._clear_geofence()
         self.blank_mode_anchor_pose = None
@@ -2990,22 +3206,27 @@ class WaypointTrajNode(Node):
         self.use_saved_map_only = False
         self._mapping_pose_anchor_tf = None
         self._cached_traj = None
+        self._cached_traj_collision_iters = 0
         self._last_plan_wps_sig = None
+
+        start_pose = self._base_pose_now()
 
         # Clear any prior static/global map so planning uses blank global space.
         self.static_occ.fill(0)
         self.persistent_evidence.fill(0)
+        self._planning_hard_evidence.fill(0)
+        self._center_global_grid_on_pose(start_pose)
         self.saved_map_bounds = None
         self._clear_geofence()
-        self.blank_mode_anchor_pose = self._base_pose_now()
-        self._ensure_geofence(self.blank_mode_anchor_pose)
+        self.blank_mode_anchor_pose = start_pose
+        self._ensure_geofence(start_pose)
         self._latest_slam_map = None
         self._latest_slam_map_ns = 0
 
         response.success = True
         response.message = (
             "Switched to blank global map mode; local LiDAR costmap avoidance remains active "
-            "and the operating area is now anchored to the traj-local start pose."
+            "with the global map centered at the traj-local start pose."
         )
         self.get_logger().info(response.message)
         return response
@@ -3031,6 +3252,171 @@ class WaypointTrajNode(Node):
                 return False
             if grid[iy, ix] >= 100:  # Only block hard obstacles
                 return False
+        return True
+
+    def _point_hits_hard_obstacle(self, grid: np.ndarray, x: float, y: float) -> bool:
+        """Return True when the sampled trajectory point lies in a hard cell."""
+        ix, iy = self.world_to_grid(self.gs_map, x, y)
+        if not self.in_bounds(self.gs_map, ix, iy):
+            return True
+        return bool(grid[iy, ix] >= 100)
+
+    def _trajectory_swept_collision_free(self, grid: np.ndarray, xs: List[float], ys: List[float]) -> bool:
+        """Continuous hard-obstacle collision check along trajectory centerline samples."""
+        n = min(len(xs), len(ys))
+        if n <= 0:
+            return False
+
+        sample_step_m = max(0.01, 0.5 * self.gs_map.res)
+
+        for i in range(n):
+            x1 = float(xs[i])
+            y1 = float(ys[i])
+            if self._point_hits_hard_obstacle(grid, x1, y1):
+                return False
+
+            if i == 0:
+                continue
+
+            x0 = float(xs[i - 1])
+            y0 = float(ys[i - 1])
+            seg_len = math.hypot(x1 - x0, y1 - y0)
+            if seg_len <= sample_step_m:
+                continue
+
+            n_steps = int(math.ceil(seg_len / sample_step_m))
+            for j in range(1, n_steps):
+                t = j / max(1, n_steps)
+                sx = x0 + t * (x1 - x0)
+                sy = y0 + t * (y1 - y0)
+                if self._point_hits_hard_obstacle(grid, sx, sy):
+                    return False
+
+        return True
+
+    def _max_safe_prefix_index(self, grid: np.ndarray, xs: List[float], ys: List[float]) -> int:
+        """Return last index whose swept prefix remains hard-collision free; -1 if start is unsafe."""
+        n = min(len(xs), len(ys))
+        if n <= 0:
+            return -1
+
+        sample_step_m = max(0.01, 0.5 * self.gs_map.res)
+
+        x0 = float(xs[0])
+        y0 = float(ys[0])
+        if self._point_hits_hard_obstacle(grid, x0, y0):
+            return -1
+
+        last_safe = 0
+        for i in range(1, n):
+            x1 = float(xs[i])
+            y1 = float(ys[i])
+            seg_len = math.hypot(x1 - x0, y1 - y0)
+
+            if seg_len <= sample_step_m:
+                if self._point_hits_hard_obstacle(grid, x1, y1):
+                    return last_safe
+                last_safe = i
+                x0, y0 = x1, y1
+                continue
+
+            n_steps = int(math.ceil(seg_len / sample_step_m))
+            for j in range(1, n_steps + 1):
+                t = j / max(1, n_steps)
+                sx = x0 + t * (x1 - x0)
+                sy = y0 + t * (y1 - y0)
+                if self._point_hits_hard_obstacle(grid, sx, sy):
+                    return last_safe
+
+            last_safe = i
+            x0, y0 = x1, y1
+
+        return last_safe
+
+    def _publish_trimmed_safe_prefix(
+        self,
+        frame: str,
+        base_pose_now: Pose2D,
+        planning_costmap: np.ndarray,
+        traj: Tuple[List[float], List[float], List[float], List[float], List[float], List[float]],
+        source_label: str,
+    ) -> bool:
+        xs, ys, yaws, velocities, vxs, vys = traj
+        last_safe = self._max_safe_prefix_index(planning_costmap, xs, ys)
+        if last_safe < 1:
+            return False
+
+        keep_n = last_safe + 1
+        xs_t = list(xs[:keep_n])
+        ys_t = list(ys[:keep_n])
+        yaws_t = list(yaws[:keep_n])
+        vel_t = list(velocities[:keep_n])
+        vxs_t = list(vxs[:keep_n])
+        vys_t = list(vys[:keep_n])
+
+        travel = math.hypot(xs_t[-1] - xs_t[0], ys_t[-1] - ys_t[0])
+        if travel < max(0.05, 2.0 * self.gs_map.res):
+            return False
+
+        # Enforce a controlled stop at the trimmed end.
+        vel_t[-1] = 0.0
+        vxs_t[-1] = 0.0
+        vys_t[-1] = 0.0
+        if len(vel_t) >= 2:
+            vel_t[-2] = min(vel_t[-2], 0.0)
+            vxs_t[-2] = 0.0
+            vys_t[-2] = 0.0
+
+        self._cached_traj = (xs_t, ys_t, yaws_t, vel_t, vxs_t, vys_t)
+        self._cached_traj_collision_iters = 0
+        self.get_logger().warn(
+            f"{source_label} trajectory trimmed to safe prefix ({keep_n}/{len(xs)} pts) after swept check."
+        )
+        self._publish_trajectory(frame, xs_t, ys_t, yaws_t, vel_t, vxs_t, vys_t)
+        return True
+
+    def _publish_cached_if_valid(
+        self,
+        frame: str,
+        base_pose_now: Pose2D,
+        planning_costmap: np.ndarray,
+    ) -> bool:
+        if self._cached_traj is None:
+            self._cached_traj_collision_iters = 0
+            return False
+
+        xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
+        if self._trajectory_swept_collision_free(planning_costmap, xs_c, ys_c):
+            self._cached_traj_collision_iters = 0
+            self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+            return True
+
+        self._cached_traj_collision_iters += 1
+        reject_confirm_iters = max(1, int(self.get_parameter("cached_traj_reject_confirm_iters").value))
+        if self._cached_traj_collision_iters < reject_confirm_iters:
+            self.get_logger().warn(
+                "Cached trajectory collision check failed on this cycle; "
+                f"waiting for {reject_confirm_iters} consecutive failures before rejection "
+                f"({self._cached_traj_collision_iters}/{reject_confirm_iters})."
+            )
+            self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+            return True
+
+        if self._publish_trimmed_safe_prefix(
+            frame,
+            base_pose_now,
+            planning_costmap,
+            (xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c),
+            "Cached",
+        ):
+            self._cached_traj_collision_iters = 0
+            return True
+
+        self.get_logger().warn("Cached trajectory rejected by swept-footprint hard-collision check; holding.")
+        self._cached_traj = None
+        self._cached_traj_collision_iters = 0
+        self._last_plan_wps_sig = None
+        self._publish_hold_current_trajectory(frame, base_pose_now)
         return True
 
     def get_wheel_velocities(self, vx_body: float, vy_body: float, omega: float) -> List[float]:
@@ -3406,11 +3792,39 @@ class WaypointTrajNode(Node):
         return [self.grid_to_world(self.gs_map, ix, iy) for (ix, iy) in path_ij]
 
     def plan_segment_path(self, grid: np.ndarray, start_xy: Tuple[float, float], goal_xy: Tuple[float, float]) -> List[Tuple[float, float]]:
+        hard_r = float(self.get_parameter("hard_inflate_radius").value)
+        soft_r = float(self.get_parameter("soft_inflate_radius").value)
+
+        # If goal lands in a hard-inflated cell, nudge to nearest reachable cell
+        # so planning can still proceed in nearby free space.
+        gxi, gyi = self.world_to_grid(self.gs_map, goal_xy[0], goal_xy[1])
+        if self.in_bounds(self.gs_map, gxi, gyi) and grid[gyi, gxi] >= 100:
+            max_search_m = max(0.5, 2.0 * max(hard_r, soft_r, self.gs_map.res))
+            relocated_goal = self._find_relocation_for_waypoint(
+                grid,
+                goal_xy,
+                self._base_pose_now(),
+                max_search_m,
+            )
+            if relocated_goal is not None:
+                goal_xy = (relocated_goal[0], relocated_goal[1])
+
         if self.line_collision_free(grid, start_xy, goal_xy):
             return [start_xy, goal_xy]
+
         path = self.astar(grid, start_xy, goal_xy)
+        if not path and soft_r > 1e-6:
+            # Soft-layer fallback: keep only hard obstacles when A* fails.
+            # This guards against cases where soft inflation over-constrains
+            # search without an actual hard collision corridor.
+            hard_only_grid = np.where(grid >= 100, 100, 0).astype(np.int8)
+            if self.line_collision_free(hard_only_grid, start_xy, goal_xy):
+                return [start_xy, goal_xy]
+            path = self.astar(hard_only_grid, start_xy, goal_xy)
+
         if not path:
             return []
+
         path[0] = start_xy
         path[-1] = goal_xy
         
@@ -3543,6 +3957,52 @@ class WaypointTrajNode(Node):
             else:
                 u = (s_target - s0) / (s1 - s0)
                 out.append((x0 + u * (x1 - x0), y0 + u * (y1 - y0)))
+
+        return out
+
+    @staticmethod
+    def _polyline_length(path: List[Tuple[float, float]]) -> float:
+        if len(path) < 2:
+            return 0.0
+
+        total = 0.0
+        for i in range(1, len(path)):
+            x0, y0 = path[i - 1]
+            x1, y1 = path[i]
+            total += math.hypot(x1 - x0, y1 - y0)
+        return total
+
+    @staticmethod
+    def _truncate_polyline_to_length(path: List[Tuple[float, float]], max_len_m: float) -> List[Tuple[float, float]]:
+        """Return the path prefix up to max_len_m arc length."""
+        if not path:
+            return []
+        if len(path) == 1:
+            return [path[0]]
+
+        remaining = max(0.0, float(max_len_m))
+        if remaining <= 1e-9:
+            return [path[0]]
+
+        out: List[Tuple[float, float]] = [path[0]]
+
+        for i in range(1, len(path)):
+            x0, y0 = path[i - 1]
+            x1, y1 = path[i]
+            seg_len = math.hypot(x1 - x0, y1 - y0)
+
+            if seg_len <= 1e-9:
+                out.append((x1, y1))
+                continue
+
+            if seg_len <= remaining + 1e-9:
+                out.append((x1, y1))
+                remaining -= seg_len
+                continue
+
+            t = remaining / seg_len
+            out.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
+            break
 
         return out
 
@@ -4459,6 +4919,7 @@ class WaypointTrajNode(Node):
 
         # remove reached waypoints
         self._pop_reached_waypoints(base_pose_now)
+        self._refill_auto_test_waypoint_window()
 
         # Always publish odom->base_link at timer cadence with a stable stamp so
         # consumers (e.g., slam_toolbox filters) always have a transform at/near
@@ -4569,26 +5030,32 @@ class WaypointTrajNode(Node):
 
         planning_costmap = self._build_planning_costmap_from_local(local_costmap, local_gs)
 
-        moved_wps = self._relocate_stuck_waypoints(planning_costmap, base_pose_now)
+        # Keep wp t auto-test waypoints fixed to their original 1.5m zone.
+        moved_wps = None
+        if not self._auto_test_waypoint_active:
+            moved_wps = self._relocate_stuck_waypoints(planning_costmap, base_pose_now)
         if moved_wps is not None:
             wps = moved_wps
             self.publish_waypoints(wps)
 
-        if self._effective_scan_stride > 1:
-            if self._cached_traj is not None:
-                xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
-                self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
-            else:
-                self._publish_hold_current_trajectory(frame, base_pose_now)
+        if self._effective_scan_stride > 1 and self._cached_traj is not None:
+            # Under load-shed, reuse validated cached trajectory.
+            # If there is no cache yet, continue below and plan once to seed it.
+            self._publish_cached_if_valid(frame, base_pose_now, planning_costmap)
             self._finish_timer_cycle(timer_start_ns)
             return
+        if self._effective_scan_stride > 1 and self._cached_traj is None:
+            self._warn_lidar_throttled(
+                "Load-shed active with no cached trajectory; forcing replan seed this cycle."
+            )
 
         should_replan = self._should_replan_trajectory(base_pose_now, wps)
         if not should_replan and self._cached_traj is not None:
-            xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
-            self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+            self._publish_cached_if_valid(frame, base_pose_now, planning_costmap)
             self._finish_timer_cycle(timer_start_ns)
             return
+
+        traj_horizon_m = max(0.20, float(self.get_parameter("trajectory_horizon_m").value))
 
         stitched: List[Tuple[float, float]] = []
         start_xy = (base_pose_now.x, base_pose_now.y)
@@ -4597,31 +5064,69 @@ class WaypointTrajNode(Node):
             seg = self.plan_segment_path(planning_costmap, start_xy, (gx, gy))
             if not seg:
                 self.get_logger().warn(f"Planning failed start={start_xy} goal={(gx, gy)}")
-                if self._cached_traj is not None:
-                    xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
-                    self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+                if not self._publish_cached_if_valid(frame, base_pose_now, planning_costmap):
+                    self._publish_hold_current_trajectory(frame, base_pose_now)
                 self._finish_timer_cycle(timer_start_ns)
                 return
             if not stitched:
                 stitched.extend(seg)
             else:
                 stitched.extend(seg[1:])
+
+            if self._polyline_length(stitched) >= traj_horizon_m:
+                stitched = self._truncate_polyline_to_length(stitched, traj_horizon_m)
+                break
+
             start_xy = (gx, gy)
+
+        if len(stitched) < 2:
+            if not self._publish_cached_if_valid(frame, base_pose_now, planning_costmap):
+                self._publish_hold_current_trajectory(frame, base_pose_now)
+            self._finish_timer_cycle(timer_start_ns)
+            return
 
         # Smooth path using cubic spline interpolation (industry standard)
         stitched_smooth = self.smooth_path_cubic_spline(planning_costmap, stitched)
+        stitched_smooth = self._truncate_polyline_to_length(stitched_smooth, traj_horizon_m)
 
         # Build velocity-constrained trajectory on smoothed path
         xs, ys, yaws, velocities, vxs, vys = self.build_velocity_constrained_trajectory(stitched_smooth)
         
         if not xs:
-            if self._cached_traj is not None:
-                xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
-                self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+            if not self._publish_cached_if_valid(frame, base_pose_now, planning_costmap):
+                self._publish_hold_current_trajectory(frame, base_pose_now)
             self._finish_timer_cycle(timer_start_ns)
             return
 
+        if not self._trajectory_swept_collision_free(planning_costmap, xs, ys):
+            self.get_logger().warn("New smoothed trajectory failed swept check; retrying unsmoothed path.")
+
+            xs_u, ys_u, yaws_u, vel_u, vxs_u, vys_u = self.build_velocity_constrained_trajectory(stitched)
+            if xs_u and self._trajectory_swept_collision_free(planning_costmap, xs_u, ys_u):
+                xs, ys, yaws, velocities, vxs, vys = xs_u, ys_u, yaws_u, vel_u, vxs_u, vys_u
+            elif xs_u and self._publish_trimmed_safe_prefix(
+                frame,
+                base_pose_now,
+                planning_costmap,
+                (xs_u, ys_u, yaws_u, vel_u, vxs_u, vys_u),
+                "New",
+            ):
+                self._last_plan_ns = self.get_clock().now().nanoseconds
+                self._last_plan_pose = Pose2D(base_pose_now.x, base_pose_now.y, base_pose_now.yaw)
+                self._last_plan_wps_sig = self._waypoint_signature(wps)
+                self._finish_timer_cycle(timer_start_ns)
+                return
+            else:
+                if not self._publish_cached_if_valid(frame, base_pose_now, planning_costmap):
+                    self._cached_traj = None
+                    self._cached_traj_collision_iters = 0
+                    self._last_plan_wps_sig = None
+                    self._publish_hold_current_trajectory(frame, base_pose_now)
+                self._finish_timer_cycle(timer_start_ns)
+                return
+
         self._cached_traj = (xs, ys, yaws, velocities, vxs, vys)
+        self._cached_traj_collision_iters = 0
         self._last_plan_ns = self.get_clock().now().nanoseconds
         self._last_plan_pose = Pose2D(base_pose_now.x, base_pose_now.y, base_pose_now.yaw)
         self._last_plan_wps_sig = self._waypoint_signature(wps)

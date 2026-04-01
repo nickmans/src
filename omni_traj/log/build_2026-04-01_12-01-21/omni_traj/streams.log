@@ -1,0 +1,25 @@
+[2.453s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src/omni_traj': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni_traj build --build-base /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build install --record /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log --single-version-externally-managed install_data
+[2.979s] running egg_info
+[3.012s] writing build/omni_traj/omni_traj.egg-info/PKG-INFO
+[3.012s] writing dependency_links to build/omni_traj/omni_traj.egg-info/dependency_links.txt
+[3.017s] writing entry points to build/omni_traj/omni_traj.egg-info/entry_points.txt
+[3.017s] writing requirements to build/omni_traj/omni_traj.egg-info/requires.txt
+[3.018s] writing top-level names to build/omni_traj/omni_traj.egg-info/top_level.txt
+[3.127s] reading manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+[3.128s] writing manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+[3.129s] running build
+[3.129s] running build_py
+[3.129s] running install
+[3.146s] running install_lib
+[3.187s] running install_data
+[3.187s] copying config/waypoint_traj.yaml -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/share/omni_traj/config
+[3.188s] running install_egg_info
+[3.227s] removing '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info' (and everything under it)
+[3.229s] Copying build/omni_traj/omni_traj.egg-info to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info
+[3.230s] running install_scripts
+[3.491s] Installing empty_scan_pub script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[3.492s] Installing lidar_watchdog script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[3.493s] Installing map_odom_startup_fallback script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[3.494s] Installing waypoint_traj script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+[3.498s] writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log'
+[3.671s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src/omni_traj' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/omni_traj build --build-base /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/build install --record /home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log --single-version-externally-managed install_data

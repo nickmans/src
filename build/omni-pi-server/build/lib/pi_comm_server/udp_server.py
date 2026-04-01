@@ -11,7 +11,9 @@ import fcntl
 import logging
 import math
 import os
+import pty
 import queue
+import signal
 import socket
 import subprocess
 import threading
@@ -136,6 +138,15 @@ class OMNIUDPServer:
         self._stack_control_enabled = True
         self._server_lock_path = "/tmp/omni_udp_server.lock"
         self._server_lock_fd: Optional[int] = None
+        self._sock_send_lock = threading.Lock()
+        self._terminal_lock = threading.Lock()
+        self._terminal_master_fd: Optional[int] = None
+        self._terminal_slave_fd: Optional[int] = None
+        self._terminal_proc: Optional[subprocess.Popen] = None
+        self._terminal_reader_thread: Optional[threading.Thread] = None
+        self._terminal_client_addr: Optional[tuple] = None
+        self._terminal_seq = 0
+        self._terminal_active = False
 
         # Trajectory send cadence (default 10 Hz) can be overridden with
         # environment variable OMNI_TRAJ_SEND_HZ.
@@ -361,6 +372,7 @@ class OMNIUDPServer:
         self._stop_event.set()
         self._send_wakeup.set()
         self._set_ros2_retry_enabled(False, reason="server stopping")
+        self._stop_terminal_passthrough(notify_client=False, reason="server stopping")
 
         # Stop ROS2 stack first while manager loop is still alive.
         if stop_ros2_stack:
@@ -506,6 +518,14 @@ class OMNIUDPServer:
         """Monotonic milliseconds for internal timeouts/intervals."""
         return int(time.monotonic() * 1000)
 
+    def _safe_sendto(self, message: bytes, addr: tuple) -> None:
+        if not addr:
+            return
+
+        with self._sock_send_lock:
+            if self.sock:
+                self.sock.sendto(message, addr)
+
     def get_latest_pose(self) -> Optional[PoseData]:
         with self.pose_lock:
             return self.latest_pose
@@ -648,10 +668,188 @@ class OMNIUDPServer:
         try:
             payload = Command(cmd_id=cmd_id, arg=b"").pack()
             message = make_message(MessageType.CMD, seq, payload, crc_payload=False)
-            if self.sock:
-                self.sock.sendto(message, addr)
+            self._safe_sendto(message, addr)
         except Exception as exc:
             logger.error(f"Failed to send CMD ack: {exc}")
+
+    def _next_terminal_seq(self) -> int:
+        with self._terminal_lock:
+            self._terminal_seq += 1
+            return self._terminal_seq
+
+    def _send_terminal_control(self, cmd_id: int, addr: Optional[tuple] = None) -> None:
+        target_addr = addr or self._terminal_client_addr
+        if not target_addr:
+            return
+
+        try:
+            payload = Command(cmd_id=cmd_id, arg=b"").pack()
+            message = make_message(MessageType.CMD, self._next_terminal_seq(), payload, crc_payload=False)
+            self._safe_sendto(message, target_addr)
+        except Exception as exc:
+            logger.error("Failed to send terminal control cmd=%s: %s", cmd_id, exc)
+
+    def _send_terminal_data(self, data: bytes, addr: Optional[tuple] = None) -> None:
+        if not data:
+            return
+
+        target_addr = addr or self._terminal_client_addr
+        if not target_addr:
+            return
+
+        try:
+            payload = Command(cmd_id=CommandID.TERMINAL_PASSTHROUGH_DATA, arg=data).pack()
+            message = make_message(MessageType.CMD, self._next_terminal_seq(), payload, crc_payload=False)
+            self._safe_sendto(message, target_addr)
+        except Exception as exc:
+            logger.error("Failed to send terminal data: %s", exc)
+
+    def _send_terminal_notice(self, text: str, addr: Optional[tuple] = None) -> None:
+        self._send_terminal_data(text.encode("utf-8", errors="replace"), addr)
+
+    def _terminal_reader_loop(self, master_fd: int) -> None:
+        try:
+            while self.running:
+                try:
+                    data = os.read(master_fd, 256)
+                except OSError:
+                    break
+
+                if not data:
+                    break
+
+                self._send_terminal_data(data)
+        finally:
+            self._stop_terminal_passthrough(notify_client=True, reason="shell exited")
+
+    def _start_terminal_passthrough(self, addr: tuple) -> bool:
+        self._stop_terminal_passthrough(notify_client=False, reason="restart terminal session")
+
+        shell_path = os.environ.get("SHELL") or "/bin/bash"
+        home_dir = os.path.expanduser("~")
+        master_fd: Optional[int] = None
+        slave_fd: Optional[int] = None
+
+        try:
+            master_fd, slave_fd = pty.openpty()
+            env = os.environ.copy()
+            env.setdefault("TERM", "xterm-256color")
+            env.setdefault("HOME", home_dir)
+            proc = subprocess.Popen(
+                [shell_path, "-i"],
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                cwd=home_dir,
+                env=env,
+                start_new_session=True,
+                close_fds=True,
+            )
+            os.close(slave_fd)
+        except Exception as exc:
+            logger.error("Failed to start terminal passthrough shell: %s", exc)
+            try:
+                os.close(master_fd)
+            except Exception:
+                pass
+            try:
+                os.close(slave_fd)
+            except Exception:
+                pass
+            self._send_terminal_notice("\r\n[failed to start pi terminal]\r\n", addr)
+            return False
+
+        reader_thread = threading.Thread(
+            target=self._terminal_reader_loop,
+            args=(master_fd,),
+            name="pi_terminal_reader",
+            daemon=True,
+        )
+
+        with self._terminal_lock:
+            self._terminal_master_fd = master_fd
+            self._terminal_slave_fd = None
+            self._terminal_proc = proc
+            self._terminal_reader_thread = reader_thread
+            self._terminal_client_addr = addr
+            self._terminal_active = True
+
+        reader_thread.start()
+        self._send_terminal_notice("\r\n[pi terminal passthrough active; send * to exit]\r\n", addr)
+        logger.info("Terminal passthrough shell started for %s", addr)
+        return True
+
+    def _handle_terminal_input(self, data: bytes, addr: tuple) -> None:
+        with self._terminal_lock:
+            master_fd = self._terminal_master_fd
+            active = self._terminal_active
+            if active:
+                self._terminal_client_addr = addr
+
+        if not active or master_fd is None:
+            self._send_terminal_notice("\r\n[no active pi terminal session]\r\n", addr)
+            return
+
+        try:
+            os.write(master_fd, data)
+        except OSError as exc:
+            logger.error("Failed to write terminal input: %s", exc)
+            self._stop_terminal_passthrough(notify_client=True, reason="terminal write failed")
+
+    def _stop_terminal_passthrough(self, notify_client: bool, reason: str = "") -> None:
+        with self._terminal_lock:
+            was_active = self._terminal_active
+            proc = self._terminal_proc
+            master_fd = self._terminal_master_fd
+            slave_fd = self._terminal_slave_fd
+            reader_thread = self._terminal_reader_thread
+            client_addr = self._terminal_client_addr
+
+            self._terminal_active = False
+            self._terminal_proc = None
+            self._terminal_master_fd = None
+            self._terminal_slave_fd = None
+            self._terminal_reader_thread = None
+            self._terminal_client_addr = None
+
+        if not was_active and proc is None and master_fd is None:
+            return
+
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGHUP)
+            except Exception:
+                pass
+            try:
+                proc.terminate()
+                proc.wait(timeout=0.5)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=0.5)
+                except Exception:
+                    pass
+
+        for fd in (master_fd, slave_fd):
+            if fd is None:
+                continue
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+
+        if (
+            reader_thread is not None
+            and reader_thread.is_alive()
+            and reader_thread is not threading.current_thread()
+        ):
+            reader_thread.join(timeout=0.5)
+
+        if notify_client and client_addr:
+            self._send_terminal_control(CommandID.STOP_TERMINAL_PASSTHROUGH, client_addr)
+
+        if reason:
+            logger.info("Terminal passthrough stopped: %s", reason)
 
     def _call_mapping_service_with_retries(
         self,
@@ -831,6 +1029,36 @@ class OMNIUDPServer:
             logger.info("Blank global map mode active; trajectory streaming enabled")
             return
 
+        if cmd.cmd_id == CommandID.START_TERMINAL_PASSTHROUGH:
+            logger.info("START_TERMINAL_PASSTHROUGH received; opening Pi shell passthrough")
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+            self._start_terminal_passthrough(addr)
+            return
+
+        if cmd.cmd_id == CommandID.TERMINAL_PASSTHROUGH_DATA:
+            self._handle_terminal_input(cmd.arg, addr)
+            return
+
+        if cmd.cmd_id == CommandID.STOP_TERMINAL_PASSTHROUGH:
+            logger.info("STOP_TERMINAL_PASSTHROUGH received; closing Pi shell passthrough")
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+            self._stop_terminal_passthrough(notify_client=False, reason="STM32 requested terminal exit")
+            return
+
+        if cmd.cmd_id == CommandID.WP_TEST_PATTERN:
+            logger.info("WP_TEST_PATTERN received; generating centered waypoint test pattern")
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+            ok = self._call_mapping_service_with_retries(
+                service_label="WP_TEST_PATTERN->/waypoints/generate_test_pattern",
+                call_fn=self.ros2_bridge.generate_test_waypoints,
+                attempts=3,
+                retry_delay_s=0.5,
+                pre_wait_s=0.2,
+            )
+            if not ok:
+                logger.warning("WP_TEST_PATTERN failed: waypoint pattern service unavailable or rejected")
+            return
+
         if cmd.cmd_id == CommandID.STOP_ROS2:
             logger.info("STOP_ROS2 received; stopping ROS2 stack")
             self.set_trajectory_active(False)
@@ -963,8 +1191,7 @@ class OMNIUDPServer:
             payload = traj.pack()
             self.traj_seq += 1
             message = make_message(MessageType.TRAJ, self.traj_seq, payload, crc_payload=False)
-            if self.sock:
-                self.sock.sendto(message, addr)
+            self._safe_sendto(message, addr)
 
             self._traj_tx_count += 1
             now_mono = time.monotonic()
@@ -1200,6 +1427,7 @@ class ROS2Bridge:
         self.latest_velocities: Optional[List[Tuple[float, float]]] = None
         self.latest_path_rx_ms: int = 0
         self.latest_vel_rx_ms: int = 0
+        self._last_plan_tf_warn_ms: int = 0
 
         self.path_node = rclpy.create_node("planned_path_sub")
         self.path_sub = self.path_node.create_subscription(Path, "/planned_path", self._on_path, 10)
@@ -1211,6 +1439,10 @@ class ROS2Bridge:
         self.mapping_use_live_client = self.path_node.create_client(Trigger, "/mapping/use_live")
         self.mapping_use_frozen_client = self.path_node.create_client(Trigger, "/mapping/use_frozen")
         self.mapping_use_blank_client = self.path_node.create_client(Trigger, "/mapping/use_blank")
+        self.waypoint_test_pattern_client = self.path_node.create_client(
+            Trigger,
+            "/waypoints/generate_test_pattern",
+        )
 
         self.executor = MultiThreadedExecutor()
         self.executor.add_node(self.pose_node)
@@ -1228,6 +1460,39 @@ class ROS2Bridge:
             self.pose_node.publish_pose(pose)
         except Exception as exc:
             logger.error(f"Failed to publish pose to ROS2: {exc}")
+
+    @staticmethod
+    def _normalize_frame_id(frame_id: Optional[str]) -> str:
+        frame = (frame_id or "").strip().lstrip("/")
+        return frame if frame else "odom"
+
+    @staticmethod
+    def _yaw_from_quaternion(quat: object) -> float:
+        siny_cosp = 2.0 * (quat.w * quat.z + quat.x * quat.y)
+        cosy_cosp = 1.0 - 2.0 * (quat.y * quat.y + quat.z * quat.z)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def _lookup_plan_to_odom_tf(self, source_frame: str) -> Optional[Tuple[float, float, float]]:
+        src = self._normalize_frame_id(source_frame)
+        if src == "odom":
+            return (0.0, 0.0, 0.0)
+
+        try:
+            tr = self.pose_node.tf_buffer.lookup_transform("odom", src, rclpy.time.Time())
+            tx = float(tr.transform.translation.x)
+            ty = float(tr.transform.translation.y)
+            yaw = self._yaw_from_quaternion(tr.transform.rotation)
+            return (tx, ty, yaw)
+        except Exception as exc:
+            now_ms = int(time.monotonic() * 1000)
+            if (now_ms - self._last_plan_tf_warn_ms) > 2000:
+                logger.warning(
+                    "Unable to transform planned path frame '%s' -> 'odom'; holding trajectory until TF is available (%s)",
+                    src,
+                    exc,
+                )
+                self._last_plan_tf_warn_ms = now_ms
+            return None
 
     def _on_path(self, msg: Path) -> None:
         with self.path_lock:
@@ -1263,10 +1528,20 @@ class ROS2Bridge:
         if path is None or not path.poses:
             return []
 
+        source_frame = self._normalize_frame_id(path.header.frame_id)
+        tf_plan_to_odom = self._lookup_plan_to_odom_tf(source_frame)
+        if tf_plan_to_odom is None:
+            return []
+        tx, ty, yaw_tf = tf_plan_to_odom
+        c = math.cos(yaw_tf)
+        s = math.sin(yaw_tf)
+
         pts: List[Tuple[float, float, Optional[float]]] = []
         for ps in path.poses[:max_points]:
-            x = ps.pose.position.x
-            y = ps.pose.position.y
+            x_src = float(ps.pose.position.x)
+            y_src = float(ps.pose.position.y)
+            x_odom = c * x_src - s * y_src + tx
+            y_odom = s * x_src + c * y_src + ty
             q = ps.pose.orientation
             # Some publishers leave orientation all-zeros; treat that as unknown.
             if q.x == 0.0 and q.y == 0.0 and q.z == 0.0 and q.w == 0.0:
@@ -1275,19 +1550,34 @@ class ROS2Bridge:
                 # yaw = atan2(2*(w*z + x*y), 1 - 2*(y^2 + z^2))
                 siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
                 cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-                yaw = math.atan2(siny_cosp, cosy_cosp)
-            pts.append((float(x), float(y), yaw))
+                yaw_src = math.atan2(siny_cosp, cosy_cosp)
+                yaw = PosePublisherNode._wrap_to_pi(yaw_src + yaw_tf)
+            pts.append((x_odom, y_odom, yaw))
         return pts
 
     def get_planned_path_velocities(self, max_points: int = 64) -> List[Tuple[float, float]]:
         """Return [(vx, vy), ...] from the latest /planned_path_velocities."""
         with self.path_lock:
             vels = self.latest_velocities
+            path = self.latest_path
 
-        if vels is None:
+        if vels is None or path is None:
             return []
 
-        return vels[:max_points]
+        source_frame = self._normalize_frame_id(path.header.frame_id)
+        tf_plan_to_odom = self._lookup_plan_to_odom_tf(source_frame)
+        if tf_plan_to_odom is None:
+            return []
+        _, _, yaw_tf = tf_plan_to_odom
+        c = math.cos(yaw_tf)
+        s = math.sin(yaw_tf)
+
+        out: List[Tuple[float, float]] = []
+        for vx_src, vy_src in vels[:max_points]:
+            vx_odom = c * float(vx_src) - s * float(vy_src)
+            vy_odom = s * float(vx_src) + c * float(vy_src)
+            out.append((vx_odom, vy_odom))
+        return out
 
     def _call_trigger(
         self,
@@ -1405,6 +1695,16 @@ class ROS2Bridge:
             self.mapping_use_blank_client,
             "/mapping/use_blank",
             timeout_sec=2.0,
+            attempts=3,
+            availability_wait_sec=1.0,
+            retry_delay_sec=0.3,
+        )
+
+    def generate_test_waypoints(self) -> bool:
+        return self._call_trigger(
+            self.waypoint_test_pattern_client,
+            "/waypoints/generate_test_pattern",
+            timeout_sec=2.5,
             attempts=3,
             availability_wait_sec=1.0,
             retry_delay_sec=0.3,

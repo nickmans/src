@@ -225,6 +225,7 @@ class ROS2Manager:
             "map_frame:=map",
             "publish_odom_to_base_tf:=true",
             "publish_world_to_odom_tf:=false",
+            "enable_nav2_costmaps:=false",
             "rolling_map_enable:=true",
             "rolling_map_margin_m:=1.0",
             "persistent_obstacles_enable:=true",

@@ -271,6 +271,7 @@ def generate_launch_description() -> LaunchDescription:
                 "rolling_map_enable": ParameterValue(rolling_map_enable, value_type=bool),
                 "rolling_map_margin_m": ParameterValue(rolling_map_margin_m, value_type=float),
                 "persistent_obstacles_enable": ParameterValue(persistent_obstacles_enable, value_type=bool),
+                "publish_legacy_costmap": True,
                 "lidar1_frame_id": lidar1_frame_id,
                 "lidar2_frame_id": lidar2_frame_id,
             }
@@ -424,7 +425,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("persistent_obstacles_enable", default_value="false"),
             DeclareLaunchArgument("enable_amcl_localization", default_value="false"),
             DeclareLaunchArgument("enable_slam_toolbox", default_value="true"),
-            DeclareLaunchArgument("enable_nav2_costmaps", default_value="true"),
+            DeclareLaunchArgument("enable_nav2_costmaps", default_value="false"),
             DeclareLaunchArgument(
                 "nav2_costmaps_params_file",
                 default_value=os.path.join(get_package_share_directory("omni_traj"), "config", "nav2_dual_scan_costmaps.yaml"),

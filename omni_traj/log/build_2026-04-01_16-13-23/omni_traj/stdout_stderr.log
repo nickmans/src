@@ -1,0 +1,24 @@
+running egg_info
+writing build/omni_traj/omni_traj.egg-info/PKG-INFO
+writing dependency_links to build/omni_traj/omni_traj.egg-info/dependency_links.txt
+writing entry points to build/omni_traj/omni_traj.egg-info/entry_points.txt
+writing requirements to build/omni_traj/omni_traj.egg-info/requires.txt
+writing top-level names to build/omni_traj/omni_traj.egg-info/top_level.txt
+reading manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+writing manifest file 'build/omni_traj/omni_traj.egg-info/SOURCES.txt'
+running build
+running build_py
+running install
+running install_lib
+running install_data
+copying launch/dual_sllidar_with_mock_and_traj.launch.py -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/share/omni_traj/launch
+copying config/waypoint_traj.yaml -> /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/share/omni_traj/config
+running install_egg_info
+removing '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info' (and everything under it)
+Copying build/omni_traj/omni_traj.egg-info to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages/omni_traj-0.0.0-py3.12.egg-info
+running install_scripts
+Installing empty_scan_pub script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+Installing lidar_watchdog script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+Installing map_odom_startup_fallback script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+Installing waypoint_traj script to /home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/omni_traj
+writing list of installed files to '/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj/install.log'
