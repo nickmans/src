@@ -1,5 +1,7 @@
 # LIDAR Scan Fusion Implementation - Verification Report
 
+> Archive note (historical): This report captures a January 2026 validation snapshot. Some rates/transforms described here may differ from current checked-in runtime defaults.
+
 **Date**: January 29, 2026  
 **Status**: ✅ **CORRECT AND FULLY FUNCTIONAL**
 
@@ -28,7 +30,7 @@ The dual LIDAR scan fusion implementation is **correct and production-ready**. A
 ```
 world (NEW - added for proper anchoring)
   └─ odom (identity transform) [FIXED]
-      └─ base_link (dynamic, updated ~5Hz via publish_odom_to_base_tf)
+      └─ base_link (dynamic, historical validation snapshot rate via publish_odom_to_base_tf)
           ├─ lidar1_link (static: x=0, y=+0.10m, z=0.10m)
           └─ lidar2_link (static: x=0, y=-0.10m, z=0.10m)
 ```
@@ -171,7 +173,7 @@ self._clear_robot_circle_in_costmap(combined, base_pose_now)
 - ✅ Publishes to `/costmap` topic
 - ✅ Frame is `odom` (matches map_frame parameter)
 - ✅ Origin at map center (grid origin at -3m, -3m for 6m×6m map)
-- ✅ Updates at ~5 Hz (timer period 0.2s = 5 Hz)
+- ✅ Historical validation snapshot recorded this timer at 0.2s period
 
 **Result**: **CORRECT** - Costmap published at origin in odom frame
 
@@ -287,7 +289,7 @@ Costmap (/costmap)
   resolution: 0.02m/pixel (2cm)
   size: 6m × 6m (300×300 pixels)
   origin: (-3m, -3m) - centered at base_link
-  Topic: /costmap (published at 5 Hz)
+   Topic: /costmap (published at the historical validation snapshot rate)
       ↓ [Available for visualization in RViz]
       ↓ [Available for path planning via A*]
 ```
@@ -315,7 +317,7 @@ ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py \
    - Shows planning cost layer
    - Light gray = free space
    - Darker gray = obstacles
-   - Updates at ~5 Hz
+   - Updates at the historical validation snapshot rate
 
 3. **White dots offset by ±0.10m Y** = Individual LIDARs ✅
    - LIDAR 1 at y=+0.10m (right side)
@@ -385,7 +387,7 @@ While the implementation is correct, these enhancements could improve performanc
    - Soft inflation currently 0 (no uncertainty layer)
 
 5. **RViz Performance**
-   - Current update rates: 10 Hz fused, 5 Hz costmap
+   - Historical snapshot update rates in this report: 10 Hz fused, legacy costmap rate
    - Could reduce `fused_angle_increment_deg` if CPU bound
    - Current is good for responsive visualization
 
@@ -412,7 +414,7 @@ ros2 topic hz /scan_fused
 
 # Terminal 3: Check costmap publishing
 ros2 topic hz /costmap
-# Should show: ~5 Hz
+# Should show: a stable non-zero publishing rate
 
 # Terminal 4: Check transform tree
 ros2 run tf2_tools view_frames.py

@@ -1,117 +1,56 @@
-# OMNI Workspace Quick Start (`omni_src`)
+# OMNI ROS 2 Quick Start
 
-Fast path for a new engineer to prove the stack works.
+Short operator runbook for the ROS 2 workspace.
 
-## 0) Prerequisites
-
-- ROS2 environment installed and sourced capability available.
-- Workspace path: `/home/nickolas/ros2_ws/src/omni_src`.
-- For real LiDAR: valid serial ports (Pi 5 UART defaults: `/dev/ttyAMA0` and `/dev/ttyAMA2`).
-
----
-
-## 1) Build `omni_traj`
+## 1. Build from the workspace root
 
 ```bash
-cd /home/nickolas/ros2_ws/src/omni_src/omni_traj
+cd /home/nickolas/ros2_ws
+source /opt/ros/jazzy/setup.bash
 colcon build --packages-select omni_traj
 source install/setup.bash
 ```
 
----
+## 2. Bring up the stack
 
-## 2) Run software-only bench test (recommended first)
+Mock lidar bringup:
 
 ```bash
-ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py \
-  use_mock_lidar:=true \
-  use_rviz:=true
+ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py use_mock_lidar:=true
 ```
 
-Expected core topics:
+Real lidar bringup:
 
 ```bash
-ros2 topic list | grep -E "lidar1/scan|lidar2/scan|scan_fused|costmap|planned_path"
+ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py use_mock_lidar:=false
 ```
 
-Expected behavior:
-- `/lidar1/scan` and `/lidar2/scan` active.
-- `/scan_fused` active.
-- `/costmap` updating.
-- RViz displays map/costmap/fused scan.
+Use `dual_sllidar_with_mock_and_traj.launch.py` as the normal bringup path. `omni_traj/launch/omni_bringup.launch.py` is not the primary launch path and still contains placeholder serial-by-id comments.
 
----
-
-## 3) Validate TF + rates
+## 3. Verify core topics
 
 ```bash
-ros2 run tf2_tools view_frames.py
+ros2 topic list | grep -E "lidar1/scan|lidar2/scan|scan_fused|scan_match|map|costmap|planned_path"
 ros2 topic hz /scan_fused
-ros2 topic hz /costmap
+ros2 topic hz /robot/pose
+ros2 topic hz /robot/odom
 ```
 
-If `/scan_fused` is missing, verify both raw scan topics and frame IDs first.
-
----
-
-## 4) Run with real LiDARs
-
-```bash
-ros2 launch omni_traj dual_sllidar_with_mock_and_traj.launch.py \
-  use_mock_lidar:=false \
-  use_rviz:=true \
-  lidar1_serial_port:=/dev/ttyAMA0 \
-  lidar2_serial_port:=/dev/ttyAMA2
-```
-
-Helpful checks:
-
-```bash
-ls -la /dev/ttyAMA*
-```
-
----
-
-## 5) Start Pi communication server (STM32 bridge)
-
-In a new terminal:
+## 4. Start the UDP server manually
 
 ```bash
 cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-python3 run_server.py
+python3 run_udp_server.py
 ```
 
-For quick network/client test:
+The normal production boot path is `omni_udp_server.service`. Manual `run_udp_server.py` is mainly for direct testing and debugging.
 
-```bash
-./test_network.sh
-./start_test_client.sh 127.0.0.1 9000 circle
-```
+## 5. Connect the STM32
 
-Production setup uses service scripts in `pi_comm_server/` (see `pi_comm_server/README.md`).
+Expected network defaults:
 
----
+- Pi: `192.168.1.100`
+- STM32: `192.168.1.10`
+- Port: `9000`
 
-## 6) Day-1 success criteria
-
-- ROS2 launch runs without node crashes.
-- `/scan_fused` and `/costmap` publish continuously.
-- TF tree resolves correctly between map/odom/base/lidar frames.
-- Pi server accepts client connection and exchanges messages.
-
----
-
-## 7) Most common fixes
-
-- **No fused scan**: check `/lidar1/scan`, `/lidar2/scan`, and frame IDs.
-- **RViz frame error**: verify launch args for `map_frame` / `odom_frame` and TF publishers.
-- **No STM32 connection**: verify host/port/IP route and Ethernet link.
-
----
-
-## 8) Next reads
-
-- `README.md` (full onboarding flow)
-- `LIDAR_FUSION_ARCHITECTURE.md`
-- `LIDAR_FUSION_FIXES.md`
-- `pi_comm_server/README.md`
+Once the STM32 is connected, use the STM32 shell to enter `map` / `traj` modes.

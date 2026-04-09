@@ -1,5 +1,7 @@
 # Changes Summary
 
+> Archive note (historical): This document records a prior verification state and may not match current runtime defaults. For current runtime behavior, use `README.md`, `QUICK_START.md`, and `pi_comm_server/README.md`.
+
 ## Files Modified
 
 ### 1. `launch/dual_sllidar_with_mock_and_traj.launch.py`
@@ -61,7 +63,7 @@ world (static, identity)
   ↓
 odom (static, identity) ← [FIX: NEW]
   ↓
-base_link (dynamic, updated at ~5Hz)
+base_link (dynamic, updated at the historical validation snapshot rate)
   ├─ lidar1_link (static, y=+0.10m, z=0.10m)
   └─ lidar2_link (static, y=-0.10m, z=0.10m)
 ```
@@ -130,8 +132,8 @@ python3 verify_lidar_fusion.py
 ### Frequency
 - Raw scans: ~10 Hz (from hardware/mock)
 - Fused scan: ~10 Hz
-- Costmap update: ~5 Hz
-- TF updates: ~5 Hz
+- Costmap update: historical validation snapshot rate
+- TF updates: historical validation snapshot rate
 
 ### Latency
 - Scan fusion: <50ms

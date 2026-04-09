@@ -1,719 +1,275 @@
-# OMNI Pi Communication Server
+# OMNI Pi UDP Bridge
 
-Production-ready UDP communication server for OMNI robot stack. Runs on Raspberry Pi 5 (Ubuntu 24.04) and communicates with STM32 NUCLEO H755 for real-time control.
+This directory contains the Raspberry Pi UDP bridge and ROS 2 stack lifecycle manager for the OMNI robot.
 
----
+## Overview
 
-## Table of Contents
-- [Features](#features)
-- [System Architecture](#system-architecture)
-- [Protocol Specification](#protocol-specification)
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Testing](#testing)
-- [Troubleshooting](#troubleshooting)
-- [File Structure](#file-structure)
+The checked-in UDP server is the production bridge between the STM32H755 CM7 firmware and the ROS 2 Jazzy stack on the Pi.
 
----
+It does four main jobs:
 
-## Features
+1. Listens for `POSE` packets from the STM32 on UDP port `9000`.
+2. Publishes that pose into ROS 2 through `ros2_pose_node.py`.
+3. Subscribes to `/planned_path` and `/planned_path_velocities` so it can package `TRAJ` packets for the STM32.
+4. Starts, stops, and switches the ROS 2 stack between `standby`, `mapping`, and `localization` modes through `ros2_manager.py`.
 
-- **Binary Protocol**: Robust, little-endian framed messages with optional CRC32 validation
-- **Asynchronous I/O**: asyncio-based architecture with dedicated RX/TX tasks; no blocking
-- **Latest-Wins Trajectory Planning**: New POSE cancels old planning jobs; only newest processed
-- **ROS2 Integration**: Control ROS2 stack via systemd --user services (safe, non-blocking)
-- **Watchdog**: Auto-idle if no POSE received for >1 second
-- **Robust Parsing**: Handles partial reads, resynchronizes on bad magic, validates payload sizes
-- **Type-Safe**: Type hints, dataclasses, structured logging
+## Current runtime entrypoints
 
-## Boot Mode
+Use one of these current entrypoints:
 
-- `omni_udp_server.service` is the intended production boot service.
-- It owns UDP port `9000`, receives STM32 commands, publishes pose into ROS2, and starts or switches the ROS2 stack as needed.
-- `omni_ros2_stack.service` is a debug-only standalone bringup service. It launches the ROS2 stack directly and does not provide the UDP command endpoint.
-- Do not enable both services on boot. They conflict by design and whichever starts later will displace the other.
+- Manual Python entrypoint:
 
----
+  ```bash
+  python3 run_udp_server.py
+  ```
 
-## System Architecture
+- Convenience script:
 
-```
-┌──────────────┐                          ┌─────────────────┐
-│   STM32      │  UDP (5 Hz)       │  Raspberry Pi 5 │
-│   Nucleo     │◄────────────────────────►│                 │
-│   H755ZI     │  POSE / CMD / TRAJ       │  192.168.1.100  │
-│              │                          │     Port 9000   │
-│ 192.168.1.10 │                          └─────────────────┘
-└──────────────┘                                    │
-                                                    │
-                                          ┌─────────▼──────────┐
-                                          │   ROS2 Integration │
-                                          │   - Pose Publisher │
-                                          │   - Traj Generator │
-                                          └────────────────────┘
-```
+  ```bash
+  ./start_server.sh
+  ```
 
-### Data Flow
+- Console script from the repo root `setup.py`:
 
-**STM32 → Pi (5 Hz):**
-- POSE messages: Robot pose and twist
-    - Incoming `x,y,yaw,vx,vy,wz` are STM32-estimator values.
-    - Bridge converts STM32 pose convention to ROS odom/base_link convention before publishing `/odom`.
-        - Runtime defaults in `ros2_pose_node.py`:
-            - `stm32_pose_rotation_deg = -90.0` (XY position/velocity rotation)
-            - `stm32_yaw_rotation_deg = -90.0` (heading rotation)
-            - `stm32_yaw_offset_deg = 0.0`
-            - `stm32_traj_rotation_deg = 0.0` (outgoing trajectory XY rotation)
-            - `stm32_traj_yaw_rotation_deg = -90.0` (outgoing trajectory yaw rotation)
-            - `stm32_traj_yaw_offset_deg = 0.0`
-- CMD messages: Commands (`START_TRAJ`, `STOP_TRAJ`, `START_RESTART_ROS2`, mapping mode commands)
+  ```bash
+  omni-udp-server
+  ```
 
-**Pi → STM32 (5 Hz):**
-- TRAJ messages: Trajectory knots for interpolation
-- ACK/NACK: Command acknowledgments
-- STATUS: Server status reports
+- Normal production systemd service:
 
----
+  ```bash
+  sudo systemctl enable --now omni_udp_server.service
+  ```
 
-## Protocol Specification
 
-### Message Header (24 bytes, little-endian)
+## Services
 
-| Offset | Size | Type   | Name        | Description                    |
-|--------|------|--------|-------------|--------------------------------|
-| 0-3    | 4    | uint32 | magic       | 0x4F4D4E49 ('OMNI')           |
-| 4-5    | 2    | uint16 | version     | Protocol version = 1           |
-| 6-7    | 2    | uint16 | msg_type    | Message type (see below)       |
-| 8-11   | 4    | uint32 | seq         | Sequence number                |
-| 12-15  | 4    | uint32 | t_ms        | Timestamp (milliseconds)       |
-| 16-19  | 4    | uint32 | payload_len | Payload size in bytes          |
-| 20-23  | 4    | uint32 | crc32       | CRC32 (0 = skip validation)    |
+### Normal service
 
-### Message Types
+- Primary deployment path: `omni_udp_server.service`
+- This is the normal boot mode.
+- It starts `run_udp_server.py` and lets the UDP server manage ROS 2 stack mode transitions.
+- It sets `OMNI_TRAJ_SEND_HZ=10` by default.
 
-| Type | Value | Direction | Payload Size | Purpose |
-|------|-------|-----------|--------------|---------|
-| POSE | 1 | STM32→Pi | 28 bytes | Robot pose + velocity @ 5 Hz |
-| EVENT | 3 | STM32→Pi | Variable | Optional event notification |
-| TRAJ | 10 | Pi→STM32 | Variable | Trajectory header + knot array |
-| CORR | 11 | Pi→STM32 | Variable | Optional small correction |
-| ACK | 12 | Pi→STM32 | Variable | Legacy command ack (optional) |
-| NACK | 13 | Pi→STM32 | Variable | Legacy command reject (optional) |
-| STATUS | 15 | Pi→STM32 | Variable | Server status |
-| CMD | 20 | STM32↔Pi | Variable | Commands + command acknowledgments |
+### Debug-only service
 
-### POSE Message (Total: 52 bytes)
+- `omni_ros2_stack.service`
+- This launches the ROS 2 stack directly through `start_ros2_stack.sh`.
+- Treat it as debug-only bringup, not the normal boot mode.
+- It does not replace the normal UDP-controlled production path.
 
-**Header:** 24 bytes  
-**Payload:** 28 bytes
+### Optional simulation service
 
-| Offset | Size | Type   | Name      | Description                    |
-|--------|------|--------|-----------|--------------------------------|
-| 24-27  | 4    | uint32 | pose_t_ms | Pose timestamp (ms)            |
-| 28-31  | 4    | float  | x         | Position x (meters, STM32 frame; converted by bridge) |
-| 32-35  | 4    | float  | y         | Position y (meters, STM32 frame; converted by bridge) |
-| 36-39  | 4    | float  | yaw       | Orientation (radians, STM32 frame; converted by bridge) |
-| 40-43  | 4    | float  | vx        | Linear x (m/s, STM32 body frame; converted by bridge) |
-| 44-47  | 4    | float  | vy        | Linear y (m/s, STM32 body frame; converted by bridge) |
-| 48-51  | 4    | float  | wz        | Angular z (rad/s) |
+- `omni_virtual_stm32.service`
+- Optional simulation/testing only.
+- Not part of the normal hardware boot flow.
 
-### Frame Convention Notes
+### Legacy note
 
-- Published ROS convention remains `base_link` +x forward, +y left, +z up.
-- The STM32 IMU source is **BNO086 in UART-RVC mode**; estimator yaw is IMU-driven on CM7.
-- If mapping appears rotated while obstacles are correct, tune bridge parameters in `ros2_pose_node.py`:
-    - `stm32_pose_rotation_deg`
-    - `stm32_yaw_rotation_deg`
-    - `stm32_yaw_offset_deg`
+- Older user-service wiring exists in the repo for historical reference.
+- It is not the normal deployment path.
+- Use `omni_udp_server.service` for production boot.
 
-### TRAJ Message (Variable Length)
+## ROS 2 modes managed by `ros2_manager.py`
 
-**Header:** 24 bytes  
-**Payload:** `20 + (n_knots * 20)` bytes
+The UDP server switches the ROS 2 stack between these modes:
 
-Trajectory payload starts with a 20-byte trajectory header, followed by `n_knots` knot entries.
+- `standby`
+  - `enable_amcl_localization:=false`
+  - `enable_slam_toolbox:=false`
+  - trajectory output disabled
 
-**Trajectory payload header (20 bytes):**
+- `mapping`
+  - `enable_amcl_localization:=false`
+  - `enable_slam_toolbox:=true`
 
-| Offset | Size | Type   | Name              | Description |
-|--------|------|--------|-------------------|-------------|
-| 24-27  | 4    | uint32 | reply_to_pose_seq | POSE seq this trajectory corresponds to |
-| 28-31  | 4    | uint32 | traj_t0_ms        | Trajectory start timestamp (ms) |
-| 32-33  | 2    | uint16 | n_knots           | Number of knots |
-| 34-35  | 2    | uint16 | flags             | Trajectory flags |
-| 36-39  | 4    | uint32 | reserved          | Reserved |
-| 40-43  | 4    | float  | dt                | Knot spacing (seconds) |
+- `localization`
+  - `enable_amcl_localization:=true`
+  - `enable_slam_toolbox:=false`
 
-**Per-knot entry (20 bytes each):**
+`start_ros2_stack.sh` is the direct debug bringup helper. It also performs extra port discovery and prefers a Jazzy + workspace setup from `/home/nickolas/ros2_ws/install/...` when available.
 
-| Size | Type  | Name | Description |
-|------|-------|------|-------------|
-| 4    | float | x    | Desired x (m) |
-| 4    | float | y    | Desired y (m) |
-| 4    | float | yaw  | Desired yaw (rad) |
-| 4    | float | vx   | Feedforward x velocity (m/s, world/odom) |
-| 4    | float | vy   | Feedforward y velocity (m/s, world/odom) |
+## Actual ROS topics used by the server
 
-### Command IDs
+### Pose published into ROS 2
 
-| ID | Name | Argument | Purpose |
-|----|------|----------|---------|
-| 0 | STOP_ROS2 | optional | Stop ROS2 stack |
-| 1 | START_TRAJ | optional | Autonomous localization mode (saved map + trajectory output enabled) |
-| 2 | STOP_TRAJ | optional | Stop trajectory generation/output (standby) |
-| 3 | START_RESTART_ROS2 | optional | Manual localization mode (saved map + trajectory output disabled) |
-| 4 | SHUTDOWN_PI5 | optional | Safe Pi shutdown command |
-| 10 | START_TERMINAL_PASSTHROUGH | optional | Start interactive Pi shell passthrough over the STM32 Bluetooth UART |
-| 11 | TERMINAL_PASSTHROUGH_DATA | bytes | Raw terminal byte stream chunk for active passthrough session |
-| 12 | STOP_TERMINAL_PASSTHROUGH | optional | Stop the active Pi shell passthrough session |
-| 5 | START_MAPPING | optional | Switch to dedicated mapping mode |
-| 6 | FINISH_MAPPING | optional | Finish mapping and switch to localization/frozen map |
-| 7 | USE_LIVE_MAP | optional | Use live mapping mode |
-| 8 | USE_FROZEN_MAP | optional | Use frozen map localization mode |
-| 9 | START_TRAJ_LOCAL | optional | Autonomous waypoint mode with blank global map + local costmap avoidance |
+`PosePublisherNode` in `ros2_pose_node.py` publishes:
 
----
+- `/robot/pose`
+- `/robot/twist`
+- `/robot/odom`
+- `/odom`
+- `/initialpose`
 
-## Quick Start
+The checked-in default STM32 <-> ROS rotation parameters are zeroed unless you override them:
 
-### One-Command Setup (First Time)
+- `stm32_pose_rotation_deg=0.0`
+- `stm32_yaw_rotation_deg=0.0`
+- `stm32_yaw_offset_deg=0.0`
+- `stm32_traj_rotation_deg=0.0`
+- `stm32_traj_yaw_rotation_deg=0.0`
+- `stm32_traj_yaw_offset_deg=0.0`
 
-On your Pi5, run the automated setup:
 
-```bash
-cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-sudo ./setup_complete.sh
-```
+### Planner data consumed by the server
 
-This will:
-- ✅ Configure static IP (192.168.1.100) on eth0
-- ✅ Install systemd service for auto-start on boot
-- ✅ Start the server immediately
+`udp_server.py` subscribes to:
 
-**That's it!** The server will now start automatically on every boot.
+- `/planned_path`
+- `/planned_path_velocities`
 
-### Verify Installation
+Those are the main runtime trajectory topics. `/robot/trajectory` is not the primary runtime trajectory output.
 
-```bash
-# Check service status
-sudo systemctl status omni_udp_server.service
+## Mapping and waypoint services called by the server
 
-# View live logs
-sudo journalctl -u omni_udp_server.service -f
+The server calls these ROS 2 services through `ROS2Bridge`:
 
-# Test network
-./test_network.sh
-```
+- `/mapping/start`
+- `/mapping/finish`
+- `/mapping/use_live`
+- `/mapping/use_frozen`
+- `/mapping/use_blank`
+- `/waypoints/generate_test_pattern`
 
-### Testing Without STM32 (Simulator)
+## UDP protocol and rates
 
-```bash
-# Start test client with circular motion
-./start_test_client.sh 192.168.1.100 9000 circle
+From the checked-in protocol files:
 
-# In another terminal, monitor ROS2 topics
-ros2 topic echo /robot/pose
-ros2 topic hz /robot/pose
-```
+- Pi default IP: `192.168.1.100`
+- STM32 default IP: `192.168.1.10`
+- Port: `9000`
+- magic: `0x4F4D4E49` (`OMNI`)
+- version: `1`
+- header size: `24`
+- message IDs:
+  - `POSE=1`
+  - `TRAJ=10`
+  - `ACK=12`
+  - `STATUS=15`
+  - `CMD=20`
 
----
+Runtime rates:
 
-## Installation
+- STM32 queues pose heartbeats at `10 Hz` in `CM7/Core/Src/main.c`
+- Pi sends `TRAJ` at default `10 Hz` through `OMNI_TRAJ_SEND_HZ=10`
 
-### Method 1: Automated Setup (Recommended)
+## Command semantics
+
+These are the important command meanings as implemented by `udp_server.py` and `CM7/Core/Src/cmd.c`.
+
+- `traj 1`
+  - Shell meaning: autonomous localization on saved/frozen map.
+  - Pi behavior: switch ROS 2 stack to `localization`, call `/mapping/use_frozen`, then enable trajectory streaming.
+
+- `traj 0`
+  - Shell meaning: standby/manual.
+  - Pi behavior: disable trajectory streaming, hold briefly, then switch ROS 2 stack to `standby`.
+
+- `traj2 2`
+  - Shell meaning: manual drive on STM32 while Pi runs localization.
+  - Pi behavior: switch ROS 2 stack to `localization`, keep trajectory streaming disabled.
+
+- `traj 3`
+  - Shell meaning: autonomous mode using a blank global map with local obstacle avoidance.
+  - Pi behavior: move stack to `standby`, call `/mapping/use_blank`, then enable trajectory streaming.
+
+- `map 1`
+  - Shell meaning: start mapping mode.
+  - Pi behavior: disable trajectory streaming, switch stack to `mapping`, call `/mapping/start`.
+
+- `map 0`
+  - Shell meaning: finish mapping and return to autonomous localization.
+  - Pi behavior: call `/mapping/finish`, switch stack to `localization`, then re-enable trajectory streaming when healthy.
+
+- `map 2`
+  - Shell meaning: use live map mode.
+  - Pi behavior: disable trajectory streaming, switch stack to `mapping`, call `/mapping/use_live`.
+
+- `map 3`
+  - Shell meaning: use frozen map mode.
+  - Pi behavior: switch stack to `localization`; current code treats this as localization mode and skips the older frozen-map service path.
+
+- `wp t`
+  - Shell meaning: generate centered waypoint test pattern.
+  - Pi behavior: call `/waypoints/generate_test_pattern`.
+
+- `term`
+  - Shell meaning: start terminal passthrough.
+  - Pi behavior: opens Pi shell passthrough over UDP.
+
+## Startup methods
+
+### Manual
 
 ```bash
 cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-sudo ./setup_complete.sh
-```
-
-### Method 2: Manual Setup
-
-#### 1. Configure Static IP on Pi5
-
-Using NetworkManager:
-```bash
-sudo nmcli con mod "Wired connection 1" ipv4.addresses 192.168.1.100/24
-sudo nmcli con mod "Wired connection 1" ipv4.method manual
-sudo nmcli con down "Wired connection 1"
-sudo nmcli con up "Wired connection 1"
-```
-
-Verify:
-```bash
-ip addr show eth0
-# Should show: inet 192.168.1.100/24
-```
-
-#### 2. Install systemd Service
-
-```bash
-# Enable linger (services persist after logout)
-loginctl enable-linger $USER
-
-# Create user service directories
-mkdir -p ~/.config/systemd/user
-mkdir -p ~/.local/bin
-
-# Install UDP service only for normal boot
-cp omni_pi_server.service ~/.config/systemd/user/
-
-# Create wrapper script
-cat > ~/.local/bin/omni_pi_server << 'EOF'
-#!/bin/bash
-cd /home/$USER/ros2_ws/src/omni_src/pi_comm_server
-exec python3 run_udp_server.py "$@"
-EOF
-chmod +x ~/.local/bin/omni_pi_server
-
-# Reload and enable service
-systemctl --user daemon-reload
-systemctl --user enable omni_pi_server.service
-systemctl --user start omni_pi_server.service
-```
-
-#### 3. Verify Service
-
-```bash
-systemctl --user status omni_pi_server.service
-journalctl --user -u omni_pi_server.service -f
-```
-
-`omni_ros2_stack.service` should be treated as debug-only/manual bringup and left disabled for boot.
-
----
-
-## Usage
-
-### Service Management
-
-```bash
-# Start server
-systemctl --user start omni_pi_server.service
-
-# Stop server
-systemctl --user stop omni_pi_server.service
-
-# Restart server
-systemctl --user restart omni_pi_server.service
-
-# View status
-systemctl --user status omni_pi_server.service
-
-# View logs (live)
-journalctl --user -u omni_pi_server.service -f
-
-# View logs (recent)
-journalctl --user -u omni_pi_server.service -n 100
-```
-
-### Manual Execution
-
-```bash
-# From pi_comm_server directory
-cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-
-# Basic
-./start_server.sh
-
-# Low resource mode (reduced CPU usage)
-./start_server_low_resource.sh
-
-# Direct wrapper invocation
 python3 run_udp_server.py
 ```
 
-### ROS2 Integration
-
-Monitor ROS2 topics:
-```bash
-# Check active topics
-ros2 topic list
-
-# Watch pose updates (5 Hz)
-ros2 topic echo /robot/pose
-
-# Check message rate
-ros2 topic hz /robot/pose
-
-# View trajectory
-ros2 topic echo /robot/trajectory
-
-# View odometry
-ros2 topic echo /robot/odom
-```
-
-### STM32 command workflow (latest)
-
-Current CM7 + Pi sequence:
-
-1. `map 1` on STM32: Pi enters mapping mode and pauses trajectory output while STM32 remains in manual driving mode.
-2. `traj 1` on STM32: Pi switches to autonomous localization using the current saved map and enables trajectory output.
-3. `traj2 2` on STM32: Pi switches to localization with trajectory output disabled (manual drive on STM32).
-4. `traj 3` on STM32: Pi enables autonomous waypoint following on a blank global map while keeping live local costmap obstacle avoidance.
-5. `traj 0` on STM32: Pi disables trajectory output and returns to standby/manual behavior.
-6. `term` on STM32: Pi opens an interactive shell behind a PTY and streams bytes over UDP; sending `*` from the phone exits passthrough mode on both sides.
-
-Use this order for "dedicated mapping mode + explicit autonomous/manual localization modes" operation.
-
-### Testing Connection
+### Convenience script
 
 ```bash
-# Test network configuration
-./test_network.sh
-
-# Monitor connection
-./monitor_connection.sh
-
-# Check STM32 connectivity
-./diagnose_stm32_connection.sh
-
-# Monitor resource usage
-./monitor_resources.sh
-```
-
----
-
-## Testing
-
-### Test Client (Simulates STM32)
-
-Start the test client:
-```bash
-# Stationary robot
-./start_test_client.sh
-
-# Circular motion
-./start_test_client.sh 192.168.1.100 9000 circle
-
-# Forward motion
-./start_test_client.sh 192.168.1.100 9000 forward
-```
-
-Interactive commands in test client:
-```
-> 1 or start      # Send START_TRAJ
-> 2 or stop       # Send STOP_TRAJ
-> m <mode>        # Change simulator motion mode (stationary/forward/circle)
-> help            # Show all commands
-> quit            # Disconnect
-```
-
-### Expected Behavior
-
-**When STM32 connects:**
-```
-[INFO] Client connected from ('192.168.1.10', XXXXX)
-[INFO] Receive loop started
-[INFO] Send loop started
-```
-
-**ROS2 topics should be active:**
-```bash
-$ ros2 topic hz /robot/pose
-average rate: 5.000
-```
-
-### Multi-Terminal Test Sequence
-
-**Terminal 1: Server**
-```bash
+cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
 ./start_server.sh
 ```
 
-**Terminal 2: Test Client**
+### Install the normal service
+
 ```bash
-./start_test_client.sh 192.168.1.100 9000 circle
-> 1  # Start trajectory generation
+cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+sudo ./install_service.sh
+sudo systemctl enable --now omni_udp_server.service
 ```
 
-**Terminal 3: Monitor ROS2**
+### Full setup helper
+
 ```bash
-ros2 topic echo /robot/pose
+cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+sudo ./setup_complete.sh
 ```
 
-**Terminal 4: Monitor Logs**
+## Testing and simulation
+
+### Test client helper
+
 ```bash
-sudo journalctl -u omni_udp_server.service -f
+cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+./start_test_client.sh
 ```
 
----
+### Virtual STM32 simulator
+
+```bash
+cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
+python3 virtual_stm32_udp.py --server-host 127.0.0.1 --server-port 9000
+```
+
+`virtual_stm32_udp.py` is for simulation/testing. It is not the normal hardware runtime path.
 
 ## Troubleshooting
 
-### Server Won't Start
-
-**Check if port is already in use:**
-```bash
-sudo netstat -ulnp | grep 9000
-```
-
-**Kill existing process:**
-```bash
-pkill -f run_udp_server.py
-```
-
-**Check logs:**
-```bash
-journalctl --user -u omni_pi_server.service -n 50
-```
-
-### STM32 Won't Connect
-
-**1. Check physical connection:**
-- Ethernet cable connected?
-- Link lights on both devices?
-
-**2. Verify network configuration:**
-```bash
-# Pi5 should have 192.168.1.100
-ip addr show eth0
-
-# Test STM32 reachability
-ping 192.168.1.10
-
-# Check ARP table
-ip neigh show
-```
-
-**3. Check server is listening:**
-```bash
-sudo netstat -ulnp | grep 9000
-# Should show: 0.0.0.0:9000 or 192.168.1.100:9000
-```
-
-**4. Run diagnostics:**
-```bash
-./diagnose_stm32_connection.sh
-```
-
-### High CPU Usage / SSH Issues
-
-If the server uses too much CPU and affects SSH:
-
-**Use low resource mode:**
-```bash
-./start_server_low_resource.sh
-```
-
-**Monitor resource usage:**
-```bash
-./monitor_resources.sh
-```
-
-**Optimizations applied:**
-- Process priority lowered (`nice +10`)
-- ROS2 executor reduced to 5 Hz
-- Idle thread sleeps for 5 seconds
-- Accept loop timeout increased to 2 seconds
-
-### Module Import Errors
-
-**Problem:** `ModuleNotFoundError: No module named 'protocol'`
-
-**Solution:** Always use wrapper scripts:
-```bash
-# ✓ Use these
-python3 run_udp_server.py
-python3 run_test_client.py
-
-# ✗ Don't use these directly
-python3 run_udp_server.py
-python3 test_client.py
-```
-
-Or run from the pi_comm_server directory:
-```bash
-cd /home/nickolas/ros2_ws/src/omni_src/pi_comm_server
-python3 run_udp_server.py
-```
-
-### ROS2 Topics Not Publishing
-
-**Check if ROS2 nodes are running:**
-```bash
-ros2 node list
-```
-
-**Restart ROS2 stack:**
-```bash
-systemctl --user restart omni_ros2_stack.service
-```
-
-**Check ROS2 logs:**
-```bash
-journalctl --user -u omni_ros2_stack.service -f
-```
-
-### Network Issues
-
-**Reset network configuration:**
-```bash
-sudo nmcli con down "Wired connection 1"
-sudo nmcli con up "Wired connection 1"
-```
-
-**Restart networking:**
-```bash
-sudo systemctl restart NetworkManager
-```
-
-**Check firewall:**
-```bash
-# Disable firewall temporarily for testing
-sudo ufw disable
-
-# Or allow specific port
-sudo ufw allow 9000/udp
-```
-
----
-
-## File Structure
-
-### Core Implementation
-```
-pi_comm_server/
-├── protocol.py              # Binary protocol definitions & parsing
-├── udp_server.py             # Asyncio UDP server (main logic)
-├── planner_stub.py          # Trajectory generation
-├── ros2_manager.py          # ROS2 stack control via systemd
-├── test_client.py           # STM32 simulator
-│
-├── run_udp_server.py            # ✓ Wrapper script for server
-├── run_test_client.py       # ✓ Wrapper script for test client
-│
-├── udp_server.py            # Multi-threaded UDP server (alternative)
-├── ros2_pose_node.py        # ROS2 pose publisher
-├── ros2_trajectory_node.py  # ROS2 trajectory generator
-└── run_udp_server.py            # Main integration (UDP + ROS2)
-```
-
-### Setup & Testing
-```
-├── setup_complete.sh        # One-command setup (IP + service)
-├── install_service.sh       # Install systemd service
-├── uninstall_service.sh     # Remove systemd service
-│
-├── start_server.sh          # Manual server start
-├── start_server_low_resource.sh  # Low CPU usage mode
-├── start_test_client.sh     # Test client launcher
-│
-├── test_network.sh          # Test network configuration
-├── diagnose_connection.sh   # Connection diagnostics
-├── diagnose_stm32_connection.sh  # STM32-specific diagnostics
-├── monitor_connection.sh    # Monitor connection status
-└── monitor_resources.sh     # Monitor CPU/memory usage
-```
-
-### System Services
-```
-├── omni_pi_server.service   # Main server service
-├── omni_ros2_stack.service  # ROS2 nodes service
-└── omni_udp_server.service  # UDP service
-```
-
-### Documentation
-```
-├── README.md                # This file
-├── QUICKSTART.md           # Quick reference
-├── TROUBLESHOOTING.md      # Detailed troubleshooting
-└── README.md   # STM32 implementation guide
-```
-
----
-
-## Advanced Topics
-
-### Custom Trajectory Planning
-
-Edit [planner_stub.py](planner_stub.py):
-```python
-def plan_trajectory(pose: PoseMsg, dt=0.05, horizon=1.2):
-    # Your custom planning logic here
-    knots = []
-    # ... generate trajectory knots
-    return knots
-```
-
-### Protocol Extensions
-
-Add new message types in [protocol.py](protocol.py):
-```python
-class MsgType(IntEnum):
-    POSE = 1
-    CMD = 2
-    YOUR_NEW_TYPE = 20  # Add your type
-```
-
-### ROS2 Topic Customization
-
-Modify topics in [ros2_pose_node.py](ros2_pose_node.py) or [ros2_trajectory_node.py](ros2_trajectory_node.py).
-
----
-
-## Network Configuration Summary
-
-| Device | IP Address | Port | Role |
-|--------|------------|------|------|
-| Raspberry Pi 5 | 192.168.1.100 | 9000 | UDP Server |
-| STM32 Nucleo H755 | 192.168.1.10 | - | UDP Client |
-
-**Connection Type:** Direct Ethernet (no router needed)  
-**Protocol:** UDP with binary framing  
-**Data Rate:** 5 Hz (bidirectional)
-
----
-
-## Support & Debugging
-
-### Enable Debug Logging
+Check the normal service:
 
 ```bash
-python3 run_udp_server.py --log-level DEBUG
+sudo systemctl status omni_udp_server.service
+sudo journalctl -u omni_udp_server.service -f
 ```
 
-### Log Files
+Check that UDP port `9000` is the one in use and that the network defaults match the robot.
 
-When running as service, logs go to systemd journal:
-```bash
-journalctl --user -u omni_pi_server.service --since today
-```
-
-### Common Diagnostics
+Check the core ROS 2 topics that prove the live bridge is working:
 
 ```bash
-# Network status
-ip addr show
-ip neigh show
-sudo netstat -ulnp | grep 9000
-
-# Service status
-systemctl --user status omni_pi_server.service
-systemctl --user status omni_ros2_stack.service
-
-# Process list
-ps aux | grep python3
-
-# Resource usage
-top -p $(pgrep -f run_udp_server.py)
+ros2 topic hz /robot/pose
+ros2 topic hz /robot/odom
+ros2 topic echo /planned_path
 ```
 
----
+If those are not updating, work outward in this order:
 
-## License
+1. Verify the service is running.
+2. Verify Pi/STM32 IPs are correct.
+3. Verify UDP traffic is arriving on port `9000`.
+4. Verify ROS 2 stack mode is appropriate for the command you sent.
+5. Verify `/planned_path` and `/planned_path_velocities` exist before expecting outgoing `TRAJ` packets.
 
-[Add your license here]
-
-## Authors
-
-[Add authorship info here]
-
-## Version History
-
-- v1.0: Initial production release
-  - Binary protocol implementation
-  - Asyncio UDP server
-  - ROS2 integration
-  - Systemd service support
