@@ -1,0 +1,18 @@
+[Unit]
+Description=Robot Joystick Web Bridge (Phone -> Pi -> Bluetooth -> STM32)
+After=network-online.target bluetooth.target
+Wants=network-online.target bluetooth.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/robot_joystick
+EnvironmentFile=/home/pi/robot_joystick/.env
+ExecStart=/home/pi/robot_joystick/scripts/start_robot_joystick.sh
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
