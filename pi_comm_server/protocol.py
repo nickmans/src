@@ -54,6 +54,7 @@ class CommandID(IntEnum):
     TERMINAL_PASSTHROUGH_DATA = 11
     STOP_TERMINAL_PASSTHROUGH = 12
     WP_TEST_PATTERN = 13
+    TOGGLE_JOYSTICK = 14
 
 
 @dataclass

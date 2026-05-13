@@ -147,6 +147,20 @@ class OMNIUDPServer:
         self._terminal_client_addr: Optional[tuple] = None
         self._terminal_seq = 0
         self._terminal_active = False
+        self._joystick_lock = threading.Lock()
+        self._joystick_proc: Optional[subprocess.Popen] = None
+        self._joystick_session_active = False
+
+        joystick_root_default = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "Joystick")
+        )
+        self._joystick_root = os.path.expanduser(
+            os.getenv("OMNI_JOYSTICK_ROOT", joystick_root_default)
+        )
+        self._joystick_start_script = os.getenv(
+            "OMNI_JOYSTICK_START_SCRIPT",
+            os.path.join(self._joystick_root, "scripts", "start_robot_joystick.sh"),
+        )
 
         # Trajectory send cadence (default 10 Hz) can be overridden with
         # environment variable OMNI_TRAJ_SEND_HZ.
@@ -373,6 +387,7 @@ class OMNIUDPServer:
         self._send_wakeup.set()
         self._set_ros2_retry_enabled(False, reason="server stopping")
         self._stop_terminal_passthrough(notify_client=False, reason="server stopping")
+        self._stop_joystick_bridge(reason="server stopping")
 
         # Stop ROS2 stack first while manager loop is still alive.
         if stop_ros2_stack:
@@ -851,6 +866,96 @@ class OMNIUDPServer:
         if reason:
             logger.info("Terminal passthrough stopped: %s", reason)
 
+    def _is_joystick_bridge_running(self) -> bool:
+        with self._joystick_lock:
+            proc = self._joystick_proc
+            if proc is None:
+                self._joystick_session_active = False
+                return False
+
+            if proc.poll() is not None:
+                self._joystick_proc = None
+                self._joystick_session_active = False
+                return False
+
+            return True
+
+    def _start_joystick_bridge(self) -> bool:
+        if self._is_joystick_bridge_running():
+            self._joystick_session_active = True
+            logger.info("Joystick bridge already running")
+            return True
+
+        script_path = os.path.expanduser(self._joystick_start_script)
+        if not os.path.isfile(script_path):
+            logger.error("Joystick start script not found: %s", script_path)
+            return False
+
+        joystick_root = os.path.expanduser(self._joystick_root)
+        if not os.path.isdir(joystick_root):
+            logger.error("Joystick root directory not found: %s", joystick_root)
+            return False
+
+        start_cmd = ["bash", script_path]
+
+        try:
+            proc = subprocess.Popen(
+                start_cmd,
+                cwd=joystick_root,
+                start_new_session=True,
+            )
+        except Exception as exc:
+            logger.error("Failed to start joystick bridge: %s", exc)
+            return False
+
+        with self._joystick_lock:
+            self._joystick_proc = proc
+            self._joystick_session_active = True
+
+        logger.info("Joystick bridge started (pid=%s)", proc.pid)
+        return True
+
+    def _stop_joystick_bridge(self, reason: str = "") -> bool:
+        with self._joystick_lock:
+            proc = self._joystick_proc
+            self._joystick_proc = None
+            self._joystick_session_active = False
+
+        if proc is None:
+            return False
+
+        try:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGTERM)
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait(timeout=1.0)
+        except ProcessLookupError:
+            pass
+        except Exception as exc:
+            logger.error("Failed stopping joystick bridge: %s", exc)
+            return False
+
+        if reason:
+            logger.info("Joystick bridge stopped: %s", reason)
+        else:
+            logger.info("Joystick bridge stopped")
+        return True
+
+    def _toggle_joystick_bridge(self) -> bool:
+        if self._is_joystick_bridge_running():
+            self._stop_joystick_bridge(reason="STM32 joy toggle off")
+            return False
+
+        started = self._start_joystick_bridge()
+        if not started:
+            logger.warning("Joystick bridge toggle-on failed")
+            return False
+
+        return True
+
     def _call_mapping_service_with_retries(
         self,
         service_label: str,
@@ -1057,6 +1162,15 @@ class OMNIUDPServer:
             )
             if not ok:
                 logger.warning("WP_TEST_PATTERN failed: waypoint pattern service unavailable or rejected")
+            return
+
+        if cmd.cmd_id == CommandID.TOGGLE_JOYSTICK:
+            self._send_cmd_ack(header.seq, addr, int(cmd.cmd_id))
+            enabled = self._toggle_joystick_bridge()
+            logger.info(
+                "TOGGLE_JOYSTICK received; joystick bridge now %s",
+                "enabled" if enabled else "disabled",
+            )
             return
 
         if cmd.cmd_id == CommandID.STOP_ROS2:

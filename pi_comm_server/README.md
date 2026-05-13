@@ -167,6 +167,7 @@ Trajectory payload starts with a 20-byte trajectory header, followed by `n_knots
 | 10 | START_TERMINAL_PASSTHROUGH | optional | Start interactive Pi shell passthrough over the STM32 Bluetooth UART |
 | 11 | TERMINAL_PASSTHROUGH_DATA | bytes | Raw terminal byte stream chunk for active passthrough session |
 | 12 | STOP_TERMINAL_PASSTHROUGH | optional | Stop the active Pi shell passthrough session |
+| 14 | TOGGLE_JOYSTICK | optional | Toggle Joystick bridge process on/off (start on first command, stop on next) |
 | 5 | START_MAPPING | optional | Switch to dedicated mapping mode |
 | 6 | FINISH_MAPPING | optional | Finish mapping and switch to localization/frozen map |
 | 7 | USE_LIVE_MAP | optional | Use live mapping mode |

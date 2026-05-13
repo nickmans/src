@@ -31,7 +31,6 @@ It is designed for joystick driving with robust safety defaults:
     │   └── start_robot_joystick.sh
     ├── .env.example
     ├── requirements.txt
-    ├── robot_joystick.service
     └── README.md
 
 ## Behavior and Conventions
@@ -135,6 +134,19 @@ Health check:
 
     curl http://127.0.0.1:8000/health
 
+## Runtime Control
+
+This joystick app is intended to be started and stopped by the Pi communication
+server, not as a separate boot service.
+
+- The production owner is `omni_udp_server.service`.
+- STM32 sends CMD `14` (`TOGGLE_JOYSTICK`) to the Pi comm server on port `9000`.
+- First toggle starts this joystick web app.
+- Next toggle stops it.
+
+The joystick app should not be enabled as its own systemd service, or it will
+run continuously and conflict with the toggle-controlled flow.
+
 ## Hotspot/AP Setup on Pi (NetworkManager)
 
 Use the included script:
@@ -159,32 +171,6 @@ Useful checks:
     nmcli connection show robot-hotspot
     nmcli device status
     ip addr show wlan0
-
-## Install as Systemd Service (Boot Startup)
-
-1) Copy project to target path expected by sample service:
-
-    sudo mkdir -p /home/pi/robot_joystick
-    sudo rsync -a --delete /home/nickolas/ros2_ws/src/omni_src/Joystick/ /home/pi/robot_joystick/
-    sudo chown -R pi:pi /home/pi/robot_joystick
-
-2) Prepare runtime env there:
-
-    sudo -u pi bash -lc 'cd /home/pi/robot_joystick && python3 -m venv .venv && source .venv/bin/activate && pip install -U pip && pip install -r requirements.txt'
-    sudo -u pi bash -lc 'cd /home/pi/robot_joystick && cp .env.example .env'
-    sudo chmod +x /home/pi/robot_joystick/scripts/start_robot_joystick.sh
-
-3) Install service:
-
-    sudo cp /home/pi/robot_joystick/robot_joystick.service /etc/systemd/system/robot_joystick.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable robot_joystick.service
-    sudo systemctl restart robot_joystick.service
-
-4) Check status/logs:
-
-    systemctl status robot_joystick.service --no-pager
-    journalctl -u robot_joystick.service -f
 
 ## Command Format Configuration
 
