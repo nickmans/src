@@ -199,23 +199,34 @@ async def command_stream_loop() -> None:
                 logger.info("Joystick mode command sent: %s", cfg.cmd_joy)
                 await state.clear_joy_pending()
 
-        if age > cfg.input_timeout_s:
+        hard_timeout_s = cfg.input_timeout_s + cfg.input_hold_grace_s
+        if age > hard_timeout_s:
             raw_x, raw_y = 0.0, 0.0
             if not timeout_active:
                 timeout_active = True
                 logger.warning(
-                    "Input timeout exceeded (%.3fs > %.3fs), forcing zero",
+                    "Input hard-timeout exceeded (%.3fs > %.3fs), forcing zero",
+                    age,
+                    hard_timeout_s,
+                )
+        elif age > cfg.input_timeout_s:
+            if not timeout_active:
+                timeout_active = True
+                logger.warning(
+                    "Input stale (%.3fs > %.3fs); holding last command for %.3fs grace",
                     age,
                     cfg.input_timeout_s,
+                    cfg.input_hold_grace_s,
                 )
         else:
             timeout_active = False
 
-        if not joy_enabled:
-            raw_x, raw_y = 0.0, 0.0
-
-        cmd = map_xy_to_command(raw_x, raw_y, cfg)
-        send_command_to_stm32(cmd)
+        if joy_enabled:
+            cmd = map_xy_to_command(raw_x, raw_y, cfg)
+            send_command_to_stm32(cmd)
+        else:
+            # Keep telemetry alive but avoid transmitting joystick data when disabled.
+            cmd = JoystickCommand(angle=0, speed=0)
 
         await hub.broadcast(
             {

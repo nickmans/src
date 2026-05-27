@@ -37,6 +37,7 @@ class AppConfig:
     deadzone: float
     max_speed: int
     input_timeout_s: float
+    input_hold_grace_s: float
 
     bt_device: str
     bt_baudrate: int
@@ -72,6 +73,7 @@ def get_config() -> AppConfig:
     deadzone = min(0.95, max(0.0, _to_float(os.getenv("DEADZONE"), 0.08)))
     max_speed = max(1, _to_int(os.getenv("MAX_SPEED"), 100))
     input_timeout_s = max(0.05, _to_float(os.getenv("INPUT_TIMEOUT_S"), 0.35))
+    input_hold_grace_s = max(0.0, _to_float(os.getenv("INPUT_HOLD_GRACE_S"), 0.9))
 
     bt_device = os.getenv("BT_DEVICE", "/dev/rfcomm0")
     bt_baudrate = max(1200, _to_int(os.getenv("BT_BAUDRATE"), 115200))
@@ -101,6 +103,7 @@ def get_config() -> AppConfig:
         deadzone=deadzone,
         max_speed=max_speed,
         input_timeout_s=input_timeout_s,
+        input_hold_grace_s=input_hold_grace_s,
         bt_device=bt_device,
         bt_baudrate=bt_baudrate,
         bt_reconnect_interval_s=bt_reconnect_interval_s,

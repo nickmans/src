@@ -150,6 +150,9 @@ class OMNIUDPServer:
         self._joystick_lock = threading.Lock()
         self._joystick_proc: Optional[subprocess.Popen] = None
         self._joystick_session_active = False
+        self._joystick_always_on = str(os.getenv("OMNI_JOYSTICK_ALWAYS_ON", "1")).strip().lower() in {
+            "1", "true", "yes", "on"
+        }
 
         joystick_root_default = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "Joystick")
@@ -379,6 +382,11 @@ class OMNIUDPServer:
 
         self.cmd_thread = threading.Thread(target=self._cmd_loop, daemon=True)
         self.cmd_thread.start()
+
+        if self._joystick_always_on:
+            started = self._start_joystick_bridge()
+            if not started:
+                logger.warning("Always-on joystick bridge requested, but startup failed")
 
     def stop(self, stop_ros2_stack: bool = True):
         logger.info("Stopping UDP server...")
@@ -945,6 +953,10 @@ class OMNIUDPServer:
         return True
 
     def _toggle_joystick_bridge(self) -> bool:
+        if self._joystick_always_on:
+            # In always-on mode, toggle becomes idempotent ensure-on.
+            return self._start_joystick_bridge()
+
         if self._is_joystick_bridge_running():
             self._stop_joystick_bridge(reason="STM32 joy toggle off")
             return False

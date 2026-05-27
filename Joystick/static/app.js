@@ -10,6 +10,9 @@ const estopBtn = document.getElementById("estopBtn");
 let ws = null;
 let reconnectTimer = null;
 let activePointerId = null;
+let holdSendTimer = null;
+
+const HOLD_RESEND_MS = 50;
 
 const joystickState = {
   x: 0,
@@ -27,6 +30,27 @@ function sendWsMessage(payload) {
     return;
   }
   ws.send(JSON.stringify(payload));
+}
+
+function startHoldResendLoop() {
+  if (holdSendTimer) {
+    clearInterval(holdSendTimer);
+  }
+
+  holdSendTimer = setInterval(() => {
+    if (activePointerId === null) {
+      return;
+    }
+    sendWsMessage({ type: "joystick", x: joystickState.x, y: joystickState.y });
+  }, HOLD_RESEND_MS);
+}
+
+function stopHoldResendLoop() {
+  if (!holdSendTimer) {
+    return;
+  }
+  clearInterval(holdSendTimer);
+  holdSendTimer = null;
 }
 
 function connectWebSocket() {
@@ -116,6 +140,7 @@ joystickEl.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   activePointerId = event.pointerId;
   joystickEl.setPointerCapture(activePointerId);
+  startHoldResendLoop();
   updateJoystickFromEvent(event.clientX, event.clientY);
 });
 
@@ -132,6 +157,7 @@ function onPointerEnd(event) {
     return;
   }
   event.preventDefault();
+  stopHoldResendLoop();
   activePointerId = null;
   releaseJoystick();
 }
@@ -140,6 +166,7 @@ joystickEl.addEventListener("pointerup", onPointerEnd);
 joystickEl.addEventListener("pointercancel", onPointerEnd);
 joystickEl.addEventListener("lostpointercapture", () => {
   if (activePointerId !== null) {
+    stopHoldResendLoop();
     activePointerId = null;
     releaseJoystick();
   }
@@ -159,6 +186,7 @@ estopBtn.addEventListener("click", () => {
 });
 
 window.addEventListener("beforeunload", () => {
+  stopHoldResendLoop();
   releaseJoystick();
 });
 
