@@ -30,6 +30,7 @@ def generate_launch_description() -> LaunchDescription:
     nav2_costmaps_params_file = LaunchConfiguration("nav2_costmaps_params_file")
     scan_match_topic = LaunchConfiguration("scan_match_topic")
     enable_map_odom_startup_fallback = LaunchConfiguration("enable_map_odom_startup_fallback")
+    map_odom_startup_fallback_stop_on_amcl_pose = LaunchConfiguration("map_odom_startup_fallback_stop_on_amcl_pose")
     map_odom_startup_fallback_grace_s = LaunchConfiguration("map_odom_startup_fallback_grace_s")
     map_odom_startup_fallback_backdate_s = LaunchConfiguration("map_odom_startup_fallback_backdate_s")
     slam_params_file = LaunchConfiguration("slam_params_file")
@@ -50,6 +51,8 @@ def generate_launch_description() -> LaunchDescription:
     lidar2_frame_id = LaunchConfiguration("lidar2_frame_id")
     lidar1_y_m = LaunchConfiguration("lidar1_y_m")
     lidar2_y_m = LaunchConfiguration("lidar2_y_m")
+    lidar_roll_rad = LaunchConfiguration("lidar_roll_rad")
+    lidar_pitch_rad = LaunchConfiguration("lidar_pitch_rad")
     lidar_yaw_rad = LaunchConfiguration("lidar_yaw_rad")
 
     traj_params_file = LaunchConfiguration("traj_params_file")
@@ -133,9 +136,8 @@ def generate_launch_description() -> LaunchDescription:
     # =========================
     # Static TFs: world->odom and base_link -> lidars
     # LIDARs are at y=+0.10m and y=-0.10m, both on y-axis.
-    # STM32 yaw and LiDAR x-forward now use the same forward convention, so
-    # the base_link -> lidar transforms must remain zero-yaw unless hardware
-    # mounting changes again.
+    # Hardware reports LiDAR with x-forward/y-right. ROS body frames are
+    # x-forward/y-left, so default roll is pi to flip y and z handedness.
     # =========================
     
     # world -> odom (fixed frame for RViz visualization)
@@ -182,17 +184,16 @@ def generate_launch_description() -> LaunchDescription:
                 "map_frame": map_frame,
                 "odom_frame": odom_frame,
                 "publish_rate_hz": 12.0,
+                "stop_on_amcl_pose": ParameterValue(map_odom_startup_fallback_stop_on_amcl_pose, value_type=bool),
                 "grace_period_s": ParameterValue(map_odom_startup_fallback_grace_s, value_type=float),
                 "timestamp_backdate_s": ParameterValue(map_odom_startup_fallback_backdate_s, value_type=float),
             }
         ],
         condition=IfCondition(
             PythonExpression([
-                '"', enable_map_odom_startup_fallback, '" == "true" and ((',
-                '"', enable_amcl_localization, '" == "true" and "',
-                enable_slam_toolbox, '" == "false") or ("',
-                enable_amcl_localization, '" == "false" and "',
-                enable_slam_toolbox, '" == "true"))'
+                '"', enable_map_odom_startup_fallback, '" == "true" and "',
+                enable_amcl_localization, '" == "true" and "',
+                enable_slam_toolbox, '" == "false"'
             ])
         ),
     )
@@ -223,8 +224,8 @@ def generate_launch_description() -> LaunchDescription:
             "--x", "0.0",
             "--y", lidar1_y_m,
             "--z", "0.0",
-            "--roll", "0.0",
-            "--pitch", "0.0",
+            "--roll", lidar_roll_rad,
+            "--pitch", lidar_pitch_rad,
             "--yaw", lidar_yaw_rad,
             "--frame-id", "base_link",
             "--child-frame-id", lidar1_frame_id,
@@ -242,8 +243,8 @@ def generate_launch_description() -> LaunchDescription:
             "--x", "0.0",
             "--y", lidar2_y_m,
             "--z", "0.0",
-            "--roll", "0.0",
-            "--pitch", "0.0",
+            "--roll", lidar_roll_rad,
+            "--pitch", lidar_pitch_rad,
             "--yaw", lidar_yaw_rad,
             "--frame-id", "base_link",
             "--child-frame-id", lidar2_frame_id,
@@ -432,6 +433,7 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument("scan_match_topic", default_value="/scan_match"),
             DeclareLaunchArgument("enable_map_odom_startup_fallback", default_value="true"),
+            DeclareLaunchArgument("map_odom_startup_fallback_stop_on_amcl_pose", default_value="true"),
             DeclareLaunchArgument("map_odom_startup_fallback_grace_s", default_value="25.0"),
             DeclareLaunchArgument("map_odom_startup_fallback_backdate_s", default_value="0.25"),
             DeclareLaunchArgument("enable_lidar_watchdog", default_value="true"),
@@ -457,7 +459,9 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("lidar2_frame_id", default_value="lidar2_link"),
             DeclareLaunchArgument("lidar1_y_m", default_value="0.10"),
             DeclareLaunchArgument("lidar2_y_m", default_value="-0.10"),
-            DeclareLaunchArgument("lidar_yaw_rad", default_value="3.141592653589793"),
+            DeclareLaunchArgument("lidar_roll_rad", default_value="3.141592653589793"),
+            DeclareLaunchArgument("lidar_pitch_rad", default_value="0.0"),
+            DeclareLaunchArgument("lidar_yaw_rad", default_value="0.0"),
 
             lidar1_real,
             lidar2_real,

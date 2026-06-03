@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How to Operate Robot - A4 Poster</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 12mm;
+    }
+
+    :root {
+      --bg1: #f6f8fb;
+      --bg2: #e8eef7;
+      --ink: #101522;
+      --muted: #4c566f;
+      --accent: #0b6bcb;
+      --accent-2: #14a44d;
+      --card: #ffffff;
+      --border: #d5deea;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 210mm;
+      height: 297mm;
+      font-family: "Arial", "Helvetica", sans-serif;
+      color: var(--ink);
+      background: linear-gradient(155deg, var(--bg1), var(--bg2));
+    }
+
+    .page {
+      width: 100%;
+      height: 100%;
+      padding: 10mm;
+      display: grid;
+      grid-template-rows: auto auto auto 1fr auto;
+      gap: 7mm;
+    }
+
+    .title {
+      margin: 0;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-size: 18mm;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .subtitle {
+      margin: 0;
+      text-align: center;
+      font-size: 5.7mm;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .steps {
+      display: grid;
+      gap: 5mm;
+    }
+
+    .step {
+      background: var(--card);
+      border: 1.2mm solid var(--border);
+      border-radius: 4mm;
+      padding: 5mm 6mm;
+      display: grid;
+      grid-template-columns: 12mm 1fr;
+      align-items: center;
+      column-gap: 4mm;
+    }
+
+    .num {
+      width: 12mm;
+      height: 12mm;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 6.2mm;
+    }
+
+    .text {
+      font-size: 8mm;
+      font-weight: 800;
+      line-height: 1.15;
+      text-transform: uppercase;
+    }
+
+    .url-box {
+      background: #ffffff;
+      border: 1.8mm solid var(--accent-2);
+      border-radius: 4mm;
+      padding: 6mm;
+      text-align: center;
+    }
+
+    .url-label {
+      margin: 0 0 2mm 0;
+      font-size: 5.5mm;
+      font-weight: 800;
+      color: #1c3a2b;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .url {
+      margin: 0;
+      font-size: 10mm;
+      font-weight: 900;
+      line-height: 1.05;
+      word-break: break-word;
+    }
+
+    .alt {
+      margin-top: 4mm;
+      font-size: 4.8mm;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .footer {
+      text-align: center;
+      font-size: 4.4mm;
+      color: #2f3749;
+      font-weight: 700;
+    }
+
+    @media screen and (max-width: 900px) {
+      body {
+        width: 100%;
+        height: auto;
+      }
+
+      .page {
+        min-height: 100vh;
+      }
+
+      .title {
+        font-size: 14vw;
+      }
+
+      .text {
+        font-size: 6.5vw;
+      }
+
+      .url {
+        font-size: 8vw;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1 class="title">How to Operate Robot</h1>
+    <p class="subtitle">Quick start for anyone</p>
+
+    <section class="steps" aria-label="Operation Steps">
+      <article class="step">
+        <div class="num">1</div>
+        <div class="text">Turn ON the robot.</div>
+      </article>
+      <article class="step">
+        <div class="num">2</div>
+        <div class="text">Wait 30 seconds.</div>
+      </article>
+      <article class="step">
+        <div class="num">3</div>
+        <div class="text">Open the robot webpage URL.</div>
+      </article>
+    </section>
+
+    <section class="url-box" aria-label="Robot URL">
+      <p class="url-label">Robot Webpage</p>
+      <p class="url">http://10.42.0.1:8000</p>
+      <p class="alt">If needed: http://raspberrypi.local:8000</p>
+    </section>
+
+    <p class="footer">If page does not load, check you are connected to robot Wi-Fi: OMNI-BOT-PI5.</p>
+  </main>
+</body>
+</html>

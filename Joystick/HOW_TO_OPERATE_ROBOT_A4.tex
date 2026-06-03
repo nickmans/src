@@ -1,0 +1,55 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[margin=18mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{setspace}
+\usepackage{pagecolor}
+
+\definecolor{titleblue}{HTML}{0B6BCB}
+\definecolor{boxgreen}{HTML}{14A44D}
+\definecolor{muted}{HTML}{3F4A64}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.4em}
+
+\begin{document}
+\begin{center}
+{\fontsize{46}{50}\selectfont\bfseries HOW TO OPERATE ROBOT}\par
+\vspace{4mm}
+{\Large\bfseries Quick start for anyone}\par
+\vspace{8mm}
+\end{center}
+
+\setstretch{1.25}
+{\fontsize{26}{30}\selectfont\bfseries
+1. Turn ON the robot.\par
+\vspace{5mm}
+2. Wait 30 seconds.\par
+\vspace{5mm}
+3. Open the robot webpage URL.\par
+}
+
+\vspace{10mm}
+\fcolorbox{boxgreen}{white}{%
+\parbox{0.95\linewidth}{%
+\vspace{3mm}
+\begin{center}
+{\Large\bfseries ROBOT WEBPAGE}\par
+\vspace{3mm}
+{\fontsize{30}{34}\selectfont\bfseries http://omni-bot.local:8000}\par
+\end{center}
+\vspace{3mm}
+}%
+}
+
+\vfill
+\begin{center}
+{\large\color{muted}\bfseries If page does not load, connect to robot Wi-Fi: OMNI-BOT-PI5}
+\end{center}
+
+\end{document}

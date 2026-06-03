@@ -457,7 +457,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("lidar2_frame_id", default_value="lidar2_link"),
             DeclareLaunchArgument("lidar1_y_m", default_value="0.10"),
             DeclareLaunchArgument("lidar2_y_m", default_value="-0.10"),
-            DeclareLaunchArgument("lidar_yaw_rad", default_value="3.141592653589793"),
+            DeclareLaunchArgument("lidar_yaw_rad", default_value="0.0"),
 
             lidar1_real,
             lidar2_real,

@@ -1471,8 +1471,11 @@ class WaypointTrajNode(Node):
             if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps) or r > max_range:
                 continue
 
+            # Sensor-native convention is left-handed: +X forward, +Y right,
+            # and angle increases clockwise. Convert to ROS-style right-handed
+            # XY before applying TF by flipping the Y axis.
             xs = r * math.cos(ang)
-            ys = r * math.sin(ang)
+            ys = -r * math.sin(ang)
             xb, yb = self._apply_transform_2d(tr, xs, ys)
             pts.append((xb, yb))
 
@@ -1655,9 +1658,10 @@ class WaypointTrajNode(Node):
                 if (not math.isfinite(r)) or r < rmin or r >= (rmax - no_hit_eps) or r > max_range:
                     continue
 
-                # Convert beam to Cartesian in sensor frame
+                # Convert from sensor-native left-handed (clockwise angle,
+                # +Y right) to ROS right-handed XY by flipping Y.
                 xs = r * math.cos(beam_angle)
-                ys = r * math.sin(beam_angle)
+                ys = -r * math.sin(beam_angle)
                 
                 # Transform from sensor frame to base_link frame (rotation + translation)
                 x_origin, y_origin = self._apply_transform_2d(tr, xs, ys)
@@ -2604,10 +2608,10 @@ class WaypointTrajNode(Node):
         self.get_logger().info(f"Added waypoint ({x:.2f}, {y:.2f}). Total: {wp_n + 1}")
 
     def _generate_test_waypoint_pattern(self, center_pose: Pose2D) -> List[Tuple[float, float]]:
-        """Build 100 waypoints as a bounded random walk centered on robot pose."""
-        area_size_m = 1.5
-        step_m = 0.5
-        n_waypoints = 100
+        """Build waypoints as a bounded random walk centered on robot pose."""
+        area_size_m = 2.0
+        step_m = 0.75
+        n_waypoints = 200
         half = 0.5 * area_size_m
 
         min_x = float(center_pose.x) - half
@@ -2621,7 +2625,7 @@ class WaypointTrajNode(Node):
         while len(waypoints) < n_waypoints:
             last_x, last_y = waypoints[-1]
 
-            # Pick a random heading that keeps the next point inside the fixed 1.5m box.
+            # Pick a random heading that keeps the next point inside the fixed 2.0m box.
             next_pt: Optional[Tuple[float, float]] = None
             for _ in range(256):
                 theta = float(rng.uniform(-math.pi, math.pi))
@@ -3422,7 +3426,7 @@ class WaypointTrajNode(Node):
     def get_wheel_velocities(self, vx_body: float, vy_body: float, omega: float) -> List[float]:
         """
         Compute required wheel velocities for 3-wheel omnidirectional robot.
-        Uses standard 120° wheel configuration (equilateral triangle).
+        Uses the same body->wheel mapping as STM32 controller.c.
         
         Args:
             vx_body: Linear velocity in x (body frame, m/s)
@@ -3438,20 +3442,24 @@ class WaypointTrajNode(Node):
         if r < 1e-6:
             return [0.0, 0.0, 0.0]
         
-        # 3-wheel omni kinematics (120° wheel spacing)
-        # Inverse kinematics: body velocity to wheel velocity
-        sqrt3_2 = math.sqrt(3) / 2.0
-        
-        w1 = (vy_body + L * omega) / r
-        w2 = (-0.5 * vy_body + sqrt3_2 * vx_body + L * omega) / r
-        w3 = (-0.5 * vy_body - sqrt3_2 * vx_body + L * omega) / r
+        # Match STM32 Controller_Step exactly:
+        # body_desired_to_kin: vx_kin = vy_body, vy_kin = -vx_body
+        # inverse_kinematics(kin):
+        #   w1 = (vy_kin + L*omega)/r
+        #   w2 = (-0.5*vy_kin + (sqrt(3)/2)*vx_kin + L*omega)/r
+        #   w3 = (-0.5*vy_kin - (sqrt(3)/2)*vx_kin + L*omega)/r
+        sqrt3_2 = math.sqrt(3.0) / 2.0
+
+        w1 = (-vx_body + L * omega) / r
+        w2 = (0.5 * vx_body + sqrt3_2 * vy_body + L * omega) / r
+        w3 = (0.5 * vx_body - sqrt3_2 * vy_body + L * omega) / r
         
         return [w1, w2, w3]
 
     def body_velocity_from_wheel_velocity(self, w1: float, w2: float, w3: float) -> Tuple[float, float, float]:
         """
         Compute body velocity from wheel velocities.
-        Used for sensor feedback / odometry.
+        Inverse of get_wheel_velocities(), matched to STM32 controller mapping.
         
         Args:
             w1, w2, w3: Wheel velocities (rad/s)
@@ -3465,11 +3473,13 @@ class WaypointTrajNode(Node):
         if r < 1e-6 or L < 1e-6:
             return 0.0, 0.0, 0.0
         
-        # Forward kinematics: wheel velocity to body velocity
-        sqrt3_3 = math.sqrt(3) / 3.0
-        
-        vx_body = r * sqrt3_3 * (w2 - w3)
-        vy_body = r * (2.0 / 3.0 * w1 - 1.0 / 3.0 * (w2 + w3))
+        # Forward kinematics for STM32-matched mapping:
+        # vx_body = r * (-2*w1 + w2 + w3) / 3
+        # vy_body = r * (w2 - w3) / sqrt(3)
+        sqrt3 = math.sqrt(3.0)
+
+        vx_body = r * ((-2.0 * w1 + w2 + w3) / 3.0)
+        vy_body = r * ((w2 - w3) / sqrt3)
         omega = r * (w1 + w2 + w3) / (3.0 * L)
         
         return vx_body, vy_body, omega
@@ -5030,10 +5040,9 @@ class WaypointTrajNode(Node):
 
         planning_costmap = self._build_planning_costmap_from_local(local_costmap, local_gs)
 
-        # Keep wp t auto-test waypoints fixed to their original 1.5m zone.
-        moved_wps = None
-        if not self._auto_test_waypoint_active:
-            moved_wps = self._relocate_stuck_waypoints(planning_costmap, base_pose_now)
+        # Relocate stuck waypoints for all modes, including wp t auto-test points,
+        # so generated goals inside hard obstacles are shifted to traversable cells.
+        moved_wps = self._relocate_stuck_waypoints(planning_costmap, base_pose_now)
         if moved_wps is not None:
             wps = moved_wps
             self.publish_waypoints(wps)

@@ -11,6 +11,7 @@ MSG_TYPE_CMD = 20
 CMD_JOY_MODE_ON = 100
 CMD_JOY_MODE_OFF = 101
 CMD_JOY_VECTOR = 102
+CMD_JOY_SPIN = 103
 
 
 class EthernetUdpLink:
@@ -96,3 +97,8 @@ class EthernetUdpLink:
         speed_u8 = max(0, min(100, int(speed)))
         arg = struct.pack("<HB", angle_u16, speed_u8)
         return self._send(CMD_JOY_VECTOR, arg, f"vector a={angle_u16} s={speed_u8}")
+
+    def send_spin(self, value: int) -> bool:
+        spin_u8 = max(0, min(2, int(value)))
+        arg = struct.pack("<B", spin_u8)
+        return self._send(CMD_JOY_SPIN, arg, f"spin {spin_u8}")

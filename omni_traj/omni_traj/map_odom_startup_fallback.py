@@ -31,6 +31,7 @@ class MapOdomStartupFallback(Node):
         self.declare_parameter("grace_period_s", 25.0)
         self.declare_parameter("timestamp_backdate_s", 0.25)
         self.declare_parameter("seed_initial_pose", True)
+        self.declare_parameter("stop_on_amcl_pose", True)
         self.declare_parameter("initial_pose_publish_rate_hz", 2.0)
         self.declare_parameter("initial_pose_min_duration_s", 8.0)
         self.declare_parameter("initial_pose_covariance_xy", 0.10)
@@ -41,6 +42,7 @@ class MapOdomStartupFallback(Node):
         self._base_frame = str(self.get_parameter("base_frame").value)
         self._grace_period = max(0.0, float(self.get_parameter("grace_period_s").value))
         self._timestamp_backdate_s = max(0.0, float(self.get_parameter("timestamp_backdate_s").value))
+        self._stop_on_amcl_pose = bool(self.get_parameter("stop_on_amcl_pose").value)
         publish_rate_hz = max(1.0, float(self.get_parameter("publish_rate_hz").value))
         self._seed_initial_pose = bool(self.get_parameter("seed_initial_pose").value)
         self._initial_pose_min_duration_s = max(
@@ -66,6 +68,16 @@ class MapOdomStartupFallback(Node):
 
         self._timer = self.create_timer(1.0 / publish_rate_hz, self._on_timer)
 
+        if self._seed_initial_pose or self._stop_on_amcl_pose:
+            self._amcl_pose_sub = self.create_subscription(
+                PoseWithCovarianceStamped,
+                "/amcl_pose",
+                self._on_amcl_pose,
+                20,
+            )
+        else:
+            self._amcl_pose_sub = None
+
         if self._seed_initial_pose:
             initial_pose_qos = QoSProfile(depth=1)
             initial_pose_qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
@@ -77,12 +89,6 @@ class MapOdomStartupFallback(Node):
                 initial_pose_qos,
             )
             self._odom_sub = self.create_subscription(Odometry, "/odom", self._on_odom, 20)
-            self._amcl_pose_sub = self.create_subscription(
-                PoseWithCovarianceStamped,
-                "/amcl_pose",
-                self._on_amcl_pose,
-                20,
-            )
             self._initial_pose_timer = self.create_timer(
                 1.0 / initial_pose_publish_rate_hz,
                 self._seed_initial_pose_from_odom,
@@ -90,7 +96,6 @@ class MapOdomStartupFallback(Node):
         else:
             self._initial_pose_pub = None
             self._odom_sub = None
-            self._amcl_pose_sub = None
             self._initial_pose_timer = None
 
         self.get_logger().info(
@@ -160,6 +165,11 @@ class MapOdomStartupFallback(Node):
 
     def _on_timer(self) -> None:
         if not self._active:
+            return
+
+        if self._stop_on_amcl_pose and self._amcl_pose_received:
+            self._active = False
+            self.get_logger().info("Startup map->odom fallback disabled after /amcl_pose was received")
             return
 
         elapsed = self._elapsed_seconds()

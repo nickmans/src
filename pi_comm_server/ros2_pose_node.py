@@ -8,9 +8,11 @@ import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+from rcl_interfaces.msg import SetParametersResult
 from geometry_msgs.msg import PoseStamped, TwistStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 import math
+import os
 import tf2_ros
 
 
@@ -27,12 +29,22 @@ class PosePublisherNode(Node):
     def __init__(self):
         super().__init__('pose_publisher')
 
+        yaw_offset_default_deg = float(os.getenv('OMNI_STM32_YAW_OFFSET_DEG', '0.0'))
         self.declare_parameter('stm32_pose_rotation_deg', 0.0)
         self.declare_parameter('stm32_yaw_rotation_deg', 0.0)
-        self.declare_parameter('stm32_yaw_offset_deg', 0.0)
-        self.declare_parameter('stm32_traj_rotation_deg', 0.0)
-        self.declare_parameter('stm32_traj_yaw_rotation_deg', 0.0)
-        self.declare_parameter('stm32_traj_yaw_offset_deg', 0.0)
+        self.declare_parameter('stm32_yaw_offset_deg', yaw_offset_default_deg)
+        self.declare_parameter('stm32_pose_y_axis_right', False)
+
+        pose_rotation_default = float(self.get_parameter('stm32_pose_rotation_deg').value)
+        yaw_rotation_default = float(self.get_parameter('stm32_yaw_rotation_deg').value)
+        yaw_offset_default = float(self.get_parameter('stm32_yaw_offset_deg').value)
+        pose_y_axis_right_default = bool(self.get_parameter('stm32_pose_y_axis_right').value)
+
+        # Default trajectory conversion mirrors pose conversion to avoid planner/pose frame mismatch.
+        self.declare_parameter('stm32_traj_rotation_deg', pose_rotation_default)
+        self.declare_parameter('stm32_traj_yaw_rotation_deg', yaw_rotation_default)
+        self.declare_parameter('stm32_traj_yaw_offset_deg', yaw_offset_default)
+        self.declare_parameter('stm32_traj_y_axis_right', pose_y_axis_right_default)
         self.declare_parameter('odom_stationary_linear_speed_thresh_ms', 0.03)
         self.declare_parameter('odom_stationary_angular_speed_thresh_rs', 0.05)
 
@@ -59,9 +71,11 @@ class PosePublisherNode(Node):
         self._pose_rotation_rad = math.radians(float(self.get_parameter('stm32_pose_rotation_deg').value))
         self._yaw_rotation_rad = math.radians(float(self.get_parameter('stm32_yaw_rotation_deg').value))
         self._yaw_offset_rad = math.radians(float(self.get_parameter('stm32_yaw_offset_deg').value))
+        self._pose_y_axis_right = bool(self.get_parameter('stm32_pose_y_axis_right').value)
         self._traj_rotation_rad = math.radians(float(self.get_parameter('stm32_traj_rotation_deg').value))
         self._traj_yaw_rotation_rad = math.radians(float(self.get_parameter('stm32_traj_yaw_rotation_deg').value))
         self._traj_yaw_offset_rad = math.radians(float(self.get_parameter('stm32_traj_yaw_offset_deg').value))
+        self._traj_y_axis_right = bool(self.get_parameter('stm32_traj_y_axis_right').value)
         pose_rotation_deg = float(self.get_parameter('stm32_pose_rotation_deg').value)
         yaw_rotation_deg = float(self.get_parameter('stm32_yaw_rotation_deg').value)
         traj_rotation_deg = float(self.get_parameter('stm32_traj_rotation_deg').value)
@@ -78,17 +92,25 @@ class PosePublisherNode(Node):
                 "Set stm32_traj_rotation_deg == stm32_pose_rotation_deg and "
                 "stm32_traj_yaw_rotation_deg == stm32_yaw_rotation_deg unless intentionally offsetting trajectories."
             )
+        if self._traj_y_axis_right != self._pose_y_axis_right:
+            self.get_logger().warn(
+                "Trajectory axis convention differs from pose convention. "
+                "Set stm32_traj_y_axis_right == stm32_pose_y_axis_right unless intentionally offsetting trajectories."
+            )
         self.get_logger().warn(
             f"Applying STM32->ROS pose transform: xy_rotation={pose_rotation_deg:.1f} deg, "
             f"yaw_rotation={yaw_rotation_deg:.1f} deg, "
-            f"yaw_offset={float(self.get_parameter('stm32_yaw_offset_deg').value):.1f} deg"
+            f"yaw_offset={float(self.get_parameter('stm32_yaw_offset_deg').value):.1f} deg, "
+            f"y_axis_right={self._pose_y_axis_right}"
         )
         self.get_logger().warn(
             "Applying ROS->STM32 trajectory transform: "
             f"xy_rotation={traj_rotation_deg:.1f} deg, "
             f"yaw_rotation={traj_yaw_rotation_deg:.1f} deg, "
-            f"yaw_offset={float(self.get_parameter('stm32_traj_yaw_offset_deg').value):.1f} deg"
+            f"yaw_offset={float(self.get_parameter('stm32_traj_yaw_offset_deg').value):.1f} deg, "
+            f"y_axis_right={self._traj_y_axis_right}"
         )
+        self.add_on_set_parameters_callback(self._on_transform_params_changed)
         self.initial_pose_seed_started_ns = None
         self.initial_pose_seed_min_duration_ns = int(30.0 * 1e9)
         self.initial_pose_seed_max_duration_ns = int(60.0 * 1e9)
@@ -225,6 +247,74 @@ class PosePublisherNode(Node):
 
         self._publish_initial_pose(self.latest_pose_data)
 
+    def _on_transform_params_changed(self, params):
+        pose_rotation_rad = self._pose_rotation_rad
+        yaw_rotation_rad = self._yaw_rotation_rad
+        yaw_offset_rad = self._yaw_offset_rad
+        pose_y_axis_right = self._pose_y_axis_right
+        traj_rotation_rad = self._traj_rotation_rad
+        traj_yaw_rotation_rad = self._traj_yaw_rotation_rad
+        traj_yaw_offset_rad = self._traj_yaw_offset_rad
+        traj_y_axis_right = self._traj_y_axis_right
+        changed = False
+
+        try:
+            for param in params:
+                name = param.name
+                value = param.value
+                if name == 'stm32_pose_rotation_deg':
+                    pose_rotation_rad = math.radians(float(value))
+                    changed = True
+                elif name == 'stm32_yaw_rotation_deg':
+                    yaw_rotation_rad = math.radians(float(value))
+                    changed = True
+                elif name == 'stm32_yaw_offset_deg':
+                    yaw_offset_rad = math.radians(float(value))
+                    changed = True
+                elif name == 'stm32_pose_y_axis_right':
+                    pose_y_axis_right = bool(value)
+                    changed = True
+                elif name == 'stm32_traj_rotation_deg':
+                    traj_rotation_rad = math.radians(float(value))
+                    changed = True
+                elif name == 'stm32_traj_yaw_rotation_deg':
+                    traj_yaw_rotation_rad = math.radians(float(value))
+                    changed = True
+                elif name == 'stm32_traj_yaw_offset_deg':
+                    traj_yaw_offset_rad = math.radians(float(value))
+                    changed = True
+                elif name == 'stm32_traj_y_axis_right':
+                    traj_y_axis_right = bool(value)
+                    changed = True
+
+            if changed:
+                self._pose_rotation_rad = pose_rotation_rad
+                self._yaw_rotation_rad = yaw_rotation_rad
+                self._yaw_offset_rad = yaw_offset_rad
+                self._pose_y_axis_right = pose_y_axis_right
+                self._traj_rotation_rad = traj_rotation_rad
+                self._traj_yaw_rotation_rad = traj_yaw_rotation_rad
+                self._traj_yaw_offset_rad = traj_yaw_offset_rad
+                self._traj_y_axis_right = traj_y_axis_right
+                self.get_logger().warn(
+                    "Updated live STM32->ROS pose transform: "
+                    f"xy_rotation={math.degrees(self._pose_rotation_rad):.1f} deg, "
+                    f"yaw_rotation={math.degrees(self._yaw_rotation_rad):.1f} deg, "
+                    f"yaw_offset={math.degrees(self._yaw_offset_rad):.1f} deg, "
+                    f"y_axis_right={self._pose_y_axis_right}"
+                )
+                self.get_logger().warn(
+                    "Updated live ROS->STM32 trajectory transform: "
+                    f"xy_rotation={math.degrees(self._traj_rotation_rad):.1f} deg, "
+                    f"yaw_rotation={math.degrees(self._traj_yaw_rotation_rad):.1f} deg, "
+                    f"yaw_offset={math.degrees(self._traj_yaw_offset_rad):.1f} deg, "
+                    f"y_axis_right={self._traj_y_axis_right}"
+                )
+
+            return SetParametersResult(successful=True)
+        except Exception as exc:
+            return SetParametersResult(successful=False, reason=str(exc))
+
     @staticmethod
     def _wrap_to_pi(angle_rad: float) -> float:
         return (angle_rad + math.pi) % (2.0 * math.pi) - math.pi
@@ -240,6 +330,35 @@ class PosePublisherNode(Node):
         s = math.sin(angle_rad)
         return (c * x - s * y, s * x + c * y)
 
+    def _apply_stm_to_ros_axes(
+        self,
+        x: float,
+        y: float,
+        yaw: float,
+        vx: float,
+        vy: float,
+        y_axis_right: bool,
+    ) -> tuple[float, float, float, float, float]:
+        # STM32 uses x-forward/y-right in this robot; ROS odom/base_link uses x-forward/y-left.
+        # Reflect about x-axis when y points right.
+        if y_axis_right:
+            return float(x), -float(y), self._wrap_to_pi(-float(yaw)), float(vx), -float(vy)
+        return float(x), float(y), self._wrap_to_pi(float(yaw)), float(vx), float(vy)
+
+    def _apply_ros_to_stm_axes(
+        self,
+        x: float,
+        y: float,
+        yaw: float,
+        vx: float,
+        vy: float,
+        y_axis_right: bool,
+    ) -> tuple[float, float, float, float, float]:
+        # Inverse of _apply_stm_to_ros_axes; reflection is self-inverse.
+        if y_axis_right:
+            return float(x), -float(y), self._wrap_to_pi(-float(yaw)), float(vx), -float(vy)
+        return float(x), float(y), self._wrap_to_pi(float(yaw)), float(vx), float(vy)
+
     def _transform_stm32_pose_to_ros(
         self,
         x: float,
@@ -249,9 +368,17 @@ class PosePublisherNode(Node):
         vy: float,
         wz: float,
     ) -> tuple[float, float, float, float, float, float]:
-        x_ros, y_ros = self._rotate_xy(float(x), float(y))
-        vx_ros, vy_ros = self._rotate_xy(float(vx), float(vy))
-        yaw_ros = self._wrap_to_pi(float(yaw) + self._yaw_rotation_rad + self._yaw_offset_rad)
+        x_conv, y_conv, yaw_conv, vx_conv, vy_conv = self._apply_stm_to_ros_axes(
+            float(x),
+            float(y),
+            float(yaw),
+            float(vx),
+            float(vy),
+            self._pose_y_axis_right,
+        )
+        x_ros, y_ros = self._rotate_xy(x_conv, y_conv)
+        vx_ros, vy_ros = self._rotate_xy(vx_conv, vy_conv)
+        yaw_ros = self._wrap_to_pi(yaw_conv + self._yaw_rotation_rad + self._yaw_offset_rad)
         return x_ros, y_ros, yaw_ros, vx_ros, vy_ros, float(wz)
 
     def transform_ros_pose_to_stm(
@@ -267,11 +394,20 @@ class PosePublisherNode(Node):
         c = math.cos(-self._pose_rotation_rad)
         s = math.sin(-self._pose_rotation_rad)
 
-        x_stm = c * float(x_ros) - s * float(y_ros)
-        y_stm = s * float(x_ros) + c * float(y_ros)
-        vx_stm = c * float(vx_ros) - s * float(vy_ros)
-        vy_stm = s * float(vx_ros) + c * float(vy_ros)
-        yaw_stm = self._wrap_to_pi(float(yaw_ros) - self._yaw_rotation_rad - self._yaw_offset_rad)
+        x_unrot = c * float(x_ros) - s * float(y_ros)
+        y_unrot = s * float(x_ros) + c * float(y_ros)
+        vx_unrot = c * float(vx_ros) - s * float(vy_ros)
+        vy_unrot = s * float(vx_ros) + c * float(vy_ros)
+        yaw_unrot = self._wrap_to_pi(float(yaw_ros) - self._yaw_rotation_rad - self._yaw_offset_rad)
+
+        x_stm, y_stm, yaw_stm, vx_stm, vy_stm = self._apply_ros_to_stm_axes(
+            x_unrot,
+            y_unrot,
+            yaw_unrot,
+            vx_unrot,
+            vy_unrot,
+            self._pose_y_axis_right,
+        )
 
         return x_stm, y_stm, yaw_stm, vx_stm, vy_stm, float(wz_ros)
 
@@ -285,9 +421,18 @@ class PosePublisherNode(Node):
         wz_ros: float,
     ) -> tuple[float, float, float, float, float, float]:
         """Convert ROS odom-frame trajectory pose/twist into STM32 trajectory convention."""
-        x_stm, y_stm = self._rotate_xy_by(float(x_ros), float(y_ros), -self._traj_rotation_rad)
-        vx_stm, vy_stm = self._rotate_xy_by(float(vx_ros), float(vy_ros), -self._traj_rotation_rad)
-        yaw_stm = self._wrap_to_pi(float(yaw_ros) - self._traj_yaw_rotation_rad - self._traj_yaw_offset_rad)
+        x_unrot, y_unrot = self._rotate_xy_by(float(x_ros), float(y_ros), -self._traj_rotation_rad)
+        vx_unrot, vy_unrot = self._rotate_xy_by(float(vx_ros), float(vy_ros), -self._traj_rotation_rad)
+        yaw_unrot = self._wrap_to_pi(float(yaw_ros) - self._traj_yaw_rotation_rad - self._traj_yaw_offset_rad)
+
+        x_stm, y_stm, yaw_stm, vx_stm, vy_stm = self._apply_ros_to_stm_axes(
+            x_unrot,
+            y_unrot,
+            yaw_unrot,
+            vx_unrot,
+            vy_unrot,
+            self._traj_y_axis_right,
+        )
         return x_stm, y_stm, yaw_stm, vx_stm, vy_stm, float(wz_ros)
 
     def _build_odom_covariances(self, vx: float, vy: float, wz: float):

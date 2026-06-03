@@ -5,7 +5,11 @@ const speedValueEl = document.getElementById("speedValue");
 const joystickEl = document.getElementById("joystick");
 const stickEl = document.getElementById("stick");
 const joyModeBtn = document.getElementById("joyModeBtn");
+const spin2Btn = document.getElementById("spin2Btn");
+const spin1Btn = document.getElementById("spin1Btn");
+const spin0Btn = document.getElementById("spin0Btn");
 const estopBtn = document.getElementById("estopBtn");
+const operatorNoticeEl = document.getElementById("operatorNotice");
 
 let ws = null;
 let reconnectTimer = null;
@@ -13,6 +17,8 @@ let activePointerId = null;
 let holdSendTimer = null;
 
 const HOLD_RESEND_MS = 50;
+let joyModeEnabled = false;
+let controllerBusy = false;
 
 const joystickState = {
   x: 0,
@@ -26,10 +32,37 @@ function updatePill(el, isConnected, textConnected, textDisconnected) {
 }
 
 function sendWsMessage(payload) {
+  if (controllerBusy) {
+    return;
+  }
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     return;
   }
   ws.send(JSON.stringify(payload));
+}
+
+function renderOperatorNotice() {
+  if (!controllerBusy) {
+    operatorNoticeEl.hidden = true;
+    operatorNoticeEl.textContent = "";
+    return;
+  }
+
+  operatorNoticeEl.hidden = false;
+  operatorNoticeEl.textContent = "Controller busy: another user currently has robot control.";
+}
+
+function renderJoyModeButton() {
+  joyModeBtn.textContent = joyModeEnabled
+    ? "Disable Joystick Mode"
+    : "Enable Joystick Mode";
+  const disableControls = controllerBusy;
+  joyModeBtn.disabled = disableControls;
+  estopBtn.disabled = disableControls;
+  spin2Btn.disabled = disableControls || !joyModeEnabled;
+  spin1Btn.disabled = disableControls || !joyModeEnabled;
+  spin0Btn.disabled = disableControls || !joyModeEnabled;
+  joystickEl.classList.toggle("disabled", disableControls);
 }
 
 function startHoldResendLoop() {
@@ -60,7 +93,10 @@ function connectWebSocket() {
   ws = new WebSocket(url);
 
   ws.addEventListener("open", () => {
+    controllerBusy = false;
+    renderOperatorNotice();
     updatePill(wsStatusEl, true, "WS Connected", "WS Disconnected");
+    renderJoyModeButton();
   });
 
   ws.addEventListener("close", () => {
@@ -76,9 +112,16 @@ function connectWebSocket() {
   ws.addEventListener("message", (event) => {
     try {
       const msg = JSON.parse(event.data);
-      if (msg.type === "telemetry") {
+      if (msg.type === "busy") {
+        controllerBusy = true;
+        renderOperatorNotice();
+        releaseJoystick();
+        renderJoyModeButton();
+      } else if (msg.type === "telemetry") {
         angleValueEl.textContent = `${msg.angle}\u00b0`;
         speedValueEl.textContent = String(msg.speed);
+        joyModeEnabled = !!msg.joy_enabled;
+        renderJoyModeButton();
         const transport = (msg.transport || "link").toUpperCase();
         updatePill(
           btStatusEl,
@@ -137,6 +180,9 @@ function releaseJoystick() {
 }
 
 joystickEl.addEventListener("pointerdown", (event) => {
+  if (controllerBusy) {
+    return;
+  }
   event.preventDefault();
   activePointerId = event.pointerId;
   joystickEl.setPointerCapture(activePointerId);
@@ -173,14 +219,40 @@ joystickEl.addEventListener("lostpointercapture", () => {
 });
 
 joyModeBtn.addEventListener("click", () => {
-  sendWsMessage({ type: "enable_joy" });
-  joyModeBtn.textContent = "Joystick Mode Requested";
-  window.setTimeout(() => {
-    joyModeBtn.textContent = "Enable Joystick Mode";
-  }, 1200);
+  if (controllerBusy) {
+    return;
+  }
+  const nextJoyModeEnabled = !joyModeEnabled;
+  sendWsMessage({ type: nextJoyModeEnabled ? "enable_joy" : "disable_joy" });
+  joyModeEnabled = nextJoyModeEnabled;
+  renderJoyModeButton();
+});
+
+spin2Btn.addEventListener("click", () => {
+  if (!joyModeEnabled) {
+    return;
+  }
+  sendWsMessage({ type: "spin", value: 2 });
+});
+
+spin1Btn.addEventListener("click", () => {
+  if (!joyModeEnabled) {
+    return;
+  }
+  sendWsMessage({ type: "spin", value: 1 });
+});
+
+spin0Btn.addEventListener("click", () => {
+  if (!joyModeEnabled) {
+    return;
+  }
+  sendWsMessage({ type: "spin", value: 0 });
 });
 
 estopBtn.addEventListener("click", () => {
+  if (controllerBusy) {
+    return;
+  }
   releaseJoystick();
   sendWsMessage({ type: "estop" });
 });
@@ -191,3 +263,4 @@ window.addEventListener("beforeunload", () => {
 });
 
 connectWebSocket();
+renderJoyModeButton();

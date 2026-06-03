@@ -44,6 +44,7 @@ class AppConfig:
     bt_reconnect_interval_s: float
 
     cmd_joy: str
+    cmd_rotate_template: str
     cmd_dir_template: str
     cmd_speed_template: str
     cmd_use_single_line: bool
@@ -82,6 +83,7 @@ def get_config() -> AppConfig:
     )
 
     cmd_joy = os.getenv("CMD_JOY", "joy")
+    cmd_rotate_template = os.getenv("CMD_ROTATE_TEMPLATE", "w {value}")
     cmd_dir_template = os.getenv("CMD_DIR_TEMPLATE", "dir {angle}")
     cmd_speed_template = os.getenv("CMD_SPEED_TEMPLATE", "speed {speed}")
     cmd_use_single_line = _to_bool(os.getenv("CMD_USE_SINGLE_LINE"), True)
@@ -108,6 +110,7 @@ def get_config() -> AppConfig:
         bt_baudrate=bt_baudrate,
         bt_reconnect_interval_s=bt_reconnect_interval_s,
         cmd_joy=cmd_joy,
+        cmd_rotate_template=cmd_rotate_template,
         cmd_dir_template=cmd_dir_template,
         cmd_speed_template=cmd_speed_template,
         cmd_use_single_line=cmd_use_single_line,

@@ -28,14 +28,22 @@
       </section>
 
       <section class="panel joystick-panel">
-        <div id="joystick" class="joystick" aria-label="Virtual joystick" role="application">
-          <div class="ring ring-outer"></div>
-          <div class="ring ring-inner"></div>
-          <div id="stick" class="stick"></div>
+        <div class="joystick-wrap">
+          <div id="joystick" class="joystick" aria-label="Virtual joystick" role="application">
+            <div class="ring ring-outer"></div>
+            <div class="ring ring-inner"></div>
+            <div id="stick" class="stick"></div>
+          </div>
+        </div>
+        <div class="spin-rail" aria-label="Spin controls">
+          <button id="spin2Btn" class="btn btn-primary" type="button">Spin 2</button>
+          <button id="spin1Btn" class="btn btn-primary" type="button">Spin 1</button>
+          <button id="spin0Btn" class="btn btn-primary" type="button">Spin 0</button>
         </div>
       </section>
 
       <section class="panel controls">
+        <div id="operatorNotice" class="operator-notice" hidden></div>
         <button id="joyModeBtn" class="btn btn-primary" type="button">Enable Joystick Mode</button>
         <button id="estopBtn" class="btn btn-danger" type="button">Emergency Stop</button>
       </section>

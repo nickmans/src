@@ -9,6 +9,7 @@ It is designed for joystick driving with robust safety defaults:
 - Backend sends commands at a fixed rate (20 Hz default), including zero commands while idle.
 - UI sends normalized joystick x/y only; backend computes angle/speed.
 - If browser disconnects or joystick input times out, output is forced to zero.
+- Single-controller lock: only one webpage session can control the robot at a time (first connected client wins).
 - Bluetooth reconnect is automatic.
 - Motion output remains zero until joystick mode is explicitly armed (UI button sends `joy`).
 - Default transport is Ethernet UDP to STM32 (`192.168.1.10:9001`).
@@ -53,6 +54,7 @@ It is designed for joystick driving with robust safety defaults:
 ### Safety
 
 - Browser disconnect -> immediate dir 0, speed 0 command
+- Additional browser sessions are rejected while one controller is active
 - Input timeout -> forced zero output (while loop keeps streaming zeros)
 - Backend keeps streaming at fixed rate even when idle
 

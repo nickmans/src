@@ -105,6 +105,10 @@ class OMNIUDPServer:
         self._hold_traj_t0_ms: Optional[int] = None
         self._hold_knot: Optional[Tuple[float, float, float, float, float]] = None
         self._last_valid_traj: Optional[Trajectory] = None
+        self._traj_constant_yaw_enabled = str(os.getenv("OMNI_TRAJ_CONSTANT_YAW", "1")).strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        self._traj_locked_yaw_stm: Optional[float] = None
 
         # Reuse stream parser for robustness even though UDP preserves datagram
         self.parser = StreamParser()
@@ -531,6 +535,8 @@ class OMNIUDPServer:
         with self.traj_lock:
             changed = (self.trajectory_active != active)
             self.trajectory_active = active
+            if not active:
+                self._traj_locked_yaw_stm = None
         # Wake sender immediately so mode changes are reflected without idle delay.
         self._send_wakeup.set()
         if changed:
@@ -1434,11 +1440,16 @@ class OMNIUDPServer:
             with self.pose_lock:
                 latest_pose = self.latest_pose
 
+            locked_yaw_stm = self._traj_locked_yaw_stm
+
             if latest_pose is not None:
+                hold_yaw = float(latest_pose.yaw)
+                if self._traj_constant_yaw_enabled and locked_yaw_stm is not None:
+                    hold_yaw = float(locked_yaw_stm)
                 self._hold_knot = (
                     float(latest_pose.x),
                     float(latest_pose.y),
-                    float(latest_pose.yaw),
+                    hold_yaw,
                     0.0,
                     0.0,
                 )
@@ -1487,21 +1498,33 @@ class OMNIUDPServer:
         dt = 0.01
         knots: List[Tuple[float, float, float, float, float]] = []
 
+        with self.pose_lock:
+            latest_pose = self.latest_pose
+
+        locked_yaw_stm = self._traj_locked_yaw_stm
+        if self._traj_constant_yaw_enabled and locked_yaw_stm is None and latest_pose is not None:
+            locked_yaw_stm = PosePublisherNode._wrap_to_pi(float(latest_pose.yaw))
+            self._traj_locked_yaw_stm = locked_yaw_stm
+            logger.info("Locked trajectory yaw to current STM32 heading: %.3f rad", locked_yaw_stm)
+
         for idx in range(len(path_points)):
             x, y, yaw_opt = path_points[idx]
-            if yaw_opt is None:
-                logger.warning("Skipping TRAJ publish: missing yaw at knot %d", idx)
-                return None
+            yaw_for_transform = float(yaw_opt) if yaw_opt is not None else 0.0
 
             vx, vy = path_velocities[idx]
             x_stm, y_stm, yaw_stm, vx_stm, vy_stm, _ = self.ros2_bridge.pose_node.transform_ros_traj_to_stm(
                 float(x),
                 float(y),
-                float(yaw_opt),
+                yaw_for_transform,
                 float(vx),
                 float(vy),
                 0.0,
             )
+            if self._traj_constant_yaw_enabled:
+                if locked_yaw_stm is None:
+                    locked_yaw_stm = PosePublisherNode._wrap_to_pi(float(yaw_stm))
+                    self._traj_locked_yaw_stm = locked_yaw_stm
+                yaw_stm = float(locked_yaw_stm)
             knots.append((x_stm, y_stm, yaw_stm, vx_stm, vy_stm))
 
         # Keep a stable trajectory start timestamp until knots materially change.
@@ -1515,9 +1538,6 @@ class OMNIUDPServer:
             round(float(last_x), 4),
             round(float(last_y), 4),
         )
-
-        with self.pose_lock:
-            latest_pose = self.latest_pose
 
         if self._active_traj_signature != traj_signature:
             self._active_traj_signature = traj_signature
@@ -1677,7 +1697,10 @@ class ROS2Bridge:
                 siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
                 cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
                 yaw_src = math.atan2(siny_cosp, cosy_cosp)
-                yaw = PosePublisherNode._wrap_to_pi(yaw_src + yaw_tf)
+                # The planned path orientation is authored in STM/odom yaw convention
+                # by waypoint_traj_node. Rotating it by map->odom again causes a
+                # persistent yaw bias (often ~pi), which makes trajectory mode spin.
+                yaw = PosePublisherNode._wrap_to_pi(yaw_src)
             pts.append((x_odom, y_odom, yaw))
         return pts
 

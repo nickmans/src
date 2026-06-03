@@ -23,6 +23,7 @@ class JoystickState:
         self.last_input_monotonic = time.monotonic()
         self.clients = 0
         self.joy_pending = False
+        self.joy_pending_enable = True
         self.joy_enabled = False
 
     async def set_input(self, x: float, y: float) -> None:
@@ -31,15 +32,23 @@ class JoystickState:
             self.raw_y = y
             self.last_input_monotonic = time.monotonic()
 
-    async def trigger_joy_mode(self) -> None:
+    async def trigger_joy_mode(self, enable: bool) -> None:
         async with self._lock:
             self.joy_pending = True
-            self.joy_enabled = True
+            self.joy_pending_enable = enable
+            self.joy_enabled = enable
 
     async def add_client(self) -> int:
         async with self._lock:
             self.clients += 1
             return self.clients
+
+    async def try_add_client(self, max_clients: int = 1) -> tuple[bool, int]:
+        async with self._lock:
+            if self.clients >= max_clients:
+                return False, self.clients
+            self.clients += 1
+            return True, self.clients
 
     async def remove_client(self) -> int:
         async with self._lock:
@@ -49,10 +58,11 @@ class JoystickState:
                 self.raw_y = 0.0
                 self.last_input_monotonic = time.monotonic()
                 self.joy_pending = False
+                self.joy_pending_enable = True
                 self.joy_enabled = False
             return self.clients
 
-    async def snapshot(self) -> tuple[float, float, float, int, bool, bool]:
+    async def snapshot(self) -> tuple[float, float, float, int, bool, bool, bool]:
         async with self._lock:
             age = time.monotonic() - self.last_input_monotonic
             return (
@@ -61,6 +71,7 @@ class JoystickState:
                 age,
                 self.clients,
                 self.joy_pending,
+                self.joy_pending_enable,
                 self.joy_enabled,
             )
 
@@ -82,7 +93,6 @@ class WebSocketHub:
         self._logger = logger
 
     async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
         async with self._lock:
             self._clients.add(websocket)
 
@@ -164,11 +174,12 @@ def link_stop() -> None:
         eth_link.stop()
 
 
-def send_joy_enable() -> bool:
+def send_joy_enable(enable: bool) -> bool:
     if bt_link is not None:
+        # Bluetooth transport uses a single toggle command for both on/off.
         return bt_link.send_line(cfg.cmd_joy)
     if eth_link is not None:
-        return eth_link.send_joy_enable(True)
+        return eth_link.send_joy_enable(enable)
     return False
 
 
@@ -182,6 +193,21 @@ def send_command_to_stm32(cmd: JoystickCommand) -> None:
         eth_link.send_vector(cmd.angle, cmd.speed)
 
 
+def send_spin_command(value: int) -> bool:
+    if bt_link is not None:
+        try:
+            line = cfg.cmd_rotate_template.format(value=int(value))
+        except Exception as exc:
+            logger.error("Invalid CMD_ROTATE_TEMPLATE '%s': %s", cfg.cmd_rotate_template, exc)
+            return False
+        return bt_link.send_line(line)
+
+    if eth_link is not None:
+        return eth_link.send_spin(value)
+
+    return False
+
+
 def send_zero_immediately(reason: str) -> None:
     logger.warning("Safety zero output triggered: %s", reason)
     send_command_to_stm32(JoystickCommand(angle=0, speed=0))
@@ -192,11 +218,15 @@ async def command_stream_loop() -> None:
     timeout_active = False
 
     while True:
-        raw_x, raw_y, age, client_count, joy_pending, joy_enabled = await state.snapshot()
+        raw_x, raw_y, age, client_count, joy_pending, joy_pending_enable, joy_enabled = await state.snapshot()
 
         if joy_pending:
-            if send_joy_enable():
-                logger.info("Joystick mode command sent: %s", cfg.cmd_joy)
+            if send_joy_enable(joy_pending_enable):
+                logger.info(
+                    "Joystick mode command sent: %s (%s)",
+                    cfg.cmd_joy,
+                    "enable" if joy_pending_enable else "disable",
+                )
                 await state.clear_joy_pending()
 
         hard_timeout_s = cfg.input_timeout_s + cfg.input_hold_grace_s
@@ -267,7 +297,7 @@ async def root() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict:
-    _, _, age, clients, _, joy_enabled = await state.snapshot()
+    _, _, age, clients, _, _, joy_enabled = await state.snapshot()
     return {
         "ok": True,
         "ws_clients": clients,
@@ -280,9 +310,18 @@ async def health() -> dict:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
+    await websocket.accept()
+
+    accepted, clients = await state.try_add_client(max_clients=1)
+    if not accepted:
+        msg = "Controller busy: another user currently has robot control"
+        logger.warning("Rejected websocket client because controller is busy")
+        await websocket.send_text(json.dumps({"type": "busy", "message": msg}))
+        await websocket.close(code=1008, reason=msg)
+        return
+
     await hub.connect(websocket)
-    clients = await state.add_client()
-    logger.info("Client connected (active clients=%d)", clients)
+    logger.info("Controller client connected (active clients=%d)", clients)
 
     try:
         while True:
@@ -304,8 +343,29 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     continue
                 await state.set_input(x, y)
             elif msg_type == "enable_joy":
-                await state.trigger_joy_mode()
-                logger.info("Joystick mode requested by client")
+                await state.trigger_joy_mode(True)
+                logger.info("Joystick mode enable requested by client")
+            elif msg_type == "disable_joy":
+                await state.trigger_joy_mode(False)
+                logger.info("Joystick mode disable requested by client")
+            elif msg_type == "spin":
+                _, _, _, _, _, _, joy_enabled = await state.snapshot()
+                if not joy_enabled:
+                    logger.warning("Spin command ignored because joystick mode is disabled")
+                    continue
+
+                try:
+                    spin_value = int(msg.get("value", 0))
+                except (TypeError, ValueError):
+                    logger.warning("Invalid spin payload ignored")
+                    continue
+
+                if spin_value not in {0, 1, 2}:
+                    logger.warning("Spin value must be 0, 1, or 2")
+                    continue
+
+                if send_spin_command(spin_value):
+                    logger.info("Spin command sent: w %d", spin_value)
             elif msg_type == "estop":
                 await state.force_zero()
                 send_zero_immediately("E-stop from UI")
@@ -319,7 +379,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     finally:
         await hub.disconnect(websocket)
         clients = await state.remove_client()
-        logger.info("Client disconnected (active clients=%d)", clients)
+        logger.info("Controller client disconnected (active clients=%d)", clients)
         if clients == 0:
             send_zero_immediately("Last websocket client disconnected")
 
