@@ -87,7 +87,7 @@ waypoint_traj:
     scan_beam_stride: 1
     scan_no_hit_eps_m: 0.03
     max_lidar_range_m: 6.0
-    scan_sensor_y_axis_right: true
+    scan_sensor_y_axis_right: false
 
     publish_fused_scan: true
     publish_scan_match: true

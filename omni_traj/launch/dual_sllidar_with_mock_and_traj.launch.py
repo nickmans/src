@@ -136,8 +136,9 @@ def generate_launch_description() -> LaunchDescription:
     # =========================
     # Static TFs: world->odom and base_link -> lidars
     # LIDARs are at y=+0.10m and y=-0.10m, both on y-axis.
-    # Hardware reports LiDAR with x-forward/y-right. ROS body frames are
-    # x-forward/y-left, so default roll is pi to flip y and z handedness.
+    # On this hardware stack, the scan 0-degree direction is opposite robot
+    # forward in the published lidar frames. Default yaw is pi so obstacles
+    # physically in front appear near 0 rad in base_link.
     # =========================
     
     # world -> odom (fixed frame for RViz visualization)
@@ -459,9 +460,9 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("lidar2_frame_id", default_value="lidar2_link"),
             DeclareLaunchArgument("lidar1_y_m", default_value="0.10"),
             DeclareLaunchArgument("lidar2_y_m", default_value="-0.10"),
-            DeclareLaunchArgument("lidar_roll_rad", default_value="3.141592653589793"),
+            DeclareLaunchArgument("lidar_roll_rad", default_value="0.0"),#3.141592653589793"),
             DeclareLaunchArgument("lidar_pitch_rad", default_value="0.0"),
-            DeclareLaunchArgument("lidar_yaw_rad", default_value="0.0"),
+            DeclareLaunchArgument("lidar_yaw_rad", default_value="3.141592653589793"),
 
             lidar1_real,
             lidar2_real,

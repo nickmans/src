@@ -64,9 +64,12 @@ Production-ready UDP communication server for OMNI robot stack. Runs on Raspberr
             - `stm32_pose_rotation_deg = -90.0` (XY position/velocity rotation)
             - `stm32_yaw_rotation_deg = -90.0` (heading rotation)
             - `stm32_yaw_offset_deg = 0.0`
-            - `stm32_traj_rotation_deg = 0.0` (outgoing trajectory XY rotation)
+            - `stm32_pose_y_axis_right = false` (CM7 in this repo publishes +y left)
+            - `stm32_traj_rotation_deg = -90.0` (outgoing trajectory XY rotation)
             - `stm32_traj_yaw_rotation_deg = -90.0` (outgoing trajectory yaw rotation)
             - `stm32_traj_yaw_offset_deg = 0.0`
+            - `stm32_traj_y_axis_right = false`
+            - Optional env override: `OMNI_STM32_Y_AXIS_RIGHT=1` only for hardware revisions that publish +y right
 - CMD messages: Commands (`START_TRAJ`, `STOP_TRAJ`, `START_RESTART_ROS2`, mapping mode commands)
 
 **Pi → STM32 (5 Hz):**

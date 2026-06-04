@@ -9,7 +9,7 @@ Coordinate convention for the robot body frame:
 
 ## LiDAR Placement
 
-Two RPLIDAR C1 units are mounted as follows (body frame coordinates):
+Two RPLIDAR C1 units are mounted as follows (body frame coordinates x+ forward y+ left):
 
 - RPLIDAR C1 1: x = 0.0 m, y = +0.1 m
 - RPLIDAR C1 2: x = 0.0 m, y = -0.1 m
@@ -24,7 +24,7 @@ IMU model and mode:
 IMU axis note:
 
 - IMU x axis: forward
-- IMU y axis: right
+- IMU y axis: left
 
 ## Main Compute and Control
 

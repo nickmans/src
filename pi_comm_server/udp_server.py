@@ -108,7 +108,6 @@ class OMNIUDPServer:
         self._traj_constant_yaw_enabled = str(os.getenv("OMNI_TRAJ_CONSTANT_YAW", "1")).strip().lower() in {
             "1", "true", "yes", "on"
         }
-        self._traj_locked_yaw_stm: Optional[float] = None
 
         # Reuse stream parser for robustness even though UDP preserves datagram
         self.parser = StreamParser()
@@ -535,8 +534,6 @@ class OMNIUDPServer:
         with self.traj_lock:
             changed = (self.trajectory_active != active)
             self.trajectory_active = active
-            if not active:
-                self._traj_locked_yaw_stm = None
         # Wake sender immediately so mode changes are reflected without idle delay.
         self._send_wakeup.set()
         if changed:
@@ -1440,12 +1437,8 @@ class OMNIUDPServer:
             with self.pose_lock:
                 latest_pose = self.latest_pose
 
-            locked_yaw_stm = self._traj_locked_yaw_stm
-
             if latest_pose is not None:
                 hold_yaw = float(latest_pose.yaw)
-                if self._traj_constant_yaw_enabled and locked_yaw_stm is not None:
-                    hold_yaw = float(locked_yaw_stm)
                 self._hold_knot = (
                     float(latest_pose.x),
                     float(latest_pose.y),
@@ -1500,12 +1493,9 @@ class OMNIUDPServer:
 
         with self.pose_lock:
             latest_pose = self.latest_pose
-
-        locked_yaw_stm = self._traj_locked_yaw_stm
-        if self._traj_constant_yaw_enabled and locked_yaw_stm is None and latest_pose is not None:
-            locked_yaw_stm = PosePublisherNode._wrap_to_pi(float(latest_pose.yaw))
-            self._traj_locked_yaw_stm = locked_yaw_stm
-            logger.info("Locked trajectory yaw to current STM32 heading: %.3f rad", locked_yaw_stm)
+        live_yaw_stm: Optional[float] = None
+        if self._traj_constant_yaw_enabled and latest_pose is not None:
+            live_yaw_stm = PosePublisherNode._wrap_to_pi(float(latest_pose.yaw))
 
         for idx in range(len(path_points)):
             x, y, yaw_opt = path_points[idx]
@@ -1520,11 +1510,8 @@ class OMNIUDPServer:
                 float(vy),
                 0.0,
             )
-            if self._traj_constant_yaw_enabled:
-                if locked_yaw_stm is None:
-                    locked_yaw_stm = PosePublisherNode._wrap_to_pi(float(yaw_stm))
-                    self._traj_locked_yaw_stm = locked_yaw_stm
-                yaw_stm = float(locked_yaw_stm)
+            if live_yaw_stm is not None:
+                yaw_stm = float(live_yaw_stm)
             knots.append((x_stm, y_stm, yaw_stm, vx_stm, vy_stm))
 
         # Keep a stable trajectory start timestamp until knots materially change.

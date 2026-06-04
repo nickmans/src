@@ -30,10 +30,17 @@ class PosePublisherNode(Node):
         super().__init__('pose_publisher')
 
         yaw_offset_default_deg = float(os.getenv('OMNI_STM32_YAW_OFFSET_DEG', '0.0'))
-        self.declare_parameter('stm32_pose_rotation_deg', 0.0)
-        self.declare_parameter('stm32_yaw_rotation_deg', 0.0)
+        y_axis_right_default_env = str(os.getenv('OMNI_STM32_Y_AXIS_RIGHT', '0')).strip().lower() in {
+            '1', 'true', 'yes', 'on'
+        }
+        # Calibrated STM32->ROS frame rotation for this platform.
+        self.declare_parameter('stm32_pose_rotation_deg', -90.0)
+        self.declare_parameter('stm32_yaw_rotation_deg', -90.0)
         self.declare_parameter('stm32_yaw_offset_deg', yaw_offset_default_deg)
-        self.declare_parameter('stm32_pose_y_axis_right', False)
+        # CM7 estimator/runtime in this repository publishes +x forward, +y left.
+        # Keep default False to match ROS handedness unless a hardware revision
+        # explicitly reports +y right.
+        self.declare_parameter('stm32_pose_y_axis_right', y_axis_right_default_env)
 
         pose_rotation_default = float(self.get_parameter('stm32_pose_rotation_deg').value)
         yaw_rotation_default = float(self.get_parameter('stm32_yaw_rotation_deg').value)
@@ -339,10 +346,12 @@ class PosePublisherNode(Node):
         vy: float,
         y_axis_right: bool,
     ) -> tuple[float, float, float, float, float]:
-        # STM32 uses x-forward/y-right in this robot; ROS odom/base_link uses x-forward/y-left.
-        # Reflect about x-axis when y points right.
+        # If STM32 reports +y right, reflect Y for position/velocity so ROS stays
+        # +x forward, +y left. For CM7 in this repository, y_axis_right is False.
+        # Keep yaw sign unchanged here: heading already follows ROS turn direction
+        # from the CM7/BNO086 estimator in this stack.
         if y_axis_right:
-            return float(x), -float(y), self._wrap_to_pi(-float(yaw)), float(vx), -float(vy)
+            return float(x), -float(y), self._wrap_to_pi(float(yaw)), float(vx), -float(vy)
         return float(x), float(y), self._wrap_to_pi(float(yaw)), float(vx), float(vy)
 
     def _apply_ros_to_stm_axes(
@@ -354,9 +363,9 @@ class PosePublisherNode(Node):
         vy: float,
         y_axis_right: bool,
     ) -> tuple[float, float, float, float, float]:
-        # Inverse of _apply_stm_to_ros_axes; reflection is self-inverse.
+        # Inverse of _apply_stm_to_ros_axes; Y reflection is self-inverse.
         if y_axis_right:
-            return float(x), -float(y), self._wrap_to_pi(-float(yaw)), float(vx), -float(vy)
+            return float(x), -float(y), self._wrap_to_pi(float(yaw)), float(vx), -float(vy)
         return float(x), float(y), self._wrap_to_pi(float(yaw)), float(vx), float(vy)
 
     def _transform_stm32_pose_to_ros(

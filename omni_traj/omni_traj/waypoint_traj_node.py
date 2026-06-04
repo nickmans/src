@@ -4017,6 +4017,38 @@ class WaypointTrajNode(Node):
 
         return out
 
+    @staticmethod
+    def _path_initially_moves_away_from_goal(
+        path: List[Tuple[float, float]],
+        goal_xy: Tuple[float, float],
+        min_probe_step_m: float = 0.02,
+    ) -> bool:
+        """Return True when the first meaningful path step points away from goal."""
+        if len(path) < 2:
+            return False
+
+        x0, y0 = path[0]
+        gx, gy = goal_xy
+        to_goal_x = gx - x0
+        to_goal_y = gy - y0
+        if math.hypot(to_goal_x, to_goal_y) <= 1e-9:
+            return False
+
+        probe_idx = 1
+        while probe_idx < len(path):
+            dx = path[probe_idx][0] - x0
+            dy = path[probe_idx][1] - y0
+            if math.hypot(dx, dy) >= max(1e-3, float(min_probe_step_m)):
+                break
+            probe_idx += 1
+
+        if probe_idx >= len(path):
+            return False
+
+        step_x = path[probe_idx][0] - x0
+        step_y = path[probe_idx][1] - y0
+        return (step_x * to_goal_x + step_y * to_goal_y) < 0.0
+
     def smooth_path_cubic_spline(self, grid: np.ndarray, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
         Smooth path using cubic spline interpolation with clamped endpoint tangents.
@@ -4315,8 +4347,9 @@ class WaypointTrajNode(Node):
         # Yaw stays tied to BNO odometry heading for this robot revision.
         yaws_resampled = [yaw_ref] * len(xs_resampled)
 
-        # Preserve STM32-reported body velocity at the first knot, converted to map frame.
-        if xs_resampled:
+        # Warm-start first-knot speed from STM32 velocity, but keep motion
+        # aligned with path progression (never opposite to first segment).
+        if len(xs_resampled) >= 2:
             vx_body_start, vy_body_start = self.odom_vel_body_latest
             speed_start = math.hypot(vx_body_start, vy_body_start)
             if speed_start > max_linear_vel and speed_start > 1e-9:
@@ -4327,9 +4360,24 @@ class WaypointTrajNode(Node):
             yaw_start = self.odom_pose_latest.yaw if self.have_odom_pose else 0.0
             c0 = math.cos(yaw_start)
             s0 = math.sin(yaw_start)
-            vxs_resampled[0] = c0 * vx_body_start - s0 * vy_body_start
-            vys_resampled[0] = s0 * vx_body_start + c0 * vy_body_start
-            vels_resampled[0] = math.hypot(vx_body_start, vy_body_start)
+            vx_map_start = c0 * vx_body_start - s0 * vy_body_start
+            vy_map_start = s0 * vx_body_start + c0 * vy_body_start
+
+            dx0 = xs_resampled[1] - xs_resampled[0]
+            dy0 = ys_resampled[1] - ys_resampled[0]
+            d0 = math.hypot(dx0, dy0)
+            if d0 > 1e-9:
+                tx0 = dx0 / d0
+                ty0 = dy0 / d0
+                v_proj = vx_map_start * tx0 + vy_map_start * ty0
+                v_proj = max(0.0, min(max_linear_vel, v_proj))
+                vxs_resampled[0] = tx0 * v_proj
+                vys_resampled[0] = ty0 * v_proj
+                vels_resampled[0] = v_proj
+            else:
+                vxs_resampled[0] = 0.0
+                vys_resampled[0] = 0.0
+                vels_resampled[0] = 0.0
 
         # First, enforce tangential/normal acceleration limits on the velocity
         # vector sequence so direction changes stay dynamically feasible.
@@ -4438,7 +4486,8 @@ class WaypointTrajNode(Node):
         """
         Resample trajectory at fixed time intervals (dt) for controller tracking.
         
-        Uses cubic spline interpolation for smooth velocity profiles.
+        Uses arc-length-consistent retiming so velocity direction follows
+        geometric path tangent and avoids local time-spline derivative reversals.
         
         Args:
             xs, ys: Position coordinates of path points
@@ -4451,132 +4500,106 @@ class WaypointTrajNode(Node):
             Tuple of (xs, ys, yaws, velocities, vxs, vys) resampled at dt intervals
         """
         if len(xs) < 2:
-            return xs, ys, yaws, velocities, [0.0]*len(xs), [0.0]*len(xs)
-            
+            return xs, ys, yaws, velocities, [0.0] * len(xs), [0.0] * len(xs)
+
         n = len(xs)
-        
-        # Build cumulative distance array
+
+        if len(dists) != (n - 1):
+            dists_local = [
+                math.hypot(xs[i + 1] - xs[i], ys[i + 1] - ys[i])
+                for i in range(n - 1)
+            ]
+        else:
+            dists_local = [float(d) for d in dists]
+
         s = [0.0]
-        for i in range(len(dists)):
-            s.append(s[-1] + max(1e-9, dists[i]))
-        
-        # Build cumulative time array by integrating inverse velocity
+        for d in dists_local:
+            s.append(s[-1] + max(1e-9, d))
+
         t = [0.0]
         for i in range(n - 1):
-            v_avg = max(1e-3, 0.5 * (velocities[i] + velocities[i + 1]))
-            dist = s[i + 1] - s[i]
-            dt_segment = dist / v_avg
+            v0 = float(velocities[i]) if i < len(velocities) else 0.0
+            v1 = float(velocities[i + 1]) if (i + 1) < len(velocities) else v0
+            v_avg = max(1e-3, 0.5 * (v0 + v1))
+            dt_segment = (s[i + 1] - s[i]) / v_avg
             t.append(t[-1] + dt_segment)
-        
+
         total_time = t[-1]
-        
-        # Use cubic spline interpolation if scipy available, otherwise linear
-        if HAS_SCIPY and n >= 4:
-            try:
-                # Create cubic splines for smooth interpolation
-                spline_x = CubicSpline(t, xs, bc_type='not-a-knot')
-                spline_y = CubicSpline(t, ys, bc_type='not-a-knot')
-                spline_v = CubicSpline(t, velocities, bc_type='not-a-knot')
-                use_spline = True
-            except:
-                use_spline = False
-        else:
-            use_spline = False
-        
-        # Generate resampled trajectory at fixed dt intervals
-        xs_new = []
-        ys_new = []
-        yaws_new = []
-        vels_new = []
-        vxs_new = []
-        vys_new = []
-        
+        if total_time <= 1e-9:
+            yaw0 = float(yaws[0]) if yaws else 0.0
+            yaw1 = float(yaws[-1]) if yaws else 0.0
+            return [xs[0], xs[-1]], [ys[0], ys[-1]], [yaw0, yaw1], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]
+
+        xs_new: List[float] = []
+        ys_new: List[float] = []
+        yaws_new: List[float] = []
+        vels_new: List[float] = []
+        vxs_new: List[float] = []
+        vys_new: List[float] = []
+
         current_time = 0.0
-        
-        while current_time <= total_time:
-            if use_spline:
-                # Cubic spline interpolation (smooth derivatives)
-                x_interp = float(spline_x(current_time))
-                y_interp = float(spline_y(current_time))
-                v_interp = float(spline_v(current_time))
-                
-                # Compute velocity direction from spline derivatives
-                dx_dt = float(spline_x.derivative()(current_time))
-                dy_dt = float(spline_y.derivative()(current_time))
-                speed = math.hypot(dx_dt, dy_dt)
-                
-                if speed > 1e-6:
-                    vx_interp = dx_dt * (v_interp / speed)
-                    vy_interp = dy_dt * (v_interp / speed)
-                else:
-                    vx_interp = 0.0
-                    vy_interp = 0.0
-                    
-                yaw_interp = yaws[0]  # Keep constant for omnidirectional
-                
+        seg_t = 0
+        seg_s = 0
+        prev_tan = (1.0, 0.0)
+
+        while current_time <= (total_time + 1e-9):
+            while seg_t < (n - 2) and current_time > t[seg_t + 1]:
+                seg_t += 1
+
+            t0 = t[seg_t]
+            t1 = t[seg_t + 1]
+            alpha_t = (current_time - t0) / max(1e-9, t1 - t0)
+            alpha_t = max(0.0, min(1.0, alpha_t))
+
+            s_interp = s[seg_t] + alpha_t * (s[seg_t + 1] - s[seg_t])
+
+            v0 = float(velocities[seg_t]) if seg_t < len(velocities) else 0.0
+            v1 = float(velocities[seg_t + 1]) if (seg_t + 1) < len(velocities) else v0
+            v_interp = max(0.0, v0 + alpha_t * (v1 - v0))
+
+            while seg_s < (n - 2) and s_interp > s[seg_s + 1]:
+                seg_s += 1
+
+            s0 = s[seg_s]
+            s1 = s[seg_s + 1]
+            alpha_s = (s_interp - s0) / max(1e-9, s1 - s0)
+            alpha_s = max(0.0, min(1.0, alpha_s))
+
+            x_interp = xs[seg_s] + alpha_s * (xs[seg_s + 1] - xs[seg_s])
+            y_interp = ys[seg_s] + alpha_s * (ys[seg_s + 1] - ys[seg_s])
+
+            dx_seg = xs[seg_s + 1] - xs[seg_s]
+            dy_seg = ys[seg_s + 1] - ys[seg_s]
+            seg_mag = math.hypot(dx_seg, dy_seg)
+            if seg_mag > 1e-9:
+                tan = (dx_seg / seg_mag, dy_seg / seg_mag)
+                prev_tan = tan
             else:
-                # Linear interpolation fallback
-                segment_idx = 0
-                while segment_idx < n - 1 and current_time > t[segment_idx + 1]:
-                    segment_idx += 1
-                
-                if segment_idx >= n - 1:
-                    break
-                
-                t0 = t[segment_idx]
-                t1 = t[segment_idx + 1]
-                alpha = (current_time - t0) / max(1e-9, t1 - t0)
-                alpha = max(0.0, min(1.0, alpha))
-                
-                x_interp = xs[segment_idx] + alpha * (xs[segment_idx + 1] - xs[segment_idx])
-                y_interp = ys[segment_idx] + alpha * (ys[segment_idx + 1] - ys[segment_idx])
-                v_interp = velocities[segment_idx] + alpha * (velocities[segment_idx + 1] - velocities[segment_idx])
-                yaw_interp = yaws[segment_idx] + alpha * wrap_to_pi(yaws[segment_idx + 1] - yaws[segment_idx])
-                
-                dx = xs[segment_idx + 1] - xs[segment_idx]
-                dy = ys[segment_idx + 1] - ys[segment_idx]
-                path_dist = math.hypot(dx, dy)
-                if path_dist > 1e-9:
-                    vx_interp = v_interp * (dx / path_dist)
-                    vy_interp = v_interp * (dy / path_dist)
-                else:
-                    vx_interp = 0.0
-                    vy_interp = 0.0
-            
-            xs_new.append(x_interp)
-            ys_new.append(y_interp)
-            yaws_new.append(yaw_interp)
-            vels_new.append(v_interp)
-            vxs_new.append(vx_interp)
-            vys_new.append(vy_interp)
-            
+                tan = prev_tan
+
+            if len(yaws) >= n:
+                yaw_interp = yaws[seg_s] + alpha_s * wrap_to_pi(yaws[seg_s + 1] - yaws[seg_s])
+            elif yaws:
+                yaw_interp = yaws[min(seg_s, len(yaws) - 1)]
+            else:
+                yaw_interp = 0.0
+
+            xs_new.append(float(x_interp))
+            ys_new.append(float(y_interp))
+            yaws_new.append(float(yaw_interp))
+            vels_new.append(float(v_interp))
+            vxs_new.append(float(v_interp * tan[0]))
+            vys_new.append(float(v_interp * tan[1]))
+
             current_time += dt
-        
-        # Always include the final point
-        if len(xs_new) == 0 or (xs_new[-1] != xs[-1] or ys_new[-1] != ys[-1]):
-            xs_new.append(xs[-1])
-            ys_new.append(ys[-1])
-            yaws_new.append(yaws[-1] if yaws else 0.0)
+
+        if len(xs_new) == 0 or (abs(xs_new[-1] - xs[-1]) > 1e-6 or abs(ys_new[-1] - ys[-1]) > 1e-6):
+            xs_new.append(float(xs[-1]))
+            ys_new.append(float(ys[-1]))
+            yaws_new.append(float(yaws[-1] if yaws else 0.0))
             vels_new.append(0.0)
             vxs_new.append(0.0)
             vys_new.append(0.0)
-        
-        # Apply gentle smoothing only to remove high-frequency noise
-        # 3-point moving average (lighter than before since spline is already smooth)
-        if len(vxs_new) >= 3:
-            vxs_smoothed = [vxs_new[0]]
-            vys_smoothed = [vys_new[0]]
-            vels_smoothed = [vels_new[0]]
-            for i in range(1, len(vxs_new) - 1):
-                vxs_smoothed.append((vxs_new[i-1] + vxs_new[i] + vxs_new[i+1]) / 3.0)
-                vys_smoothed.append((vys_new[i-1] + vys_new[i] + vys_new[i+1]) / 3.0)
-                vels_smoothed.append((vels_new[i-1] + vels_new[i] + vels_new[i+1]) / 3.0)
-            vxs_smoothed.append(vxs_new[-1])
-            vys_smoothed.append(vys_new[-1])
-            vels_smoothed.append(vels_new[-1])
-            vxs_new = vxs_smoothed
-            vys_new = vys_smoothed
-            vels_new = vels_smoothed
         
         self.get_logger().info(
             f"Resampled trajectory: {len(xs)} path points -> {len(xs_new)} time points "
@@ -5098,6 +5121,18 @@ class WaypointTrajNode(Node):
         # Smooth path using cubic spline interpolation (industry standard)
         stitched_smooth = self.smooth_path_cubic_spline(planning_costmap, stitched)
         stitched_smooth = self._truncate_polyline_to_length(stitched_smooth, traj_horizon_m)
+
+        # Enforce start progress toward active waypoint when direct path is
+        # unobstructed; prevents spline endpoint overshoot from commanding an
+        # initial opposite-direction knot.
+        active_goal = wps[0]
+        if self.line_collision_free(planning_costmap, (base_pose_now.x, base_pose_now.y), active_goal):
+            if self._path_initially_moves_away_from_goal(stitched_smooth, active_goal):
+                self.get_logger().warn(
+                    "Smoothed path initially moves away from active waypoint; "
+                    "falling back to unsmoothed path."
+                )
+                stitched_smooth = self._truncate_polyline_to_length(stitched, traj_horizon_m)
 
         # Build velocity-constrained trajectory on smoothed path
         xs, ys, yaws, velocities, vxs, vys = self.build_velocity_constrained_trajectory(stitched_smooth)

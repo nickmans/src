@@ -1,0 +1,14 @@
+running develop
+running egg_info
+writing omni_pi_server.egg-info/PKG-INFO
+writing dependency_links to omni_pi_server.egg-info/dependency_links.txt
+writing entry points to omni_pi_server.egg-info/entry_points.txt
+writing top-level names to omni_pi_server.egg-info/top_level.txt
+reading manifest file 'omni_pi_server.egg-info/SOURCES.txt'
+writing manifest file 'omni_pi_server.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages/omni-pi-server.egg-link (link to .)
+Installing omni-test-client script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin
+Installing omni-udp-server script to /home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin
+
+Installed /home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server
