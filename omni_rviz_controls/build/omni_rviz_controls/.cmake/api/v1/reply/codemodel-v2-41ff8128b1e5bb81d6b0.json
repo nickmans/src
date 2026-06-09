@@ -1,0 +1,97 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-2073f6e3911c9e7617a6.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "omni_rviz_controls",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "omni_rviz_controls::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-omni_rviz_controls-dec434a4ca5a731680b0.json",
+					"name" : "omni_rviz_controls",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "omni_rviz_controls_autogen::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-omni_rviz_controls_autogen-62942ac62cf408fc490a.json",
+					"name" : "omni_rviz_controls_autogen",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "omni_rviz_controls_autogen_timestamp_deps::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-omni_rviz_controls_autogen_timestamp_deps-5806f6cf96eb2964692e.json",
+					"name" : "omni_rviz_controls_autogen_timestamp_deps",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "omni_rviz_controls_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-omni_rviz_controls_uninstall-7e93e7410d404e436aa0.json",
+					"name" : "omni_rviz_controls_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-9f140857a9f8bc990307.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls",
+		"source" : "/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 6
+	}
+}

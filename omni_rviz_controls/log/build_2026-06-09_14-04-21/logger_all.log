@@ -1,0 +1,115 @@
+[0.319s] DEBUG:colcon:Command line arguments: ['/usr/bin/colcon', 'build']
+[0.319s] DEBUG:colcon:Parsed command line arguments: Namespace(log_base=None, log_level=None, verb_name='build', build_base='build', install_base='install', merge_install=False, symlink_install=False, test_result_base=None, continue_on_error=False, executor='parallel', parallel_workers=4, event_handlers=None, ignore_user_meta=False, metas=['./colcon.meta'], base_paths=['.'], packages_ignore=None, packages_ignore_regex=None, paths=None, packages_up_to=None, packages_up_to_regex=None, packages_above=None, packages_above_and_dependencies=None, packages_above_depth=None, packages_select_by_dep=None, packages_skip_by_dep=None, packages_skip_up_to=None, packages_select_build_failed=False, packages_skip_build_finished=False, packages_select_test_failures=False, packages_skip_test_passed=False, packages_select=None, packages_skip=None, packages_select_regex=None, packages_skip_regex=None, packages_start=None, packages_end=None, allow_overriding=[], cmake_args=None, cmake_target=None, cmake_target_skip_unavailable=False, cmake_clean_cache=False, cmake_clean_first=False, cmake_force_configure=False, ament_cmake_args=None, catkin_cmake_args=None, catkin_skip_building_tests=False, mixin_files=None, mixin=None, verb_parser=<colcon_mixin.mixin.mixin_argument.MixinArgumentDecorator object at 0xffffae005bb0>, verb_extension=<colcon_core.verb.build.BuildVerb object at 0xffffae1ba330>, main=<bound method BuildVerb.main of <colcon_core.verb.build.BuildVerb object at 0xffffae1ba330>>, mixin_verb=('build',))
+[0.432s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) check parameters
+[0.432s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) check parameters
+[0.433s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) check parameters
+[0.433s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) check parameters
+[0.433s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) discover
+[0.434s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) discover
+[0.435s] INFO:colcon.colcon_core.package_discovery:Crawling recursively for packages in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls'
+[0.435s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ignore', 'ignore_ament_install']
+[0.436s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore'
+[0.436s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore_ament_install'
+[0.436s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_pkg']
+[0.436s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_pkg'
+[0.436s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_meta']
+[0.436s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_meta'
+[0.436s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ros']
+[0.436s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ros'
+[0.529s] DEBUG:colcon.colcon_core.package_identification:Package '.' with type 'ros.ament_cmake' and name 'omni_rviz_controls'
+[0.530s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) using defaults
+[0.530s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) discover
+[0.530s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) using defaults
+[0.530s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) discover
+[0.530s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) using defaults
+[0.576s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) check parameters
+[0.577s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) discover
+[0.587s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 1 installed packages in /home/nickolas/ros2_ws/src/omni_src/omni_traj/install
+[0.590s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 2 installed packages in /home/nickolas/ros2_ws/src/omni_src/install
+[0.592s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 3 installed packages in /home/nickolas/ros2_ws/install
+[0.594s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 1 installed packages in /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install
+[0.597s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 380 installed packages in /opt/ros/jazzy
+[0.603s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) using defaults
+[0.729s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'cmake_args' from command line to 'None'
+[0.729s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'cmake_target' from command line to 'None'
+[0.730s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.730s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'cmake_clean_cache' from command line to 'False'
+[0.730s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'cmake_clean_first' from command line to 'False'
+[0.730s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'cmake_force_configure' from command line to 'False'
+[0.730s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'ament_cmake_args' from command line to 'None'
+[0.730s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'catkin_cmake_args' from command line to 'None'
+[0.730s] Level 5:colcon.colcon_core.verb:set package 'omni_rviz_controls' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.730s] DEBUG:colcon.colcon_core.verb:Building package 'omni_rviz_controls' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls', 'merge_install': False, 'path': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls', 'symlink_install': False, 'test_result_base': None}
+[0.730s] INFO:colcon.colcon_core.executor:Executing jobs using 'parallel' executor
+[0.733s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete
+[0.735s] INFO:colcon.colcon_ros.task.ament_cmake.build:Building ROS package in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls' with build type 'ament_cmake'
+[0.735s] INFO:colcon.colcon_cmake.task.cmake.build:Building CMake package in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls'
+[0.743s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_core.shell.bat': Not used on non-Windows systems
+[0.744s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[0.744s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[0.767s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls -- -j4 -l4
+[32.444s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls -- -j4 -l4
+[32.481s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls
+[32.523s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(omni_rviz_controls)
+[32.524s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls
+[32.534s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls' for CMake module files
+[32.535s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls' for CMake config files
+[32.536s] Level 1:colcon.colcon_core.shell:create_environment_hook('omni_rviz_controls', 'cmake_prefix_path')
+[32.536s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/cmake_prefix_path.ps1'
+[32.538s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/cmake_prefix_path.dsv'
+[32.540s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/cmake_prefix_path.sh'
+[32.542s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib'
+[32.543s] Level 1:colcon.colcon_core.shell:create_environment_hook('omni_rviz_controls', 'ld_library_path_lib')
+[32.543s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/ld_library_path_lib.ps1'
+[32.545s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/ld_library_path_lib.dsv'
+[32.547s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/ld_library_path_lib.sh'
+[32.548s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/bin'
+[32.548s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib/pkgconfig/omni_rviz_controls.pc'
+[32.549s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib/python3.12/site-packages'
+[32.550s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/bin'
+[32.551s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.ps1'
+[32.553s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.dsv'
+[32.555s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.sh'
+[32.557s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.bash'
+[32.558s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.zsh'
+[32.560s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/colcon-core/packages/omni_rviz_controls)
+[32.562s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(omni_rviz_controls)
+[32.564s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls' for CMake module files
+[32.566s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls' for CMake config files
+[32.567s] Level 1:colcon.colcon_core.shell:create_environment_hook('omni_rviz_controls', 'cmake_prefix_path')
+[32.568s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/cmake_prefix_path.ps1'
+[32.570s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/cmake_prefix_path.dsv'
+[32.571s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/cmake_prefix_path.sh'
+[32.574s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib'
+[32.575s] Level 1:colcon.colcon_core.shell:create_environment_hook('omni_rviz_controls', 'ld_library_path_lib')
+[32.578s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/ld_library_path_lib.ps1'
+[32.583s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/ld_library_path_lib.dsv'
+[32.586s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/hook/ld_library_path_lib.sh'
+[32.589s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/bin'
+[32.589s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib/pkgconfig/omni_rviz_controls.pc'
+[32.590s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib/python3.12/site-packages'
+[32.590s] Level 1:colcon.colcon_core.environment:checking '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/bin'
+[32.591s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.ps1'
+[32.594s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.dsv'
+[32.595s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.sh'
+[32.599s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.bash'
+[32.600s] INFO:colcon.colcon_core.shell:Creating package script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.zsh'
+[32.601s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/colcon-core/packages/omni_rviz_controls)
+[32.602s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:closing loop
+[32.603s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:loop closed
+[32.604s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete finished with '0'
+[32.604s] DEBUG:colcon.colcon_core.event_reactor:joining thread
+[32.628s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.terminal_notifier': Not used on non-Darwin systems
+[32.628s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.win32': Not used on non-Windows systems
+[32.629s] INFO:colcon.colcon_notification.desktop_notification:Sending desktop notification using 'notify2'
+[32.731s] DEBUG:colcon.colcon_core.event_reactor:joined thread
+[32.732s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/local_setup.ps1'
+[32.746s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/_local_setup_util_ps1.py'
+[32.748s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/setup.ps1'
+[32.753s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/local_setup.sh'
+[32.756s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/_local_setup_util_sh.py'
+[32.759s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/setup.sh'
+[32.764s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/local_setup.bash'
+[32.765s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/setup.bash'
+[32.770s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/local_setup.zsh'
+[32.773s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/setup.zsh'

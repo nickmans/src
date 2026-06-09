@@ -25,6 +25,7 @@ class JoystickState:
         self.joy_pending = False
         self.joy_pending_enable = True
         self.joy_enabled = False
+        self.focus_enabled = False
 
     async def set_input(self, x: float, y: float) -> None:
         async with self._lock:
@@ -37,6 +38,8 @@ class JoystickState:
             self.joy_pending = True
             self.joy_pending_enable = enable
             self.joy_enabled = enable
+            if not enable:
+                self.focus_enabled = False
 
     async def add_client(self) -> int:
         async with self._lock:
@@ -60,9 +63,10 @@ class JoystickState:
                 self.joy_pending = False
                 self.joy_pending_enable = True
                 self.joy_enabled = False
+                self.focus_enabled = False
             return self.clients
 
-    async def snapshot(self) -> tuple[float, float, float, int, bool, bool, bool]:
+    async def snapshot(self) -> tuple[float, float, float, int, bool, bool, bool, bool]:
         async with self._lock:
             age = time.monotonic() - self.last_input_monotonic
             return (
@@ -73,6 +77,7 @@ class JoystickState:
                 self.joy_pending,
                 self.joy_pending_enable,
                 self.joy_enabled,
+                self.focus_enabled,
             )
 
     async def clear_joy_pending(self) -> None:
@@ -84,6 +89,15 @@ class JoystickState:
             self.raw_x = 0.0
             self.raw_y = 0.0
             self.last_input_monotonic = time.monotonic()
+
+    async def set_focus_enabled(self, enabled: bool) -> None:
+        async with self._lock:
+            self.focus_enabled = enabled
+
+    async def toggle_focus_enabled(self) -> bool:
+        async with self._lock:
+            self.focus_enabled = not self.focus_enabled
+            return self.focus_enabled
 
 
 class WebSocketHub:
@@ -208,6 +222,18 @@ def send_spin_command(value: int) -> bool:
     return False
 
 
+def send_focus_command(enabled: bool | None = None) -> bool:
+    if bt_link is not None:
+        if enabled is None:
+            return bt_link.send_line(cfg.cmd_focus)
+        return bt_link.send_line(f"{cfg.cmd_focus} {1 if enabled else 0}")
+
+    if eth_link is not None:
+        return eth_link.send_focus(enabled)
+
+    return False
+
+
 def send_zero_immediately(reason: str) -> None:
     logger.warning("Safety zero output triggered: %s", reason)
     send_command_to_stm32(JoystickCommand(angle=0, speed=0))
@@ -218,7 +244,7 @@ async def command_stream_loop() -> None:
     timeout_active = False
 
     while True:
-        raw_x, raw_y, age, client_count, joy_pending, joy_pending_enable, joy_enabled = await state.snapshot()
+        raw_x, raw_y, age, client_count, joy_pending, joy_pending_enable, joy_enabled, focus_enabled = await state.snapshot()
 
         if joy_pending:
             if send_joy_enable(joy_pending_enable):
@@ -267,6 +293,7 @@ async def command_stream_loop() -> None:
                 "transport": cfg.transport,
                 "link_connected": link_connected(),
                 "joy_enabled": joy_enabled,
+                "focus_enabled": focus_enabled,
             }
         )
         await asyncio.sleep(interval_s)
@@ -297,7 +324,7 @@ async def root() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict:
-    _, _, age, clients, _, _, joy_enabled = await state.snapshot()
+    _, _, age, clients, _, _, joy_enabled, focus_enabled = await state.snapshot()
     return {
         "ok": True,
         "ws_clients": clients,
@@ -305,6 +332,7 @@ async def health() -> dict:
         "link_connected": link_connected(),
         "last_input_age_s": round(age, 3),
         "joy_enabled": joy_enabled,
+        "focus_enabled": focus_enabled,
     }
 
 
@@ -349,7 +377,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await state.trigger_joy_mode(False)
                 logger.info("Joystick mode disable requested by client")
             elif msg_type == "spin":
-                _, _, _, _, _, _, joy_enabled = await state.snapshot()
+                _, _, _, _, _, _, joy_enabled, _ = await state.snapshot()
                 if not joy_enabled:
                     logger.warning("Spin command ignored because joystick mode is disabled")
                     continue
@@ -366,6 +394,25 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                 if send_spin_command(spin_value):
                     logger.info("Spin command sent: w %d", spin_value)
+            elif msg_type == "focus":
+                requested_enabled = msg.get("enabled")
+                explicit_enabled = None
+                if isinstance(requested_enabled, bool):
+                    explicit_enabled = requested_enabled
+
+                if explicit_enabled is None:
+                    _, _, _, _, _, _, _, focus_current = await state.snapshot()
+                    focus_enabled = not focus_current
+                else:
+                    focus_enabled = explicit_enabled
+
+                focus_sent = send_focus_command(focus_enabled)
+
+                if focus_sent:
+                    await state.set_focus_enabled(focus_enabled)
+                    logger.info("Focus command sent: %s", "on" if focus_enabled else "off")
+                else:
+                    logger.warning("Focus command not sent to STM32 link; state unchanged")
             elif msg_type == "estop":
                 await state.force_zero()
                 send_zero_immediately("E-stop from UI")

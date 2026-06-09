@@ -1,0 +1,12 @@
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/uninstall.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/omni_rviz_controls_uninstall.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/omni_rviz_controls.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/test.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/edit_cache.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/rebuild_cache.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/list_install_components.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/install.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/install/local.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/install/strip.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/omni_rviz_controls_autogen_timestamp_deps.dir
+/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls/CMakeFiles/omni_rviz_controls_autogen.dir

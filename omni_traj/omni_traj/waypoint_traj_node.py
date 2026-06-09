@@ -202,6 +202,10 @@ class WaypointTrajNode(Node):
         self.declare_parameter("planning_hard_obstacle_confirm_scans", cfg("planning_hard_obstacle_confirm_scans"))
         self.declare_parameter("planning_hard_obstacle_clear_scans", cfg("planning_hard_obstacle_clear_scans"))
         self.declare_parameter("cached_traj_reject_confirm_iters", cfg("cached_traj_reject_confirm_iters"))
+        self.declare_parameter("waypoint_projection_confirm_iters", cfg("waypoint_projection_confirm_iters"))
+        self.declare_parameter("waypoint_projection_max_cost", cfg("waypoint_projection_max_cost"))
+        self.declare_parameter("waypoint_projection_clearance_m", cfg("waypoint_projection_clearance_m"))
+        self.declare_parameter("waypoint_projection_max_search_m", cfg("waypoint_projection_max_search_m"))
 
         # ===== Robot kinematics & constraints =====
         self.declare_parameter("wheel_radius_m", cfg("wheel_radius_m"))           # Wheel radius in meters
@@ -392,7 +396,7 @@ class WaypointTrajNode(Node):
         self._auto_test_waypoint_active: bool = False
         self._wp_test_toggle_armed: bool = False
 
-        # Track consecutive iterations each waypoint sits in a hard cell
+        # Track consecutive iterations each waypoint remains in an invalid goal cell.
         self._wp_hard_cell_iters: Dict[Tuple[int, int], int] = {}
 
         # Trajectory planning cache (keeps publishers responsive under heavy planning load)
@@ -2793,6 +2797,86 @@ class WaypointTrajNode(Node):
     def _waypoint_key(x: float, y: float) -> Tuple[int, int]:
         return (int(round(x * 1000.0)), int(round(y * 1000.0)))
 
+    def _waypoint_projection_settings(self) -> Tuple[int, int, float]:
+        max_goal_cost = int(self.get_parameter("waypoint_projection_max_cost").value)
+        max_goal_cost = max(0, min(99, max_goal_cost))
+
+        clearance_m = max(0.0, float(self.get_parameter("waypoint_projection_clearance_m").value))
+        clearance_cells = int(math.ceil(clearance_m / max(self.gs_map.res, 1e-6)))
+
+        hard_r = float(self.get_parameter("hard_inflate_radius").value)
+        soft_r = float(self.get_parameter("soft_inflate_radius").value)
+        default_search_m = max(0.5, 2.0 * max(hard_r, soft_r, self.gs_map.res))
+        configured_search_m = max(self.gs_map.res, float(self.get_parameter("waypoint_projection_max_search_m").value))
+        max_search_m = max(default_search_m, configured_search_m)
+
+        return max_goal_cost, clearance_cells, max_search_m
+
+    def _goal_cell_is_safe(
+        self,
+        costmap: np.ndarray,
+        ix: int,
+        iy: int,
+        max_goal_cost: int,
+        clearance_cells: int,
+    ) -> bool:
+        if not self.in_bounds(self.gs_map, ix, iy):
+            return False
+        if int(costmap[iy, ix]) > max_goal_cost:
+            return False
+        if clearance_cells <= 0:
+            return True
+
+        x0 = max(0, ix - clearance_cells)
+        x1 = min(self.gs_map.width - 1, ix + clearance_cells)
+        y0 = max(0, iy - clearance_cells)
+        y1 = min(self.gs_map.height - 1, iy + clearance_cells)
+        c2 = clearance_cells * clearance_cells
+
+        for ny in range(y0, y1 + 1):
+            dy = ny - iy
+            dy2 = dy * dy
+            for nx in range(x0, x1 + 1):
+                dx = nx - ix
+                if (dx * dx + dy2) > c2:
+                    continue
+                if int(costmap[ny, nx]) > max_goal_cost:
+                    return False
+
+        return True
+
+    def _reachable_from_robot_mask(self, costmap: np.ndarray, robot_ix: int, robot_iy: int) -> np.ndarray:
+        reachable = np.zeros(costmap.shape, dtype=bool)
+        if not self.in_bounds(self.gs_map, robot_ix, robot_iy):
+            return reachable
+        if int(costmap[robot_iy, robot_ix]) >= 100:
+            return reachable
+
+        q: Deque[Tuple[int, int]] = deque()
+        q.append((robot_ix, robot_iy))
+        reachable[robot_iy, robot_ix] = True
+
+        neigh = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (-1, 1), (1, -1), (1, 1),
+        ]
+
+        while q:
+            ix, iy = q.popleft()
+            for dx, dy in neigh:
+                nx = ix + dx
+                ny = iy + dy
+                if not self.in_bounds(self.gs_map, nx, ny):
+                    continue
+                if reachable[ny, nx]:
+                    continue
+                if int(costmap[ny, nx]) >= 100:
+                    continue
+                reachable[ny, nx] = True
+                q.append((nx, ny))
+
+        return reachable
+
     def _find_relocation_for_waypoint(
         self,
         costmap: np.ndarray,
@@ -2801,87 +2885,58 @@ class WaypointTrajNode(Node):
         max_search_m: float,
     ) -> Optional[Tuple[float, float, str]]:
         wx, wy = waypoint_xy
+
+        max_goal_cost, clearance_cells, default_search_m = self._waypoint_projection_settings()
+
         w_ix, w_iy = self.world_to_grid(self.gs_map, wx, wy)
-        if not self.in_bounds(self.gs_map, w_ix, w_iy):
-            return None
+        w_ix = min(max(0, w_ix), self.gs_map.width - 1)
+        w_iy = min(max(0, w_iy), self.gs_map.height - 1)
 
-        max_cells = max(1, int(math.ceil(max_search_m / max(self.gs_map.res, 1e-6))))
+        r_ix, r_iy = self.world_to_grid(self.gs_map, base_pose_now.x, base_pose_now.y)
+        reachable = self._reachable_from_robot_mask(costmap, r_ix, r_iy)
+        use_reachability = bool(np.any(reachable))
 
-        # 1) Prefer nearest free cell
-        best_free: Optional[Tuple[int, int]] = None
-        best_free_d2 = float("inf")
-        for dy in range(-max_cells, max_cells + 1):
-            for dx in range(-max_cells, max_cells + 1):
-                ix = w_ix + dx
-                iy = w_iy + dy
-                if not self.in_bounds(self.gs_map, ix, iy):
-                    continue
-                cell_val = costmap[iy, ix]
-                if cell_val >= 50:
-                    continue
-                d2 = dx * dx + dy * dy
-                if d2 < best_free_d2:
-                    best_free_d2 = d2
-                    best_free = (ix, iy)
+        to_robot_x = base_pose_now.x - wx
+        to_robot_y = base_pose_now.y - wy
+        toward_robot_defined = (to_robot_x * to_robot_x + to_robot_y * to_robot_y) > 1e-12
+
+        search_m = max(default_search_m, max_search_m, self.gs_map.res)
+        max_cells = max(1, int(math.ceil(search_m / max(self.gs_map.res, 1e-6))))
+
+        def find_best(require_toward_robot: bool) -> Optional[Tuple[int, int]]:
+            best_cell: Optional[Tuple[int, int]] = None
+            best_d2 = float("inf")
+            for dy in range(-max_cells, max_cells + 1):
+                for dx in range(-max_cells, max_cells + 1):
+                    ix = w_ix + dx
+                    iy = w_iy + dy
+                    if not self._goal_cell_is_safe(costmap, ix, iy, max_goal_cost, clearance_cells):
+                        continue
+                    if use_reachability and not bool(reachable[iy, ix]):
+                        continue
+
+                    if require_toward_robot and toward_robot_defined:
+                        cx, cy = self.grid_to_world(self.gs_map, ix, iy)
+                        move_x = cx - wx
+                        move_y = cy - wy
+                        if move_x * to_robot_x + move_y * to_robot_y <= 0.0:
+                            continue
+
+                    d2 = dx * dx + dy * dy
+                    if d2 < best_d2:
+                        best_d2 = d2
+                        best_cell = (ix, iy)
+            return best_cell
+
+        best_free = find_best(require_toward_robot=True)
+        mode = "toward-robot-reachable"
+        if best_free is None:
+            best_free = find_best(require_toward_robot=False)
+            mode = "reachable-free-clearance"
 
         if best_free is not None:
             rx, ry = self.grid_to_world(self.gs_map, best_free[0], best_free[1])
-            return (rx, ry, "free")
-
-        # 2) If no nearby free cell, use nearest soft cell in robot forward direction
-        fx = math.cos(base_pose_now.yaw)
-        fy = math.sin(base_pose_now.yaw)
-        best_soft_xy: Optional[Tuple[float, float]] = None
-        best_soft_d2 = float("inf")
-
-        for dy in range(-max_cells, max_cells + 1):
-            for dx in range(-max_cells, max_cells + 1):
-                ix = w_ix + dx
-                iy = w_iy + dy
-                if not self.in_bounds(self.gs_map, ix, iy):
-                    continue
-                cell_val = costmap[iy, ix]
-                if cell_val < 50 or cell_val >= 100:
-                    continue
-
-                cx, cy = self.grid_to_world(self.gs_map, ix, iy)
-                rx = cx - base_pose_now.x
-                ry = cy - base_pose_now.y
-                if rx * fx + ry * fy <= 0.0:
-                    continue
-
-                d2_wp = (cx - wx) * (cx - wx) + (cy - wy) * (cy - wy)
-                if d2_wp < best_soft_d2:
-                    best_soft_d2 = d2_wp
-                    best_soft_xy = (cx, cy)
-
-        if best_soft_xy is not None:
-            return (best_soft_xy[0], best_soft_xy[1], "soft-forward")
-
-        # 3) Final fallback: nearest soft cell in any direction.
-        # This prevents permanent planning starvation when a waypoint is trapped
-        # in hard inflation and forward-only soft candidates are unavailable.
-        best_soft_any_xy: Optional[Tuple[float, float]] = None
-        best_soft_any_d2 = float("inf")
-
-        for dy in range(-max_cells, max_cells + 1):
-            for dx in range(-max_cells, max_cells + 1):
-                ix = w_ix + dx
-                iy = w_iy + dy
-                if not self.in_bounds(self.gs_map, ix, iy):
-                    continue
-                cell_val = costmap[iy, ix]
-                if cell_val < 50 or cell_val >= 100:
-                    continue
-
-                cx, cy = self.grid_to_world(self.gs_map, ix, iy)
-                d2_wp = (cx - wx) * (cx - wx) + (cy - wy) * (cy - wy)
-                if d2_wp < best_soft_any_d2:
-                    best_soft_any_d2 = d2_wp
-                    best_soft_any_xy = (cx, cy)
-
-        if best_soft_any_xy is not None:
-            return (best_soft_any_xy[0], best_soft_any_xy[1], "soft-any")
+            return (rx, ry, mode)
 
         return None
 
@@ -2899,14 +2954,8 @@ class WaypointTrajNode(Node):
         else:
             return None
 
-        hard_iters_required = 3
-        hard_r = float(self.get_parameter("hard_inflate_radius").value)
-        soft_r = float(self.get_parameter("soft_inflate_radius").value)
-        max_search_m = max(
-            0.5,
-            self.gs_map.res,
-            2.0 * max(hard_r, soft_r, self.gs_map.res),
-        )
+        max_goal_cost, clearance_cells, max_search_m = self._waypoint_projection_settings()
+        confirm_iters_required = max(1, int(self.get_parameter("waypoint_projection_confirm_iters").value))
 
         active_keys: set[Tuple[int, int]] = set()
         changed = False
@@ -2919,16 +2968,16 @@ class WaypointTrajNode(Node):
             active_keys.add(key)
 
             ix, iy = self.world_to_grid(self.gs_map, wx, wy)
-            in_hard = self.in_bounds(self.gs_map, ix, iy) and costmap[iy, ix] >= 100
+            in_invalid = not self._goal_cell_is_safe(costmap, ix, iy, max_goal_cost, clearance_cells)
 
-            if not in_hard:
+            if not in_invalid:
                 self._wp_hard_cell_iters.pop(key, None)
                 continue
 
             new_count = self._wp_hard_cell_iters.get(key, 0) + 1
             self._wp_hard_cell_iters[key] = new_count
 
-            if new_count < hard_iters_required:
+            if new_count < confirm_iters_required:
                 continue
 
             relocated = self._find_relocation_for_waypoint(costmap, (wx, wy), base_pose_now, max_search_m)
@@ -2946,7 +2995,7 @@ class WaypointTrajNode(Node):
             active_keys.add(new_key)
 
             self.get_logger().warn(
-                f"Moved waypoint {i} from hard cell after {hard_iters_required} iters "
+                f"Moved waypoint {i} from invalid goal cell after {confirm_iters_required} iters "
                 f"to ({new_x:.2f}, {new_y:.2f}) via {mode}."
             )
 
@@ -3803,14 +3852,12 @@ class WaypointTrajNode(Node):
         return [self.grid_to_world(self.gs_map, ix, iy) for (ix, iy) in path_ij]
 
     def plan_segment_path(self, grid: np.ndarray, start_xy: Tuple[float, float], goal_xy: Tuple[float, float]) -> List[Tuple[float, float]]:
-        hard_r = float(self.get_parameter("hard_inflate_radius").value)
+        max_goal_cost, clearance_cells, max_search_m = self._waypoint_projection_settings()
         soft_r = float(self.get_parameter("soft_inflate_radius").value)
 
-        # If goal lands in a hard-inflated cell, nudge to nearest reachable cell
-        # so planning can still proceed in nearby free space.
+        # Ensure goal is always in a free, clearance-valid cell before planning.
         gxi, gyi = self.world_to_grid(self.gs_map, goal_xy[0], goal_xy[1])
-        if self.in_bounds(self.gs_map, gxi, gyi) and grid[gyi, gxi] >= 100:
-            max_search_m = max(0.5, 2.0 * max(hard_r, soft_r, self.gs_map.res))
+        if not self._goal_cell_is_safe(grid, gxi, gyi, max_goal_cost, clearance_cells):
             relocated_goal = self._find_relocation_for_waypoint(
                 grid,
                 goal_xy,
@@ -3819,6 +3866,8 @@ class WaypointTrajNode(Node):
             )
             if relocated_goal is not None:
                 goal_xy = (relocated_goal[0], relocated_goal[1])
+            else:
+                return []
 
         if self.line_collision_free(grid, start_xy, goal_xy):
             return [start_xy, goal_xy]
@@ -4250,15 +4299,11 @@ class WaypointTrajNode(Node):
 
         total_s = s[-1]
 
-        # Seed with current velocity component along initial path tangent.
-        # This avoids over-estimating path-speed when the robot is currently
-        # moving in a different direction.
+        # Seed with current translational speed magnitude for replan continuity.
+        # For an omni base, preserving speed magnitude across replans avoids
+        # repeated stop-go behavior from tangent projection jitter.
         vx_map_now, vy_map_now = self.odom_vel_map_latest
-        if tangents:
-            tx0, ty0 = tangents[0]
-            v_initial = max(0.0, vx_map_now * tx0 + vy_map_now * ty0)
-        else:
-            v_initial = math.hypot(vx_map_now, vy_map_now)
+        v_initial = math.hypot(vx_map_now, vy_map_now)
         v_initial = min(v_initial, max_linear_vel)
 
         v_forward = [0.0] * n
@@ -4347,38 +4392,6 @@ class WaypointTrajNode(Node):
         # Yaw stays tied to BNO odometry heading for this robot revision.
         yaws_resampled = [yaw_ref] * len(xs_resampled)
 
-        # Warm-start first-knot speed from STM32 velocity, but keep motion
-        # aligned with path progression (never opposite to first segment).
-        if len(xs_resampled) >= 2:
-            vx_body_start, vy_body_start = self.odom_vel_body_latest
-            speed_start = math.hypot(vx_body_start, vy_body_start)
-            if speed_start > max_linear_vel and speed_start > 1e-9:
-                scale = max_linear_vel / speed_start
-                vx_body_start *= scale
-                vy_body_start *= scale
-
-            yaw_start = self.odom_pose_latest.yaw if self.have_odom_pose else 0.0
-            c0 = math.cos(yaw_start)
-            s0 = math.sin(yaw_start)
-            vx_map_start = c0 * vx_body_start - s0 * vy_body_start
-            vy_map_start = s0 * vx_body_start + c0 * vy_body_start
-
-            dx0 = xs_resampled[1] - xs_resampled[0]
-            dy0 = ys_resampled[1] - ys_resampled[0]
-            d0 = math.hypot(dx0, dy0)
-            if d0 > 1e-9:
-                tx0 = dx0 / d0
-                ty0 = dy0 / d0
-                v_proj = vx_map_start * tx0 + vy_map_start * ty0
-                v_proj = max(0.0, min(max_linear_vel, v_proj))
-                vxs_resampled[0] = tx0 * v_proj
-                vys_resampled[0] = ty0 * v_proj
-                vels_resampled[0] = v_proj
-            else:
-                vxs_resampled[0] = 0.0
-                vys_resampled[0] = 0.0
-                vels_resampled[0] = 0.0
-
         # First, enforce tangential/normal acceleration limits on the velocity
         # vector sequence so direction changes stay dynamically feasible.
         vxs_resampled, vys_resampled, vels_resampled = self._enforce_tangent_normal_limits_on_velocity_series(
@@ -4387,8 +4400,8 @@ class WaypointTrajNode(Node):
             0.01,
         )
 
-        # Then re-apply per-wheel accel constraints after spline/resampling and
-        # first-knot anchoring to guarantee feasible knot-to-knot wheel updates.
+        # Then re-apply per-wheel accel constraints after spline/resampling to
+        # guarantee feasible knot-to-knot wheel updates.
         vxs_resampled, vys_resampled, vels_resampled = self._enforce_wheel_accel_limits_on_velocity_series(
             vxs_resampled,
             vys_resampled,

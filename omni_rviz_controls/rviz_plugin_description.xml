@@ -1,0 +1,11 @@
+<library path="omni_rviz_controls">
+  <class
+    name="omni_rviz_controls/MaxLinearVelocityPanel"
+    type="omni_rviz_controls::MaxLinearVelocityPanel"
+    base_class_type="rviz_common::Panel">
+    <description>
+      Slider panel for live tuning of waypoint_traj max_linear_velocity_ms.
+      Parameter update is sent only when slider is released.
+    </description>
+  </class>
+</library>

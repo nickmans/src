@@ -90,6 +90,7 @@ Edit .env values for your robot, especially:
 - BT_DEVICE
 - BT_BAUDRATE
 - CMD_SINGLE_LINE_TEMPLATE or CMD_SPEED_TEMPLATE
+- CMD_FOCUS
 - UPDATE_HZ, DEADZONE, INPUT_TIMEOUT_S
 
 ## Bluetooth Serial Setup (RFCOMM)
@@ -197,10 +198,15 @@ Joystick mode command (sent once per button press):
 
 If your STM32 command names change, update only these template values.
 
+Focus mode command (sent from the side Focus button):
+
+    CMD_FOCUS=focus
+
 ## Web UI Controls
 
 - Enable Joystick Mode: sends joy once
 - Emergency Stop: immediate zero command
+- Focus: sends a focus toggle command (`focus`) and STM32 toggles focus mode
 - Big touch joystick with center snap-back
 - Live display: angle, speed, websocket status, bluetooth status
 

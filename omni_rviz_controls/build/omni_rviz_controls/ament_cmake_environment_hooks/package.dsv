@@ -1,0 +1,4 @@
+source;share/omni_rviz_controls/local_setup.bash
+source;share/omni_rviz_controls/local_setup.dsv
+source;share/omni_rviz_controls/local_setup.sh
+source;share/omni_rviz_controls/local_setup.zsh

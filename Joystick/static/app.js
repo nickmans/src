@@ -8,6 +8,7 @@ const joyModeBtn = document.getElementById("joyModeBtn");
 const spin2Btn = document.getElementById("spin2Btn");
 const spin1Btn = document.getElementById("spin1Btn");
 const spin0Btn = document.getElementById("spin0Btn");
+const focusBtn = document.getElementById("focusBtn");
 const estopBtn = document.getElementById("estopBtn");
 const operatorNoticeEl = document.getElementById("operatorNotice");
 
@@ -18,7 +19,9 @@ let holdSendTimer = null;
 
 const HOLD_RESEND_MS = 50;
 let joyModeEnabled = false;
+let focusEnabled = false;
 let controllerBusy = false;
+let lastFocusRequestMs = 0;
 
 const joystickState = {
   x: 0,
@@ -33,12 +36,13 @@ function updatePill(el, isConnected, textConnected, textDisconnected) {
 
 function sendWsMessage(payload) {
   if (controllerBusy) {
-    return;
+    return false;
   }
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    return;
+    return false;
   }
   ws.send(JSON.stringify(payload));
+  return true;
 }
 
 function renderOperatorNotice() {
@@ -62,7 +66,26 @@ function renderJoyModeButton() {
   spin2Btn.disabled = disableControls || !joyModeEnabled;
   spin1Btn.disabled = disableControls || !joyModeEnabled;
   spin0Btn.disabled = disableControls || !joyModeEnabled;
+  focusBtn.disabled = disableControls;
   joystickEl.classList.toggle("disabled", disableControls);
+}
+
+function renderFocusButton() {
+  focusBtn.textContent = focusEnabled ? "focus off" : "focus on";
+}
+
+function requestFocusToggle() {
+  const nowMs = Date.now();
+  if (nowMs - lastFocusRequestMs < 200) {
+    return;
+  }
+  lastFocusRequestMs = nowMs;
+
+  const nextFocusEnabled = !focusEnabled;
+  if (sendWsMessage({ type: "focus", enabled: nextFocusEnabled })) {
+    focusEnabled = nextFocusEnabled;
+    renderFocusButton();
+  }
 }
 
 function startHoldResendLoop() {
@@ -121,7 +144,9 @@ function connectWebSocket() {
         angleValueEl.textContent = `${msg.angle}\u00b0`;
         speedValueEl.textContent = String(msg.speed);
         joyModeEnabled = !!msg.joy_enabled;
+        focusEnabled = !!msg.focus_enabled;
         renderJoyModeButton();
+        renderFocusButton();
         const transport = (msg.transport || "link").toUpperCase();
         updatePill(
           btStatusEl,
@@ -249,6 +274,21 @@ spin0Btn.addEventListener("click", () => {
   sendWsMessage({ type: "spin", value: 0 });
 });
 
+focusBtn.addEventListener("click", () => {
+  if (controllerBusy) {
+    return;
+  }
+  requestFocusToggle();
+});
+
+focusBtn.addEventListener("pointerup", (event) => {
+  if (controllerBusy) {
+    return;
+  }
+  event.preventDefault();
+  requestFocusToggle();
+});
+
 estopBtn.addEventListener("click", () => {
   if (controllerBusy) {
     return;
@@ -264,3 +304,4 @@ window.addEventListener("beforeunload", () => {
 
 connectWebSocket();
 renderJoyModeButton();
+renderFocusButton();

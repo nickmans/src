@@ -21,8 +21,8 @@ waypoint_traj:
     global_map_width_m: 7.0
     global_map_height_m: 7.0
     local_costmap_res: 0.05
-    local_costmap_width_m: 4.0
-    local_costmap_height_m: 4.0
+    local_costmap_width_m: 7.0
+    local_costmap_height_m: 7.0
     rolling_map_enable: true
     rolling_map_margin_m: 1.0
     persistent_obstacles_enable: false
@@ -52,24 +52,28 @@ waypoint_traj:
     blank_geofence_height_m: 7.0
     blank_geofence_align_to_start_yaw: false
 
-    hard_inflate_radius: 0.4
+    hard_inflate_radius: 0.25
     soft_inflate_radius: 0.0
     planning_obstacle_hysteresis_enable: true
     planning_hard_obstacle_confirm_scans: 1
     planning_hard_obstacle_clear_scans: 3
     cached_traj_reject_confirm_iters: 1
-
+    waypoint_projection_confirm_iters: 1
+    waypoint_projection_max_cost: 0
+    waypoint_projection_clearance_m: 0.0
+    waypoint_projection_max_search_m: 1.0
+ 
     wheel_radius_m: 0.09
     wheelbase_m: 0.200
-    max_wheel_acceleration_ms2: 0.95
-    max_wheel_jerk_rs3: 180.0
-    braking_decel_safety_factor: 0.75
-    max_linear_velocity_ms: 0.4
-    stm32_max_wheel_speed_rs: 16.0
-    stm32_max_wheel_accel_rs2: 11.1111111111
+    max_wheel_acceleration_ms2: 1.4
+    max_wheel_jerk_rs3: 200.0
+    braking_decel_safety_factor: 0.95
+    max_linear_velocity_ms: 0.8
+    stm32_max_wheel_speed_rs: 13.6
+    stm32_max_wheel_accel_rs2: 16.0
     stm32_max_wheel_jerk_rs3: 200.0
     trajectory_limit_margin: 0.95
-    max_lateral_accel: 1.0
+    max_lateral_accel: 5.0
     trajectory_replan_hz: 5.0
     trajectory_replan_min_move_m: 999.0
     trajectory_replan_min_yaw_rad: 999.0

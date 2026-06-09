@@ -99,12 +99,11 @@ class OMNIUDPServer:
         self.trajectory_active = False
         self.traj_seq = 0
         self._shutdown_requested = False
-        self._active_traj_signature: Optional[Tuple[int, float, float, float, float]] = None
-        self._active_traj_t0_ms: Optional[int] = None
         self._hold_until_ms: int = 0
         self._hold_traj_t0_ms: Optional[int] = None
         self._hold_knot: Optional[Tuple[float, float, float, float, float]] = None
         self._last_valid_traj: Optional[Trajectory] = None
+        self._traj_phase_search_knots: int = 24
         self._traj_constant_yaw_enabled = str(os.getenv("OMNI_TRAJ_CONSTANT_YAW", "1")).strip().lower() in {
             "1", "true", "yes", "on"
         }
@@ -1072,8 +1071,6 @@ class OMNIUDPServer:
                     )
                     self._hold_traj_t0_ms = int(latest_pose.pose_t_ms)
                     self._hold_until_ms = now_ms + 500
-                self._active_traj_signature = None
-                self._active_traj_t0_ms = None
                 self._last_valid_traj = None
             self.set_trajectory_active(False)
             ok_stack = self._switch_stack_mode("standby")
@@ -1090,8 +1087,6 @@ class OMNIUDPServer:
 
             self.set_trajectory_active(False)
             with self.traj_lock:
-                self._active_traj_signature = None
-                self._active_traj_t0_ms = None
                 self._last_valid_traj = None
 
             started = self._switch_stack_mode_with_retries("localization", attempts=3, retry_delay_s=3.0)
@@ -1120,8 +1115,6 @@ class OMNIUDPServer:
 
             self.set_trajectory_active(False)
             with self.traj_lock:
-                self._active_traj_signature = None
-                self._active_traj_t0_ms = None
                 self._last_valid_traj = None
 
             ok_stack = self._switch_stack_mode_with_retries("standby", attempts=2, retry_delay_s=2.0)
@@ -1421,6 +1414,48 @@ class OMNIUDPServer:
             if recovered:
                 self._set_ros2_retry_enabled(False, reason="retry recovery succeeded")
 
+    def _phase_aligned_traj_t0_ms(
+        self,
+        knots: List[Tuple[float, float, float, float, float]],
+        dt_s: float,
+        pose_now: Optional[PoseData],
+    ) -> int:
+        """Compute STM32-domain trajectory t0 aligned to the robot's current phase.
+
+        We choose the nearest early-horizon knot to current pose/velocity and set
+        t0 so that STM32 time interpolation samples that knot now.
+        """
+        if pose_now is None:
+            return 0
+
+        pose_now_ms = int(pose_now.pose_t_ms)
+        if not knots or dt_s <= 1e-6:
+            return max(0, pose_now_ms)
+
+        max_idx = min(len(knots) - 1, max(0, int(self._traj_phase_search_knots)))
+        px = float(pose_now.x)
+        py = float(pose_now.y)
+        pvx = float(pose_now.vx)
+        pvy = float(pose_now.vy)
+
+        best_idx = 0
+        best_cost = float("inf")
+        vel_weight = 0.15
+
+        for i in range(max_idx + 1):
+            kx, ky, _kyaw, kvx, kvy = knots[i]
+            dx = float(kx) - px
+            dy = float(ky) - py
+            dvx = float(kvx) - pvx
+            dvy = float(kvy) - pvy
+            cost = (dx * dx + dy * dy) + vel_weight * (dvx * dvx + dvy * dvy)
+            if cost < best_cost:
+                best_cost = cost
+                best_idx = i
+
+        dt_ms = max(1, int(round(dt_s * 1000.0)))
+        return max(0, pose_now_ms - best_idx * dt_ms)
+
     def _default_get_trajectory(self) -> Optional[Trajectory]:
         """Forward the latest ROS2 trajectory knots without modifying values."""
         planner_data_fresh = self.ros2_bridge.planner_data_is_fresh(max_age_ms=800)
@@ -1452,9 +1487,6 @@ class OMNIUDPServer:
                 self._hold_traj_t0_ms = 0
 
             self._hold_until_ms = now_ms + 500
-
-            self._active_traj_signature = None
-            self._active_traj_t0_ms = None
 
             if self._hold_knot is not None and now_ms <= self._hold_until_ms:
                 hold_t0_ms = int(self._hold_traj_t0_ms) if self._hold_traj_t0_ms is not None else 0
@@ -1514,23 +1546,9 @@ class OMNIUDPServer:
                 yaw_stm = float(live_yaw_stm)
             knots.append((x_stm, y_stm, yaw_stm, vx_stm, vy_stm))
 
-        # Keep a stable trajectory start timestamp until knots materially change.
-        # Resetting t0 every send causes STM32 to keep replaying early knots.
-        first_x, first_y = knots[0][0], knots[0][1]
-        last_x, last_y = knots[-1][0], knots[-1][1]
-        traj_signature = (
-            len(path_points),
-            round(float(first_x), 4),
-            round(float(first_y), 4),
-            round(float(last_x), 4),
-            round(float(last_y), 4),
-        )
-
-        if self._active_traj_signature != traj_signature:
-            self._active_traj_signature = traj_signature
-            self._active_traj_t0_ms = int(latest_pose.pose_t_ms) if latest_pose is not None else 0
-
-        traj_t0_ms = int(self._active_traj_t0_ms) if self._active_traj_t0_ms is not None else 0
+        # Align trajectory time phase to the current STM32 pose so replan updates
+        # remain continuous and avoid replaying a stale packet prefix.
+        traj_t0_ms = self._phase_aligned_traj_t0_ms(knots, dt, latest_pose)
 
         traj = Trajectory(
             reply_to_pose_seq=self._last_pose_seq,

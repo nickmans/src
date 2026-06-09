@@ -2,6 +2,7 @@ import logging
 import socket
 import struct
 import time
+from typing import Optional
 
 
 MAGIC = 0x4F4D4E49
@@ -12,6 +13,7 @@ CMD_JOY_MODE_ON = 100
 CMD_JOY_MODE_OFF = 101
 CMD_JOY_VECTOR = 102
 CMD_JOY_SPIN = 103
+CMD_JOY_FOCUS = 104
 
 
 class EthernetUdpLink:
@@ -102,3 +104,10 @@ class EthernetUdpLink:
         spin_u8 = max(0, min(2, int(value)))
         arg = struct.pack("<B", spin_u8)
         return self._send(CMD_JOY_SPIN, arg, f"spin {spin_u8}")
+
+    def send_focus(self, enabled: Optional[bool] = None) -> bool:
+        if enabled is None:
+            return self._send(CMD_JOY_FOCUS, b"", "focus toggle")
+
+        arg = struct.pack("<B", 1 if enabled else 0)
+        return self._send(CMD_JOY_FOCUS, arg, f"focus {'on' if enabled else 'off'}")

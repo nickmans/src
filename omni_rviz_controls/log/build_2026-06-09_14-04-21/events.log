@@ -1,0 +1,387 @@
+[0.000000] (-) TimerEvent: {}
+[0.000509] (omni_rviz_controls) JobQueued: {'identifier': 'omni_rviz_controls', 'dependencies': OrderedDict()}
+[0.002229] (omni_rviz_controls) JobStarted: {'identifier': 'omni_rviz_controls'}
+[0.028462] (omni_rviz_controls) JobProgress: {'identifier': 'omni_rviz_controls', 'progress': 'cmake'}
+[0.030234] (omni_rviz_controls) JobProgress: {'identifier': 'omni_rviz_controls', 'progress': 'build'}
+[0.031468] (omni_rviz_controls) Command: {'cmd': ['/usr/bin/cmake', '--build', '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls', '--', '-j4', '-l4'], 'cwd': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls', 'env': OrderedDict({'LESSOPEN': '| /usr/bin/lesspipe %s', 'USER': 'nickolas', 'SSH_CLIENT': '192.168.20.47 61383 22', 'GZ_CONFIG_PATH': '/opt/ros/jazzy/opt/gz_sim_vendor/share/gz:/opt/ros/jazzy/opt/sdformat_vendor/share/gz:/opt/ros/jazzy/opt/gz_gui_vendor/share/gz:/opt/ros/jazzy/opt/gz_transport_vendor/share/gz:/opt/ros/jazzy/opt/gz_rendering_vendor/share/gz:/opt/ros/jazzy/opt/gz_plugin_vendor/share/gz:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/share/gz:/opt/ros/jazzy/opt/gz_msgs_vendor/share/gz:/opt/ros/jazzy/opt/gz_common_vendor/share/gz', 'GIT_EDITOR': ':', 'XDG_SESSION_TYPE': 'tty', 'GIT_ASKPASS': '/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/extensions/git/dist/askpass.sh', 'SHLVL': '1', 'LD_LIBRARY_PATH': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib:/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/aarch64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib', 'COPILOT_AGENT': '1', 'BROWSER': '/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/bin/helpers/browser.sh', 'HOME': '/home/nickolas', 'OLDPWD': '/home/nickolas/ros2_ws/src/omni_src', 'TERM_PROGRAM_VERSION': '1.123.0', 'VSCODE_IPC_HOOK_CLI': '/run/user/1000/vscode-ipc-97006eaa-501d-4376-8c5d-79feb31ffcec.sock', 'ROS_PYTHON_VERSION': '3', 'VSCODE_GIT_ASKPASS_MAIN': '/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/extensions/git/dist/askpass-main.js', 'VSCODE_GIT_ASKPASS_NODE': '/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/node', 'VSCODE_PYTHON_AUTOACTIVATE_GUARD': '1', 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus', 'COLORTERM': 'truecolor', 'DEBUGINFOD_URLS': 'https://debuginfod.ubuntu.com', 'COLCON_PREFIX_PATH': '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install:/home/nickolas/ros2_ws/src/omni_src/install:/home/nickolas/ros2_ws/install:/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install', 'ROS_DISTRO': 'jazzy', 'LOGNAME': 'nickolas', '_': '/usr/bin/colcon', 'ROS_VERSION': '2', 'XDG_SESSION_CLASS': 'user', 'TERM': 'xterm-256color', 'XDG_SESSION_ID': '2', 'HISTCONTROL': 'ignorespace', 'PATH': '/home/nickolas/.local/bin:/home/nickolas/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/home/nickolas/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/bin/remote-cli:/home/nickolas/.local/bin:/home/nickolas/bin:/home/nickolas/.local/bin:/home/nickolas/ros2_ws/install/omni-pi-server/bin:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin:/opt/ros/jazzy/opt/gz_msgs_vendor/bin:/opt/ros/jazzy/opt/gz_tools_vendor/bin:/opt/ros/jazzy/opt/gz_ogre_next_vendor/bin:/opt/ros/jazzy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin', 'XDG_RUNTIME_DIR': '/run/user/1000', 'DISPLAY': ':10', 'LANG': 'en_US.UTF-8', 'LS_COLORS': 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.avif=01;35:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:*~=00;90:*#=00;90:*.bak=00;90:*.crdownload=00;90:*.dpkg-dist=00;90:*.dpkg-new=00;90:*.dpkg-old=00;90:*.dpkg-tmp=00;90:*.old=00;90:*.orig=00;90:*.part=00;90:*.rej=00;90:*.rpmnew=00;90:*.rpmorig=00;90:*.rpmsave=00;90:*.swp=00;90:*.tmp=00;90:*.ucf-dist=00;90:*.ucf-new=00;90:*.ucf-old=00;90:', 'VSCODE_GIT_IPC_HANDLE': '/run/user/1000/vscode-git-373e11289d.sock', 'TERM_PROGRAM': 'vscode', 'AMENT_PREFIX_PATH': '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls:/home/nickolas/ros2_ws/install/sllidar_ros2:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy', 'SHELL': '/bin/bash', 'LESSCLOSE': '/usr/bin/lesspipe %s %s', 'ROS_AUTOMATIC_DISCOVERY_RANGE': 'SUBNET', 'VSCODE_GIT_ASKPASS_EXTRA_ARGS': '', 'GIT_PAGER': 'cat', 'PWD': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls', 'GIT_MERGE_AUTOEDIT': 'no', 'LC_ALL': 'en_US.UTF-8', 'COPILOT_DEBUG_NONCE': '385c9c687644f2c4244f4cc42838fc20', 'SSH_CONNECTION': '192.168.20.47 61383 192.168.20.70 22', 'XDG_DATA_DIRS': '/usr/local/share:/usr/share:/var/lib/snapd/desktop', 'PYTHONPATH': '/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/build/omni_traj:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/install/omni-pi-server/lib/python3.12/site-packages:/home/nickolas/ros2_ws/src/omni_src/build/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages', 'COLCON': '1', 'CMAKE_PREFIX_PATH': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls:/home/nickolas/ros2_ws/install/sllidar_ros2:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy'}), 'shell': False}
+[0.098625] (-) TimerEvent: {}
+[0.167065] (omni_rviz_controls) StdoutLine: {'line': b'-- Found ament_cmake: 2.5.4 (/opt/ros/jazzy/share/ament_cmake/cmake)\n'}
+[0.198735] (-) TimerEvent: {}
+[0.299655] (-) TimerEvent: {}
+[0.401031] (-) TimerEvent: {}
+[0.504788] (-) TimerEvent: {}
+[0.606643] (-) TimerEvent: {}
+[0.709806] (-) TimerEvent: {}
+[0.811205] (-) TimerEvent: {}
+[0.912330] (-) TimerEvent: {}
+[0.931068] (omni_rviz_controls) StdoutLine: {'line': b'-- Found pluginlib: 5.4.3 (/opt/ros/jazzy/share/pluginlib/cmake)\n'}
+[0.987429] (omni_rviz_controls) StdoutLine: {'line': b'-- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2\n'}
+[0.990311] (omni_rviz_controls) StdoutLine: {'line': b'-- Found rclcpp: 28.1.13 (/opt/ros/jazzy/share/rclcpp/cmake)\n'}
+[1.013009] (-) TimerEvent: {}
+[1.023899] (omni_rviz_controls) StdoutLine: {'line': b'-- Found rosidl_generator_c: 4.6.6 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)\n'}
+[1.045476] (omni_rviz_controls) StdoutLine: {'line': b'-- Found rosidl_generator_cpp: 4.6.6 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)\n'}
+[1.072696] (omni_rviz_controls) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c\n'}
+[1.095181] (omni_rviz_controls) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp\n'}
+[1.113164] (-) TimerEvent: {}
+[1.213770] (-) TimerEvent: {}
+[1.228820] (omni_rviz_controls) StdoutLine: {'line': b'-- Found rmw_implementation_cmake: 7.3.2 (/opt/ros/jazzy/share/rmw_implementation_cmake/cmake)\n'}
+[1.241564] (omni_rviz_controls) StdoutLine: {'line': b'-- Found rmw_fastrtps_cpp: 8.4.3 (/opt/ros/jazzy/share/rmw_fastrtps_cpp/cmake)\n'}
+[1.293469] (omni_rviz_controls) StdoutLine: {'line': b'-- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2\n'}
+[1.313897] (-) TimerEvent: {}
+[1.322832] (omni_rviz_controls) StdoutLine: {'line': b'-- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2\n'}
+[1.362090] (omni_rviz_controls) StdoutLine: {'line': b'-- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2\n'}
+[1.386834] (omni_rviz_controls) StdoutLine: {'line': b'-- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2\n'}
+[1.414219] (-) TimerEvent: {}
+[1.419548] (omni_rviz_controls) StdoutLine: {'line': b"-- Using RMW implementation 'rmw_fastrtps_cpp' as default\n"}
+[1.514398] (-) TimerEvent: {}
+[1.573985] (omni_rviz_controls) StdoutLine: {'line': b'-- Found rviz_common: 14.1.17 (/opt/ros/jazzy/share/rviz_common/cmake)\n'}
+[1.614991] (-) TimerEvent: {}
+[1.687374] (omni_rviz_controls) StdoutLine: {'line': b"-- Setting OGRE_DIR to: '/opt/ros/jazzy/share/rviz_ogre_vendor/cmake/../../../opt/rviz_ogre_vendor/lib/OGRE/cmake'\n"}
+[1.693554] (omni_rviz_controls) StdoutLine: {'line': b'-- Found OGRE\n'}
+[1.694219] (omni_rviz_controls) StdoutLine: {'line': b'--   static     : OFF\n'}
+[1.694387] (omni_rviz_controls) StdoutLine: {'line': b'--   components : MeshLodGenerator;Overlay;Paging;Property;RTShaderSystem;Terrain;Volume\n'}
+[1.694511] (omni_rviz_controls) StdoutLine: {'line': b'--   plugins    : Plugin_BSPSceneManager;Plugin_OctreeSceneManager;Plugin_PCZSceneManager;Plugin_ParticleFX;RenderSystem_GL;RenderSystem_GL3Plus;Codec_STBI\n'}
+[1.694638] (omni_rviz_controls) StdoutLine: {'line': b'--   media      : /opt/ros/jazzy/opt/rviz_ogre_vendor/share/OGRE/Media\n'}
+[1.694783] (omni_rviz_controls) StdoutLine: {'line': b'-- OGRE_LIBRARIES: OgreMeshLodGenerator;OgreOverlay;OgrePaging;OgreProperty;OgreRTShaderSystem;OgreTerrain;OgreVolume;OgreMain\n'}
+[1.694905] (omni_rviz_controls) StdoutLine: {'line': b'-- OGRE_LIBRARY_DIRS: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib\n'}
+[1.695048] (omni_rviz_controls) StdoutLine: {'line': b'-- OGRE_PLUGINS: Plugin_BSPSceneManager;Plugin_OctreeSceneManager;Plugin_PCZSceneManager;Plugin_ParticleFX;RenderSystem_GL;RenderSystem_GL3Plus;Codec_STBI\n'}
+[1.695587] (omni_rviz_controls) StdoutLine: {'line': b'-- OGRE_PLUGIN_DIR: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/OGRE\n'}
+[1.695957] (omni_rviz_controls) StdoutLine: {'line': b'-- rviz_ogre_vendor::OgreOverlay for IMPORTED_LOCATION_RELEASE: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/libOgreOverlay.so\n'}
+[1.696247] (omni_rviz_controls) StdoutLine: {'line': b'-- rviz_ogre_vendor::OgreOverlay for IMPORTED_LOCATION_DEBUG: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/libOgreOverlay.so\n'}
+[1.696387] (omni_rviz_controls) StdoutLine: {'line': b'-- rviz_ogre_vendor::OgreMain for IMPORTED_LOCATION_RELEASE: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/libOgreMain.so\n'}
+[1.696498] (omni_rviz_controls) StdoutLine: {'line': b'-- rviz_ogre_vendor::OgreMain for IMPORTED_LOCATION_DEBUG: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/libOgreMain.so\n'}
+[1.715707] (-) TimerEvent: {}
+[1.816512] (-) TimerEvent: {}
+[1.918143] (-) TimerEvent: {}
+[2.018785] (-) TimerEvent: {}
+[2.119354] (-) TimerEvent: {}
+[2.220206] (-) TimerEvent: {}
+[2.304338] (omni_rviz_controls) StdoutLine: {'line': b"-- Setting yaml-cpp_DIR to: '/opt/ros/jazzy/share/yaml_cpp_vendor/cmake/../../../opt/yaml_cpp_vendor/share/cmake/yaml-cpp'\n"}
+[2.320347] (-) TimerEvent: {}
+[2.422723] (-) TimerEvent: {}
+[2.523511] (-) TimerEvent: {}
+[2.624072] (-) TimerEvent: {}
+[2.645011] (omni_rviz_controls) StdoutLine: {'line': b'-- Configuring done (2.5s)\n'}
+[2.725146] (-) TimerEvent: {}
+[2.801067] (omni_rviz_controls) StdoutLine: {'line': b'-- Generating done (0.1s)\n'}
+[2.825691] (-) TimerEvent: {}
+[2.891589] (omni_rviz_controls) StdoutLine: {'line': b'-- Build files have been written to: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls\n'}
+[2.925965] (-) TimerEvent: {}
+[3.027034] (-) TimerEvent: {}
+[3.037914] (omni_rviz_controls) StdoutLine: {'line': b'[  0%] Built target omni_rviz_controls_autogen_timestamp_deps\n'}
+[3.131068] (-) TimerEvent: {}
+[3.159771] (omni_rviz_controls) StdoutLine: {'line': b'[ 20%] \x1b[34m\x1b[1mAutomatic MOC and UIC for target omni_rviz_controls\x1b[0m\n'}
+[3.231315] (-) TimerEvent: {}
+[3.332098] (-) TimerEvent: {}
+[3.434110] (-) TimerEvent: {}
+[3.534885] (-) TimerEvent: {}
+[3.636104] (-) TimerEvent: {}
+[3.738626] (-) TimerEvent: {}
+[3.839229] (-) TimerEvent: {}
+[3.940300] (-) TimerEvent: {}
+[4.044642] (-) TimerEvent: {}
+[4.155348] (-) TimerEvent: {}
+[4.256234] (-) TimerEvent: {}
+[4.361172] (-) TimerEvent: {}
+[4.461996] (-) TimerEvent: {}
+[4.565307] (-) TimerEvent: {}
+[4.678023] (-) TimerEvent: {}
+[4.779019] (-) TimerEvent: {}
+[4.845592] (omni_rviz_controls) StdoutLine: {'line': b'[ 20%] Built target omni_rviz_controls_autogen\n'}
+[4.879372] (-) TimerEvent: {}
+[4.997147] (omni_rviz_controls) StdoutLine: {'line': b'[ 40%] \x1b[32mBuilding CXX object CMakeFiles/omni_rviz_controls.dir/src/max_linear_velocity_panel.cpp.o\x1b[0m\n'}
+[4.997787] (-) TimerEvent: {}
+[5.003153] (omni_rviz_controls) StdoutLine: {'line': b'[ 60%] \x1b[32mBuilding CXX object CMakeFiles/omni_rviz_controls.dir/omni_rviz_controls_autogen/mocs_compilation.cpp.o\x1b[0m\n'}
+[5.097976] (-) TimerEvent: {}
+[5.201971] (-) TimerEvent: {}
+[5.311472] (-) TimerEvent: {}
+[5.413175] (-) TimerEvent: {}
+[5.515683] (-) TimerEvent: {}
+[5.624108] (-) TimerEvent: {}
+[5.727136] (-) TimerEvent: {}
+[5.831079] (-) TimerEvent: {}
+[5.943063] (-) TimerEvent: {}
+[6.043682] (-) TimerEvent: {}
+[6.146344] (-) TimerEvent: {}
+[6.254777] (-) TimerEvent: {}
+[6.356825] (-) TimerEvent: {}
+[6.462128] (-) TimerEvent: {}
+[6.564418] (-) TimerEvent: {}
+[6.668915] (-) TimerEvent: {}
+[6.776876] (-) TimerEvent: {}
+[6.880023] (-) TimerEvent: {}
+[6.980633] (-) TimerEvent: {}
+[7.085110] (-) TimerEvent: {}
+[7.187536] (-) TimerEvent: {}
+[7.289394] (-) TimerEvent: {}
+[7.393035] (-) TimerEvent: {}
+[7.496343] (-) TimerEvent: {}
+[7.601077] (-) TimerEvent: {}
+[7.701676] (-) TimerEvent: {}
+[7.803305] (-) TimerEvent: {}
+[7.906223] (-) TimerEvent: {}
+[8.011319] (-) TimerEvent: {}
+[8.114144] (-) TimerEvent: {}
+[8.214971] (-) TimerEvent: {}
+[8.315362] (-) TimerEvent: {}
+[8.416014] (-) TimerEvent: {}
+[8.519099] (-) TimerEvent: {}
+[8.620270] (-) TimerEvent: {}
+[8.724109] (-) TimerEvent: {}
+[8.827012] (-) TimerEvent: {}
+[8.927580] (-) TimerEvent: {}
+[9.029748] (-) TimerEvent: {}
+[9.133218] (-) TimerEvent: {}
+[9.233778] (-) TimerEvent: {}
+[9.336307] (-) TimerEvent: {}
+[9.436754] (-) TimerEvent: {}
+[9.537387] (-) TimerEvent: {}
+[9.639953] (-) TimerEvent: {}
+[9.741029] (-) TimerEvent: {}
+[9.841838] (-) TimerEvent: {}
+[9.943991] (-) TimerEvent: {}
+[10.044699] (-) TimerEvent: {}
+[10.146196] (-) TimerEvent: {}
+[10.249102] (-) TimerEvent: {}
+[10.352566] (-) TimerEvent: {}
+[10.454619] (-) TimerEvent: {}
+[10.558261] (-) TimerEvent: {}
+[10.659163] (-) TimerEvent: {}
+[10.759642] (-) TimerEvent: {}
+[10.860216] (-) TimerEvent: {}
+[10.962078] (-) TimerEvent: {}
+[11.064114] (-) TimerEvent: {}
+[11.165284] (-) TimerEvent: {}
+[11.267086] (-) TimerEvent: {}
+[11.369126] (-) TimerEvent: {}
+[11.471273] (-) TimerEvent: {}
+[11.572042] (-) TimerEvent: {}
+[11.674308] (-) TimerEvent: {}
+[11.779362] (-) TimerEvent: {}
+[11.884285] (-) TimerEvent: {}
+[11.987123] (-) TimerEvent: {}
+[12.093439] (-) TimerEvent: {}
+[12.194535] (-) TimerEvent: {}
+[12.298371] (-) TimerEvent: {}
+[12.400281] (-) TimerEvent: {}
+[12.507144] (-) TimerEvent: {}
+[12.607940] (-) TimerEvent: {}
+[12.712696] (-) TimerEvent: {}
+[12.814908] (-) TimerEvent: {}
+[12.917637] (-) TimerEvent: {}
+[13.019779] (-) TimerEvent: {}
+[13.122983] (-) TimerEvent: {}
+[13.223516] (-) TimerEvent: {}
+[13.324803] (-) TimerEvent: {}
+[13.426815] (-) TimerEvent: {}
+[13.531082] (-) TimerEvent: {}
+[13.639048] (-) TimerEvent: {}
+[13.739689] (-) TimerEvent: {}
+[13.842061] (-) TimerEvent: {}
+[13.944083] (-) TimerEvent: {}
+[14.047693] (-) TimerEvent: {}
+[14.149880] (-) TimerEvent: {}
+[14.254135] (-) TimerEvent: {}
+[14.355249] (-) TimerEvent: {}
+[14.455911] (-) TimerEvent: {}
+[14.558522] (-) TimerEvent: {}
+[14.663152] (-) TimerEvent: {}
+[14.764206] (-) TimerEvent: {}
+[14.866815] (-) TimerEvent: {}
+[14.969092] (-) TimerEvent: {}
+[15.073020] (-) TimerEvent: {}
+[15.174908] (-) TimerEvent: {}
+[15.281407] (-) TimerEvent: {}
+[15.384252] (-) TimerEvent: {}
+[15.487168] (-) TimerEvent: {}
+[15.590131] (-) TimerEvent: {}
+[15.691309] (-) TimerEvent: {}
+[15.793197] (-) TimerEvent: {}
+[15.901433] (-) TimerEvent: {}
+[16.004780] (-) TimerEvent: {}
+[16.113070] (-) TimerEvent: {}
+[16.213452] (-) TimerEvent: {}
+[16.318094] (-) TimerEvent: {}
+[16.420519] (-) TimerEvent: {}
+[16.524063] (-) TimerEvent: {}
+[16.626213] (-) TimerEvent: {}
+[16.729960] (-) TimerEvent: {}
+[16.830606] (-) TimerEvent: {}
+[16.939026] (-) TimerEvent: {}
+[17.042107] (-) TimerEvent: {}
+[17.143376] (-) TimerEvent: {}
+[17.245093] (-) TimerEvent: {}
+[17.346054] (-) TimerEvent: {}
+[17.447518] (-) TimerEvent: {}
+[17.556080] (-) TimerEvent: {}
+[17.663214] (-) TimerEvent: {}
+[17.765079] (-) TimerEvent: {}
+[17.867184] (-) TimerEvent: {}
+[17.968603] (-) TimerEvent: {}
+[18.069604] (-) TimerEvent: {}
+[18.170374] (-) TimerEvent: {}
+[18.272024] (-) TimerEvent: {}
+[18.384190] (-) TimerEvent: {}
+[18.493126] (-) TimerEvent: {}
+[18.597371] (-) TimerEvent: {}
+[18.697847] (-) TimerEvent: {}
+[18.801269] (-) TimerEvent: {}
+[18.910276] (-) TimerEvent: {}
+[19.022260] (-) TimerEvent: {}
+[19.126022] (-) TimerEvent: {}
+[19.232148] (-) TimerEvent: {}
+[19.334361] (-) TimerEvent: {}
+[19.438540] (-) TimerEvent: {}
+[19.550098] (-) TimerEvent: {}
+[19.654396] (-) TimerEvent: {}
+[19.757816] (-) TimerEvent: {}
+[19.863072] (-) TimerEvent: {}
+[19.965117] (-) TimerEvent: {}
+[20.068727] (-) TimerEvent: {}
+[20.170498] (-) TimerEvent: {}
+[20.274773] (-) TimerEvent: {}
+[20.375246] (-) TimerEvent: {}
+[20.477025] (-) TimerEvent: {}
+[20.579012] (-) TimerEvent: {}
+[20.679486] (-) TimerEvent: {}
+[20.785296] (-) TimerEvent: {}
+[20.890781] (-) TimerEvent: {}
+[20.994819] (-) TimerEvent: {}
+[21.098753] (-) TimerEvent: {}
+[21.203939] (-) TimerEvent: {}
+[21.308087] (-) TimerEvent: {}
+[21.409907] (-) TimerEvent: {}
+[21.513051] (-) TimerEvent: {}
+[21.619865] (-) TimerEvent: {}
+[21.724034] (-) TimerEvent: {}
+[21.828545] (-) TimerEvent: {}
+[21.929073] (-) TimerEvent: {}
+[22.037246] (-) TimerEvent: {}
+[22.138210] (-) TimerEvent: {}
+[22.239212] (-) TimerEvent: {}
+[22.341156] (-) TimerEvent: {}
+[22.442147] (-) TimerEvent: {}
+[22.544030] (-) TimerEvent: {}
+[22.644843] (-) TimerEvent: {}
+[22.745677] (-) TimerEvent: {}
+[22.846213] (-) TimerEvent: {}
+[22.947160] (-) TimerEvent: {}
+[23.049134] (-) TimerEvent: {}
+[23.150756] (-) TimerEvent: {}
+[23.256305] (-) TimerEvent: {}
+[23.358034] (-) TimerEvent: {}
+[23.462114] (-) TimerEvent: {}
+[23.568141] (-) TimerEvent: {}
+[23.673037] (-) TimerEvent: {}
+[23.773650] (-) TimerEvent: {}
+[23.874317] (-) TimerEvent: {}
+[23.975466] (-) TimerEvent: {}
+[24.076186] (-) TimerEvent: {}
+[24.178599] (-) TimerEvent: {}
+[24.280714] (-) TimerEvent: {}
+[24.383045] (-) TimerEvent: {}
+[24.484072] (-) TimerEvent: {}
+[24.585122] (-) TimerEvent: {}
+[24.688400] (-) TimerEvent: {}
+[24.789347] (-) TimerEvent: {}
+[24.889696] (-) TimerEvent: {}
+[24.927056] (omni_rviz_controls) StdoutLine: {'line': b'[ 80%] \x1b[32m\x1b[1mLinking CXX shared library libomni_rviz_controls.so\x1b[0m\n'}
+[24.991103] (-) TimerEvent: {}
+[25.093032] (-) TimerEvent: {}
+[25.193522] (-) TimerEvent: {}
+[25.295286] (-) TimerEvent: {}
+[25.396385] (-) TimerEvent: {}
+[25.498855] (-) TimerEvent: {}
+[25.599944] (-) TimerEvent: {}
+[25.701461] (-) TimerEvent: {}
+[25.803437] (-) TimerEvent: {}
+[25.905038] (-) TimerEvent: {}
+[26.007373] (-) TimerEvent: {}
+[26.112194] (-) TimerEvent: {}
+[26.220531] (-) TimerEvent: {}
+[26.322431] (-) TimerEvent: {}
+[26.422988] (-) TimerEvent: {}
+[26.526023] (-) TimerEvent: {}
+[26.626527] (-) TimerEvent: {}
+[26.728706] (-) TimerEvent: {}
+[26.829773] (-) TimerEvent: {}
+[26.934897] (-) TimerEvent: {}
+[27.035997] (-) TimerEvent: {}
+[27.138506] (-) TimerEvent: {}
+[27.242793] (-) TimerEvent: {}
+[27.343735] (-) TimerEvent: {}
+[27.447073] (-) TimerEvent: {}
+[27.547746] (-) TimerEvent: {}
+[27.649402] (-) TimerEvent: {}
+[27.755141] (-) TimerEvent: {}
+[27.856522] (-) TimerEvent: {}
+[27.957331] (-) TimerEvent: {}
+[28.060031] (-) TimerEvent: {}
+[28.162183] (-) TimerEvent: {}
+[28.263818] (-) TimerEvent: {}
+[28.364741] (-) TimerEvent: {}
+[28.467241] (-) TimerEvent: {}
+[28.568097] (-) TimerEvent: {}
+[28.670011] (-) TimerEvent: {}
+[28.772029] (-) TimerEvent: {}
+[28.872624] (-) TimerEvent: {}
+[28.976166] (-) TimerEvent: {}
+[29.078104] (-) TimerEvent: {}
+[29.180366] (-) TimerEvent: {}
+[29.283802] (-) TimerEvent: {}
+[29.384815] (-) TimerEvent: {}
+[29.488870] (-) TimerEvent: {}
+[29.592160] (-) TimerEvent: {}
+[29.696382] (-) TimerEvent: {}
+[29.798819] (-) TimerEvent: {}
+[29.900077] (-) TimerEvent: {}
+[30.001145] (-) TimerEvent: {}
+[30.104667] (-) TimerEvent: {}
+[30.207116] (-) TimerEvent: {}
+[30.307826] (-) TimerEvent: {}
+[30.409662] (-) TimerEvent: {}
+[30.510584] (-) TimerEvent: {}
+[30.611281] (-) TimerEvent: {}
+[30.712030] (-) TimerEvent: {}
+[30.812841] (-) TimerEvent: {}
+[30.917799] (-) TimerEvent: {}
+[31.018898] (-) TimerEvent: {}
+[31.121455] (-) TimerEvent: {}
+[31.231052] (-) TimerEvent: {}
+[31.331623] (-) TimerEvent: {}
+[31.432960] (-) TimerEvent: {}
+[31.534078] (-) TimerEvent: {}
+[31.636306] (-) TimerEvent: {}
+[31.666234] (omni_rviz_controls) StdoutLine: {'line': b'[100%] Built target omni_rviz_controls\n'}
+[31.708877] (omni_rviz_controls) CommandEnded: {'returncode': 0}
+[31.711040] (omni_rviz_controls) JobProgress: {'identifier': 'omni_rviz_controls', 'progress': 'install'}
+[31.738152] (-) TimerEvent: {}
+[31.746311] (omni_rviz_controls) Command: {'cmd': ['/usr/bin/cmake', '--install', '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls'], 'cwd': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls', 'env': OrderedDict({'LESSOPEN': '| /usr/bin/lesspipe %s', 'USER': 'nickolas', 'SSH_CLIENT': '192.168.20.47 61383 22', 'GZ_CONFIG_PATH': '/opt/ros/jazzy/opt/gz_sim_vendor/share/gz:/opt/ros/jazzy/opt/sdformat_vendor/share/gz:/opt/ros/jazzy/opt/gz_gui_vendor/share/gz:/opt/ros/jazzy/opt/gz_transport_vendor/share/gz:/opt/ros/jazzy/opt/gz_rendering_vendor/share/gz:/opt/ros/jazzy/opt/gz_plugin_vendor/share/gz:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/share/gz:/opt/ros/jazzy/opt/gz_msgs_vendor/share/gz:/opt/ros/jazzy/opt/gz_common_vendor/share/gz', 'GIT_EDITOR': ':', 'XDG_SESSION_TYPE': 'tty', 'GIT_ASKPASS': '/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/extensions/git/dist/askpass.sh', 'SHLVL': '1', 'LD_LIBRARY_PATH': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib:/opt/ros/jazzy/opt/gz_sim_vendor/lib:/opt/ros/jazzy/opt/gz_sensors_vendor/lib:/opt/ros/jazzy/opt/gz_physics_vendor/lib:/opt/ros/jazzy/opt/sdformat_vendor/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/aarch64-linux-gnu:/opt/ros/jazzy/opt/gz_gui_vendor/lib:/opt/ros/jazzy/opt/gz_transport_vendor/lib:/opt/ros/jazzy/opt/gz_rendering_vendor/lib:/opt/ros/jazzy/opt/gz_plugin_vendor/lib:/opt/ros/jazzy/opt/gz_fuel_tools_vendor/lib:/opt/ros/jazzy/opt/gz_msgs_vendor/lib:/opt/ros/jazzy/opt/gz_common_vendor/lib:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_tools_vendor/lib:/opt/ros/jazzy/opt/gz_ogre_next_vendor/lib:/opt/ros/jazzy/opt/gz_dartsim_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib', 'COPILOT_AGENT': '1', 'BROWSER': '/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/bin/helpers/browser.sh', 'HOME': '/home/nickolas', 'OLDPWD': '/home/nickolas/ros2_ws/src/omni_src', 'TERM_PROGRAM_VERSION': '1.123.0', 'VSCODE_IPC_HOOK_CLI': '/run/user/1000/vscode-ipc-97006eaa-501d-4376-8c5d-79feb31ffcec.sock', 'ROS_PYTHON_VERSION': '3', 'VSCODE_GIT_ASKPASS_MAIN': '/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/extensions/git/dist/askpass-main.js', 'VSCODE_GIT_ASKPASS_NODE': '/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/node', 'VSCODE_PYTHON_AUTOACTIVATE_GUARD': '1', 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus', 'COLORTERM': 'truecolor', 'DEBUGINFOD_URLS': 'https://debuginfod.ubuntu.com', 'COLCON_PREFIX_PATH': '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install:/home/nickolas/ros2_ws/src/omni_src/install:/home/nickolas/ros2_ws/install:/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install', 'ROS_DISTRO': 'jazzy', 'LOGNAME': 'nickolas', '_': '/usr/bin/colcon', 'ROS_VERSION': '2', 'XDG_SESSION_CLASS': 'user', 'TERM': 'xterm-256color', 'XDG_SESSION_ID': '2', 'HISTCONTROL': 'ignorespace', 'PATH': '/home/nickolas/.local/bin:/home/nickolas/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/home/nickolas/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/home/nickolas/.vscode-server/cli/servers/Stable-6a44c352bd24569c417e530095901b649960f9f8/server/bin/remote-cli:/home/nickolas/.local/bin:/home/nickolas/bin:/home/nickolas/.local/bin:/home/nickolas/ros2_ws/install/omni-pi-server/bin:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/bin:/opt/ros/jazzy/opt/gz_msgs_vendor/bin:/opt/ros/jazzy/opt/gz_tools_vendor/bin:/opt/ros/jazzy/opt/gz_ogre_next_vendor/bin:/opt/ros/jazzy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin', 'XDG_RUNTIME_DIR': '/run/user/1000', 'DISPLAY': ':10', 'LANG': 'en_US.UTF-8', 'LS_COLORS': 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.avif=01;35:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:*~=00;90:*#=00;90:*.bak=00;90:*.crdownload=00;90:*.dpkg-dist=00;90:*.dpkg-new=00;90:*.dpkg-old=00;90:*.dpkg-tmp=00;90:*.old=00;90:*.orig=00;90:*.part=00;90:*.rej=00;90:*.rpmnew=00;90:*.rpmorig=00;90:*.rpmsave=00;90:*.swp=00;90:*.tmp=00;90:*.ucf-dist=00;90:*.ucf-new=00;90:*.ucf-old=00;90:', 'VSCODE_GIT_IPC_HANDLE': '/run/user/1000/vscode-git-373e11289d.sock', 'TERM_PROGRAM': 'vscode', 'AMENT_PREFIX_PATH': '/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls:/home/nickolas/ros2_ws/install/sllidar_ros2:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy', 'SHELL': '/bin/bash', 'LESSCLOSE': '/usr/bin/lesspipe %s %s', 'ROS_AUTOMATIC_DISCOVERY_RANGE': 'SUBNET', 'VSCODE_GIT_ASKPASS_EXTRA_ARGS': '', 'GIT_PAGER': 'cat', 'PWD': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls', 'GIT_MERGE_AUTOEDIT': 'no', 'LC_ALL': 'en_US.UTF-8', 'COPILOT_DEBUG_NONCE': '385c9c687644f2c4244f4cc42838fc20', 'SSH_CONNECTION': '192.168.20.47 61383 192.168.20.70 22', 'XDG_DATA_DIRS': '/usr/local/share:/usr/share:/var/lib/snapd/desktop', 'PYTHONPATH': '/home/nickolas/ros2_ws/src/omni_src/omni_traj/build/omni_traj:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/build/omni_traj:/home/nickolas/ros2_ws/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/install/omni-pi-server/lib/python3.12/site-packages:/home/nickolas/ros2_ws/src/omni_src/build/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj/lib/python3.12/site-packages:/home/nickolas/ros2_ws/src/omni_src/build/omni-pi-server:/home/nickolas/ros2_ws/src/omni_src/install/omni-pi-server/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages', 'COLCON': '1', 'CMAKE_PREFIX_PATH': '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls:/home/nickolas/ros2_ws/install/sllidar_ros2:/opt/ros/jazzy/opt/gz_sim_vendor:/opt/ros/jazzy/opt/gz_sensors_vendor:/opt/ros/jazzy/opt/gz_physics_vendor:/opt/ros/jazzy/opt/sdformat_vendor:/opt/ros/jazzy/opt/gz_gui_vendor:/opt/ros/jazzy/opt/gz_transport_vendor:/opt/ros/jazzy/opt/gz_rendering_vendor:/opt/ros/jazzy/opt/gz_plugin_vendor:/opt/ros/jazzy/opt/gz_fuel_tools_vendor:/opt/ros/jazzy/opt/gz_msgs_vendor:/opt/ros/jazzy/opt/gz_common_vendor:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_tools_vendor:/opt/ros/jazzy/opt/gz_ogre_next_vendor:/opt/ros/jazzy/opt/gz_dartsim_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy'}), 'shell': False}
+[31.775318] (omni_rviz_controls) StdoutLine: {'line': b'-- Install configuration: ""\n'}
+[31.776153] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/rviz_plugin_description.xml\n'}
+[31.776683] (omni_rviz_controls) StdoutLine: {'line': b'-- Installing: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib/libomni_rviz_controls.so\n'}
+[31.778510] (omni_rviz_controls) StdoutLine: {'line': b'-- Set non-toolchain portion of runtime path of "/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib/libomni_rviz_controls.so" to ""\n'}
+[31.779359] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/include\n'}
+[31.779598] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/include/omni_rviz_controls\n'}
+[31.779817] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/include/omni_rviz_controls/max_linear_velocity_panel.hpp\n'}
+[31.780160] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/rviz_plugin_description.xml\n'}
+[31.780464] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/ament_index/resource_index/package_run_dependencies/omni_rviz_controls\n'}
+[31.780763] (omni_rviz_controls) StdoutLine: {'line': b'-- Installing: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/ament_index/resource_index/parent_prefix_path/omni_rviz_controls\n'}
+[31.780975] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/environment/ament_prefix_path.sh\n'}
+[31.781124] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/environment/ament_prefix_path.dsv\n'}
+[31.781278] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/environment/path.sh\n'}
+[31.781713] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/environment/path.dsv\n'}
+[31.781910] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/local_setup.bash\n'}
+[31.782868] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/local_setup.sh\n'}
+[31.783101] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/local_setup.zsh\n'}
+[31.783245] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/local_setup.dsv\n'}
+[31.783429] (omni_rviz_controls) StdoutLine: {'line': b'-- Installing: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.dsv\n'}
+[31.784127] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/ament_index/resource_index/packages/omni_rviz_controls\n'}
+[31.784456] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/ament_index/resource_index/rviz_common__pluginlib__plugin/omni_rviz_controls\n'}
+[31.784651] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/cmake/omni_rviz_controlsConfig.cmake\n'}
+[31.784780] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/cmake/omni_rviz_controlsConfig-version.cmake\n'}
+[31.784899] (omni_rviz_controls) StdoutLine: {'line': b'-- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.xml\n'}
+[31.790022] (omni_rviz_controls) CommandEnded: {'returncode': 0}
+[31.838839] (-) TimerEvent: {}
+[31.869203] (omni_rviz_controls) JobEnded: {'identifier': 'omni_rviz_controls', 'rc': 0}
+[31.871286] (-) EventReactorShutdown: {}

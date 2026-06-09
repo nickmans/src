@@ -1,0 +1,69 @@
+[0.029s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls -- -j4 -l4
+[0.164s] -- Found ament_cmake: 2.5.4 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.927s] -- Found pluginlib: 5.4.3 (/opt/ros/jazzy/share/pluginlib/cmake)
+[0.986s] -- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2
+[0.989s] -- Found rclcpp: 28.1.13 (/opt/ros/jazzy/share/rclcpp/cmake)
+[1.020s] -- Found rosidl_generator_c: 4.6.6 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+[1.042s] -- Found rosidl_generator_cpp: 4.6.6 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+[1.069s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[1.092s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[1.225s] -- Found rmw_implementation_cmake: 7.3.2 (/opt/ros/jazzy/share/rmw_implementation_cmake/cmake)
+[1.238s] -- Found rmw_fastrtps_cpp: 8.4.3 (/opt/ros/jazzy/share/rmw_fastrtps_cpp/cmake)
+[1.290s] -- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2
+[1.319s] -- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2
+[1.359s] -- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2
+[1.383s] -- Found TinyXML2 via Config file: /usr/lib/aarch64-linux-gnu/cmake/tinyxml2
+[1.416s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[1.571s] -- Found rviz_common: 14.1.17 (/opt/ros/jazzy/share/rviz_common/cmake)
+[1.684s] -- Setting OGRE_DIR to: '/opt/ros/jazzy/share/rviz_ogre_vendor/cmake/../../../opt/rviz_ogre_vendor/lib/OGRE/cmake'
+[1.690s] -- Found OGRE
+[1.690s] --   static     : OFF
+[1.690s] --   components : MeshLodGenerator;Overlay;Paging;Property;RTShaderSystem;Terrain;Volume
+[1.691s] --   plugins    : Plugin_BSPSceneManager;Plugin_OctreeSceneManager;Plugin_PCZSceneManager;Plugin_ParticleFX;RenderSystem_GL;RenderSystem_GL3Plus;Codec_STBI
+[1.691s] --   media      : /opt/ros/jazzy/opt/rviz_ogre_vendor/share/OGRE/Media
+[1.691s] -- OGRE_LIBRARIES: OgreMeshLodGenerator;OgreOverlay;OgrePaging;OgreProperty;OgreRTShaderSystem;OgreTerrain;OgreVolume;OgreMain
+[1.691s] -- OGRE_LIBRARY_DIRS: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib
+[1.691s] -- OGRE_PLUGINS: Plugin_BSPSceneManager;Plugin_OctreeSceneManager;Plugin_PCZSceneManager;Plugin_ParticleFX;RenderSystem_GL;RenderSystem_GL3Plus;Codec_STBI
+[1.692s] -- OGRE_PLUGIN_DIR: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/OGRE
+[1.692s] -- rviz_ogre_vendor::OgreOverlay for IMPORTED_LOCATION_RELEASE: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/libOgreOverlay.so
+[1.692s] -- rviz_ogre_vendor::OgreOverlay for IMPORTED_LOCATION_DEBUG: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/libOgreOverlay.so
+[1.692s] -- rviz_ogre_vendor::OgreMain for IMPORTED_LOCATION_RELEASE: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/libOgreMain.so
+[1.693s] -- rviz_ogre_vendor::OgreMain for IMPORTED_LOCATION_DEBUG: /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/libOgreMain.so
+[2.301s] -- Setting yaml-cpp_DIR to: '/opt/ros/jazzy/share/yaml_cpp_vendor/cmake/../../../opt/yaml_cpp_vendor/share/cmake/yaml-cpp'
+[2.641s] -- Configuring done (2.5s)
+[2.797s] -- Generating done (0.1s)
+[2.888s] -- Build files have been written to: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls
+[3.034s] [  0%] Built target omni_rviz_controls_autogen_timestamp_deps
+[3.156s] [ 20%] [34m[1mAutomatic MOC and UIC for target omni_rviz_controls[0m
+[4.842s] [ 20%] Built target omni_rviz_controls_autogen
+[4.994s] [ 40%] [32mBuilding CXX object CMakeFiles/omni_rviz_controls.dir/src/max_linear_velocity_panel.cpp.o[0m
+[4.999s] [ 60%] [32mBuilding CXX object CMakeFiles/omni_rviz_controls.dir/omni_rviz_controls_autogen/mocs_compilation.cpp.o[0m
+[24.924s] [ 80%] [32m[1mLinking CXX shared library libomni_rviz_controls.so[0m
+[31.663s] [100%] Built target omni_rviz_controls
+[31.706s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls -- -j4 -l4
+[31.743s] Invoking command in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls
+[31.772s] -- Install configuration: ""
+[31.773s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/rviz_plugin_description.xml
+[31.773s] -- Installing: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib/libomni_rviz_controls.so
+[31.775s] -- Set non-toolchain portion of runtime path of "/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/lib/libomni_rviz_controls.so" to ""
+[31.776s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/include
+[31.776s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/include/omni_rviz_controls
+[31.776s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/include/omni_rviz_controls/max_linear_velocity_panel.hpp
+[31.776s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/rviz_plugin_description.xml
+[31.777s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/ament_index/resource_index/package_run_dependencies/omni_rviz_controls
+[31.777s] -- Installing: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/ament_index/resource_index/parent_prefix_path/omni_rviz_controls
+[31.777s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/environment/ament_prefix_path.sh
+[31.777s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/environment/ament_prefix_path.dsv
+[31.778s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/environment/path.sh
+[31.778s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/environment/path.dsv
+[31.779s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/local_setup.bash
+[31.779s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/local_setup.sh
+[31.779s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/local_setup.zsh
+[31.779s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/local_setup.dsv
+[31.780s] -- Installing: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.dsv
+[31.780s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/ament_index/resource_index/packages/omni_rviz_controls
+[31.781s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/ament_index/resource_index/rviz_common__pluginlib__plugin/omni_rviz_controls
+[31.781s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/cmake/omni_rviz_controlsConfig.cmake
+[31.781s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/cmake/omni_rviz_controlsConfig-version.cmake
+[31.781s] -- Up-to-date: /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/install/omni_rviz_controls/share/omni_rviz_controls/package.xml
+[31.787s] Invoked command in '/home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nickolas/ros2_ws/src/omni_src/omni_traj/install/omni_traj:/home/nickolas/ros2_ws/install/omni_traj:/home/nickolas/ros2_ws/src/omni_src/install/omni_traj:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/nickolas/ros2_ws/src/omni_src/omni_rviz_controls/build/omni_rviz_controls
