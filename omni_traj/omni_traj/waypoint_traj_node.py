@@ -477,6 +477,8 @@ class WaypointTrajNode(Node):
         height = max(1, int(round(h_m / res)))
         origin_x = float(base_pose_now.x) - 0.5 * width * res
         origin_y = float(base_pose_now.y) - 0.5 * height * res
+        origin_x = round(origin_x / res) * res
+        origin_y = round(origin_y / res) * res
         return GridSpec(res=res, width=width, height=height, origin_x=origin_x, origin_y=origin_y)
 
     @staticmethod
@@ -1893,6 +1895,7 @@ class WaypointTrajNode(Node):
         self,
         local_costmap: np.ndarray,
         local_gs: GridSpec,
+        base_pose_now: Pose2D,
     ) -> np.ndarray:
         """
         Build a global-size planning grid where dynamic obstacles are only stamped
@@ -1905,6 +1908,7 @@ class WaypointTrajNode(Node):
         if not use_hysteresis:
             occ_ys, occ_xs = np.where(local_costmap > 0)
             if len(occ_xs) == 0:
+                self._clear_robot_circle_in_costmap(planning, self.gs_map, base_pose_now)
                 return planning
 
             for ix_l, iy_l in zip(occ_xs, occ_ys):
@@ -1912,6 +1916,7 @@ class WaypointTrajNode(Node):
                 ix_g, iy_g = self.world_to_grid(self.gs_map, wx, wy)
                 if self.in_bounds(self.gs_map, ix_g, iy_g):
                     planning[iy_g, ix_g] = max(planning[iy_g, ix_g], local_costmap[iy_l, ix_l])
+            self._clear_robot_circle_in_costmap(planning, self.gs_map, base_pose_now)
             return planning
 
         confirm_scans = max(1, int(self.get_parameter("planning_hard_obstacle_confirm_scans").value))
@@ -1942,6 +1947,7 @@ class WaypointTrajNode(Node):
                     # Treat new hard hits as soft hints until they persist.
                     planning[iy_g, ix_g] = max(planning[iy_g, ix_g], 50)
 
+        self._clear_robot_circle_in_costmap(planning, self.gs_map, base_pose_now)
         return planning
 
     def _reset_mapping_buffers(self) -> None:
@@ -5079,7 +5085,7 @@ class WaypointTrajNode(Node):
         if self.mapping_active and not self._has_fresh_slam_map(now_ns):
             self._update_mapping_logodds_from_scan_pairs(self._latest_scan_pairs, base_pose_now)
 
-        planning_costmap = self._build_planning_costmap_from_local(local_costmap, local_gs)
+        planning_costmap = self._build_planning_costmap_from_local(local_costmap, local_gs, base_pose_now)
 
         # Relocate stuck waypoints for all modes, including wp t auto-test points,
         # so generated goals inside hard obstacles are shifted to traversable cells.
@@ -5101,9 +5107,30 @@ class WaypointTrajNode(Node):
 
         should_replan = self._should_replan_trajectory(base_pose_now, wps)
         if not should_replan and self._cached_traj is not None:
-            self._publish_cached_if_valid(frame, base_pose_now, planning_costmap)
-            self._finish_timer_cycle(timer_start_ns)
-            return
+            xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c = self._cached_traj
+            if self._trajectory_swept_collision_free(planning_costmap, xs_c, ys_c):
+                self._cached_traj_collision_iters = 0
+                self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+                self._finish_timer_cycle(timer_start_ns)
+                return
+
+            self._cached_traj_collision_iters += 1
+            reject_confirm_iters = max(1, int(self.get_parameter("cached_traj_reject_confirm_iters").value))
+            if self._cached_traj_collision_iters < reject_confirm_iters:
+                self.get_logger().warn(
+                    "Cached trajectory collision check failed on this cycle; "
+                    f"waiting for {reject_confirm_iters} consecutive failures before rejection "
+                    f"({self._cached_traj_collision_iters}/{reject_confirm_iters})."
+                )
+                self._publish_trajectory(frame, xs_c, ys_c, yaws_c, velocities_c, vxs_c, vys_c)
+                self._finish_timer_cycle(timer_start_ns)
+                return
+
+            self.get_logger().warn(
+                "Cached trajectory invalidated by latest hard-obstacle map; replanning immediately."
+            )
+            self._cached_traj = None
+            self._cached_traj_collision_iters = 0
 
         traj_horizon_m = max(0.20, float(self.get_parameter("trajectory_horizon_m").value))
 
