@@ -3423,6 +3423,10 @@ class WaypointTrajNode(Node):
 
         self._cached_traj = (xs_t, ys_t, yaws_t, vel_t, vxs_t, vys_t)
         self._cached_traj_collision_iters = 0
+        # Force a fresh plan next cycle so we don't keep replaying the stop-prefix
+        # after new obstacle geometry invalidates the original route.
+        self._last_plan_ns = 0
+        self._last_plan_wps_sig = None
         self.get_logger().warn(
             f"{source_label} trajectory trimmed to safe prefix ({keep_n}/{len(xs)} pts) after swept check."
         )
@@ -4905,6 +4909,12 @@ class WaypointTrajNode(Node):
                 return True
             if yaw_delta >= float(self.get_parameter("trajectory_replan_min_yaw_rad").value):
                 return True
+
+        replan_hz = max(0.05, float(self.get_parameter("trajectory_replan_hz").value))
+        period_ns = int(1e9 / replan_hz)
+        now_ns = self.get_clock().now().nanoseconds
+        if (self._last_plan_ns <= 0) or ((now_ns - self._last_plan_ns) >= period_ns):
+            return True
 
         return False
     
