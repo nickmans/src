@@ -3294,12 +3294,17 @@ class WaypointTrajNode(Node):
     # =======================
     # Planning (A*) — unchanged / minimal
     # =======================
-    def line_collision_free(self, grid: np.ndarray, a_xy: Tuple[float, float], b_xy: Tuple[float, float]) -> bool:
+    def _segment_hits_hard_obstacle(
+        self,
+        grid: np.ndarray,
+        a_xy: Tuple[float, float],
+        b_xy: Tuple[float, float],
+    ) -> bool:
         ax, ay = a_xy
         bx, by = b_xy
         dist = math.hypot(bx - ax, by - ay)
         if dist < 1e-9:
-            return True
+            return self._point_hits_hard_obstacle(grid, ax, ay)
 
         step_m = max(self.gs_map.res * 0.5, 0.01)
         n = int(math.ceil(dist / step_m))
@@ -3307,12 +3312,12 @@ class WaypointTrajNode(Node):
             t = i / max(n, 1)
             x = ax + t * (bx - ax)
             y = ay + t * (by - ay)
-            ix, iy = self.world_to_grid(self.gs_map, x, y)
-            if not self.in_bounds(self.gs_map, ix, iy):
-                return False
-            if grid[iy, ix] >= 100:  # Only block hard obstacles
-                return False
-        return True
+            if self._point_hits_hard_obstacle(grid, x, y):
+                return True
+        return False
+
+    def line_collision_free(self, grid: np.ndarray, a_xy: Tuple[float, float], b_xy: Tuple[float, float]) -> bool:
+        return not self._segment_hits_hard_obstacle(grid, a_xy, b_xy)
 
     def _point_hits_hard_obstacle(self, grid: np.ndarray, x: float, y: float) -> bool:
         """Return True when the sampled trajectory point lies in a hard cell."""
@@ -3327,30 +3332,16 @@ class WaypointTrajNode(Node):
         if n <= 0:
             return False
 
-        sample_step_m = max(0.01, 0.5 * self.gs_map.res)
+        if self._point_hits_hard_obstacle(grid, float(xs[0]), float(ys[0])):
+            return False
 
-        for i in range(n):
-            x1 = float(xs[i])
-            y1 = float(ys[i])
-            if self._point_hits_hard_obstacle(grid, x1, y1):
+        for i in range(1, n):
+            if self._segment_hits_hard_obstacle(
+                grid,
+                (float(xs[i - 1]), float(ys[i - 1])),
+                (float(xs[i]), float(ys[i])),
+            ):
                 return False
-
-            if i == 0:
-                continue
-
-            x0 = float(xs[i - 1])
-            y0 = float(ys[i - 1])
-            seg_len = math.hypot(x1 - x0, y1 - y0)
-            if seg_len <= sample_step_m:
-                continue
-
-            n_steps = int(math.ceil(seg_len / sample_step_m))
-            for j in range(1, n_steps):
-                t = j / max(1, n_steps)
-                sx = x0 + t * (x1 - x0)
-                sy = y0 + t * (y1 - y0)
-                if self._point_hits_hard_obstacle(grid, sx, sy):
-                    return False
 
         return True
 
@@ -3359,8 +3350,6 @@ class WaypointTrajNode(Node):
         n = min(len(xs), len(ys))
         if n <= 0:
             return -1
-
-        sample_step_m = max(0.01, 0.5 * self.gs_map.res)
 
         x0 = float(xs[0])
         y0 = float(ys[0])
@@ -3371,22 +3360,8 @@ class WaypointTrajNode(Node):
         for i in range(1, n):
             x1 = float(xs[i])
             y1 = float(ys[i])
-            seg_len = math.hypot(x1 - x0, y1 - y0)
-
-            if seg_len <= sample_step_m:
-                if self._point_hits_hard_obstacle(grid, x1, y1):
-                    return last_safe
-                last_safe = i
-                x0, y0 = x1, y1
-                continue
-
-            n_steps = int(math.ceil(seg_len / sample_step_m))
-            for j in range(1, n_steps + 1):
-                t = j / max(1, n_steps)
-                sx = x0 + t * (x1 - x0)
-                sy = y0 + t * (y1 - y0)
-                if self._point_hits_hard_obstacle(grid, sx, sy):
-                    return last_safe
+            if self._segment_hits_hard_obstacle(grid, (x0, y0), (x1, y1)):
+                return last_safe
 
             last_safe = i
             x0, y0 = x1, y1
@@ -3831,6 +3806,9 @@ class WaypointTrajNode(Node):
                     continue
                 if grid[ny, nx] >= 100:  # Hard obstacle blocks
                     continue
+                if dx != 0 and dy != 0:
+                    if grid[iy, nx] >= 100 or grid[ny, ix] >= 100:
+                        continue
                 
                 # Add cell cost to movement cost: soft cells (50) add 0.5, hard cells add 1.0
                 cell_cost = grid[ny, nx] / 100.0
@@ -3897,10 +3875,19 @@ class WaypointTrajNode(Node):
 
         path[0] = start_xy
         path[-1] = goal_xy
-        
+
+        raw_path = list(path)
+
         # Simplify path to remove unnecessary waypoints (shortcutting)
         path = self.simplify_path(grid, path)
-        
+        if not self._path_collision_free(grid, path):
+            self.get_logger().warn("Simplified A* path crossed hard obstacle cells; using raw A* path.")
+            path = raw_path
+
+        if not self._path_collision_free(grid, path):
+            self.get_logger().warn("A* path crossed hard obstacle cells; rejecting segment.")
+            return []
+
         return path
 
     def simplify_path(self, grid: np.ndarray, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
