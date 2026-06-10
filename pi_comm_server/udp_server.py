@@ -42,6 +42,11 @@ from std_srvs.srv import Trigger
 
 logger = logging.getLogger(__name__)
 
+TRAJ_KNOT_DT_S = 0.01
+TRAJ_KNOT_DT_MS = int(TRAJ_KNOT_DT_S * 1000.0)
+TRAJ_TX_MAX_KNOTS = 64
+POSE_TIME_EXTRAPOLATION_CAP_MS = 250
+
 
 @dataclass
 class PoseData:
@@ -103,6 +108,8 @@ class OMNIUDPServer:
         self._hold_traj_t0_ms: Optional[int] = None
         self._hold_knot: Optional[Tuple[float, float, float, float, float]] = None
         self._last_valid_traj: Optional[Trajectory] = None
+        self._active_traj_signature: Optional[tuple] = None
+        self._active_traj_t0_ms: Optional[int] = None
         self._traj_phase_search_knots: int = 24
         self._traj_constant_yaw_enabled = str(os.getenv("OMNI_TRAJ_CONSTANT_YAW", "1")).strip().lower() in {
             "1", "true", "yes", "on"
@@ -1072,6 +1079,8 @@ class OMNIUDPServer:
                     self._hold_traj_t0_ms = int(latest_pose.pose_t_ms)
                     self._hold_until_ms = now_ms + 500
                 self._last_valid_traj = None
+                self._active_traj_signature = None
+                self._active_traj_t0_ms = None
             self.set_trajectory_active(False)
             ok_stack = self._switch_stack_mode("standby")
             if not ok_stack:
@@ -1088,6 +1097,8 @@ class OMNIUDPServer:
             self.set_trajectory_active(False)
             with self.traj_lock:
                 self._last_valid_traj = None
+                self._active_traj_signature = None
+                self._active_traj_t0_ms = None
 
             started = self._switch_stack_mode_with_retries("localization", attempts=3, retry_delay_s=3.0)
             if not started:
@@ -1116,6 +1127,8 @@ class OMNIUDPServer:
             self.set_trajectory_active(False)
             with self.traj_lock:
                 self._last_valid_traj = None
+                self._active_traj_signature = None
+                self._active_traj_t0_ms = None
 
             ok_stack = self._switch_stack_mode_with_retries("standby", attempts=2, retry_delay_s=2.0)
             if not ok_stack:
@@ -1308,6 +1321,36 @@ class OMNIUDPServer:
             logger.error(f"Failed to launch poweroff command: {exc}")
             self._shutdown_requested = False
 
+    @staticmethod
+    def _estimate_stm32_time_ms(pi_monotonic_ms: int, latest_pose: Optional[PoseData]) -> int:
+        """Estimate STM32 tick time at a given Pi monotonic timestamp."""
+        if latest_pose is None:
+            return 0
+
+        age_ms = max(0, int(pi_monotonic_ms) - int(latest_pose.received_t_ms))
+        age_ms = min(age_ms, POSE_TIME_EXTRAPOLATION_CAP_MS)
+        return int(latest_pose.pose_t_ms) + age_ms
+
+    @staticmethod
+    def _trajectory_signature(knots: List[Tuple[float, float, float, float, float]]) -> tuple:
+        """Compact rounded signature for detecting materially new plans."""
+        if not knots:
+            return ()
+
+        anchor_indices = sorted({0, len(knots) // 3, (2 * len(knots)) // 3, len(knots) - 1})
+        signature: List[float] = [float(len(knots))]
+        for idx in anchor_indices:
+            x, y, _yaw, vx, vy = knots[idx]
+            signature.extend(
+                [
+                    round(float(x), 3),
+                    round(float(y), 3),
+                    round(float(vx), 3),
+                    round(float(vy), 3),
+                ]
+            )
+        return tuple(signature)
+
     def _send_trajectory(self, traj: Trajectory, addr: tuple):
         try:
             payload = traj.pack()
@@ -1414,62 +1457,22 @@ class OMNIUDPServer:
             if recovered:
                 self._set_ros2_retry_enabled(False, reason="retry recovery succeeded")
 
-    def _phase_aligned_traj_t0_ms(
-        self,
-        knots: List[Tuple[float, float, float, float, float]],
-        dt_s: float,
-        pose_now: Optional[PoseData],
-    ) -> int:
-        """Compute STM32-domain trajectory t0 aligned to the robot's current phase.
-
-        We choose the nearest early-horizon knot to current pose/velocity and set
-        t0 so that STM32 time interpolation samples that knot now.
-        """
-        if pose_now is None:
-            return 0
-
-        pose_now_ms = int(pose_now.pose_t_ms)
-        if not knots or dt_s <= 1e-6:
-            return max(0, pose_now_ms)
-
-        max_idx = min(len(knots) - 1, max(0, int(self._traj_phase_search_knots)))
-        px = float(pose_now.x)
-        py = float(pose_now.y)
-        pvx = float(pose_now.vx)
-        pvy = float(pose_now.vy)
-
-        best_idx = 0
-        best_cost = float("inf")
-        vel_weight = 0.15
-
-        for i in range(max_idx + 1):
-            kx, ky, _kyaw, kvx, kvy = knots[i]
-            dx = float(kx) - px
-            dy = float(ky) - py
-            dvx = float(kvx) - pvx
-            dvy = float(kvy) - pvy
-            cost = (dx * dx + dy * dy) + vel_weight * (dvx * dvx + dvy * dvy)
-            if cost < best_cost:
-                best_cost = cost
-                best_idx = i
-
-        dt_ms = max(1, int(round(dt_s * 1000.0)))
-        return max(0, pose_now_ms - best_idx * dt_ms)
-
     def _default_get_trajectory(self) -> Optional[Trajectory]:
-        """Forward the latest ROS2 trajectory knots without modifying values."""
+        """Forward the latest ROS2 trajectory as a time-aligned rolling window."""
         with self.ros2_bridge.path_lock:
             latest_path = self.ros2_bridge.latest_path
 
         if latest_path is not None and not latest_path.poses:
             return None
 
-        path_points = self.ros2_bridge.get_planned_path_points(max_points=64)
-        path_velocities = self.ros2_bridge.get_planned_path_velocities(max_points=64)
+        planner_data_fresh = self.ros2_bridge.planner_data_is_fresh(max_age_ms=800)
+        path_points = self.ros2_bridge.get_planned_path_points(max_points=None) if planner_data_fresh else []
+        path_velocities = self.ros2_bridge.get_planned_path_velocities(max_points=None) if planner_data_fresh else []
+        planner_rx_ms = self.ros2_bridge.get_planner_data_rx_ms() if planner_data_fresh else 0
         now_ms = self._now_ms()
 
         if not path_points or not path_velocities:
-            if self._last_valid_traj is not None:
+            if planner_data_fresh and self._last_valid_traj is not None:
                 return self._last_valid_traj
 
             # Keep publishing a short-horizon HOLD knot whenever no valid path
@@ -1493,12 +1496,15 @@ class OMNIUDPServer:
 
             self._hold_until_ms = now_ms + 500
 
+            self._active_traj_signature = None
+            self._active_traj_t0_ms = None
+
             if self._hold_knot is not None and now_ms <= self._hold_until_ms:
                 hold_t0_ms = int(self._hold_traj_t0_ms) if self._hold_traj_t0_ms is not None else 0
                 return Trajectory(
                     reply_to_pose_seq=self._last_pose_seq,
                     traj_t0_ms=hold_t0_ms,
-                    dt=0.01,
+                    dt=TRAJ_KNOT_DT_S,
                     knots=[self._hold_knot],
                     flags=1,
                 )
@@ -1523,11 +1529,9 @@ class OMNIUDPServer:
         self._hold_traj_t0_ms = None
         self._hold_until_ms = 0
 
-        # The MCU accepts a short fixed-horizon packet; keep the knot spacing
-        # aligned to the planner's 100 Hz output so the received lookahead stays
-        # within the firmware limits.
-        dt = 0.01
-        knots: List[Tuple[float, float, float, float, float]] = []
+        # Build the full planner horizon, then transmit only the time-aligned
+        # rolling slice the STM32 should be consuming now.
+        all_knots: List[Tuple[float, float, float, float, float]] = []
 
         with self.pose_lock:
             latest_pose = self.latest_pose
@@ -1550,16 +1554,31 @@ class OMNIUDPServer:
             )
             if live_yaw_stm is not None:
                 yaw_stm = float(live_yaw_stm)
-            knots.append((x_stm, y_stm, yaw_stm, vx_stm, vy_stm))
+            all_knots.append((x_stm, y_stm, yaw_stm, vx_stm, vy_stm))
 
-        # Align trajectory time phase to the current STM32 pose so replan updates
-        # remain continuous and avoid replaying a stale packet prefix.
-        traj_t0_ms = self._phase_aligned_traj_t0_ms(knots, dt, latest_pose)
+        traj_signature = self._trajectory_signature(all_knots)
+        plan_rx_ms = planner_rx_ms if planner_rx_ms > 0 else now_ms
+        if self._active_traj_signature != traj_signature:
+            self._active_traj_signature = traj_signature
+            self._active_traj_t0_ms = self._estimate_stm32_time_ms(plan_rx_ms, latest_pose)
+
+        plan_t0_ms = int(self._active_traj_t0_ms) if self._active_traj_t0_ms is not None else 0
+        stm32_now_ms = self._estimate_stm32_time_ms(now_ms, latest_pose)
+        elapsed_ms = max(0, stm32_now_ms - plan_t0_ms) if plan_t0_ms > 0 else 0
+        slice_start = min(len(all_knots) - 1, elapsed_ms // TRAJ_KNOT_DT_MS) if all_knots else 0
+        slice_end = min(len(all_knots), slice_start + TRAJ_TX_MAX_KNOTS)
+        knots = all_knots[slice_start:slice_end]
+
+        if not knots and all_knots:
+            slice_start = len(all_knots) - 1
+            knots = [all_knots[-1]]
+
+        traj_t0_ms = plan_t0_ms + (slice_start * TRAJ_KNOT_DT_MS) if plan_t0_ms > 0 else 0
 
         traj = Trajectory(
             reply_to_pose_seq=self._last_pose_seq,
             traj_t0_ms=traj_t0_ms,
-            dt=dt,
+            dt=TRAJ_KNOT_DT_S,
             knots=knots,
             flags=0,
         )
@@ -1677,7 +1696,14 @@ class ROS2Bridge:
 
         return (path_age_ms <= max_age_ms) and (vel_age_ms <= max_age_ms)
 
-    def get_planned_path_points(self, max_points: int = 64) -> List[Tuple[float, float, Optional[float]]]:
+    def get_planner_data_rx_ms(self) -> int:
+        """Return the most recent planner update time on the Pi monotonic clock."""
+        with self.path_lock:
+            if self.latest_path is None or self.latest_velocities is None:
+                return 0
+            return max(int(self.latest_path_rx_ms), int(self.latest_vel_rx_ms))
+
+    def get_planned_path_points(self, max_points: Optional[int] = 64) -> List[Tuple[float, float, Optional[float]]]:
         """Return uniformly sampled [(x,y,yaw|None), ...] from the latest /planned_path."""
         with self.path_lock:
             path = self.latest_path
@@ -1694,7 +1720,8 @@ class ROS2Bridge:
         s = math.sin(yaw_tf)
 
         pts: List[Tuple[float, float, Optional[float]]] = []
-        for ps in path.poses[:max_points]:
+        poses = path.poses if max_points is None else path.poses[:max_points]
+        for ps in poses:
             x_src = float(ps.pose.position.x)
             y_src = float(ps.pose.position.y)
             x_odom = c * x_src - s * y_src + tx
@@ -1715,7 +1742,7 @@ class ROS2Bridge:
             pts.append((x_odom, y_odom, yaw))
         return pts
 
-    def get_planned_path_velocities(self, max_points: int = 64) -> List[Tuple[float, float]]:
+    def get_planned_path_velocities(self, max_points: Optional[int] = 64) -> List[Tuple[float, float]]:
         """Return uniformly sampled [(vx, vy), ...] from the latest /planned_path_velocities."""
         with self.path_lock:
             vels = self.latest_velocities
@@ -1733,7 +1760,8 @@ class ROS2Bridge:
         s = math.sin(yaw_tf)
 
         out: List[Tuple[float, float]] = []
-        for vx_src, vy_src in vels[:max_points]:
+        vel_points = vels if max_points is None else vels[:max_points]
+        for vx_src, vy_src in vel_points:
             vx_odom = c * float(vx_src) - s * float(vy_src)
             vy_odom = s * float(vx_src) + c * float(vy_src)
             out.append((vx_odom, vy_odom))
