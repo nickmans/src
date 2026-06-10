@@ -45,6 +45,7 @@ class AppConfig:
 
     cmd_joy: str
     cmd_focus: str
+    cmd_face_forward: str
     cmd_rotate_template: str
     cmd_dir_template: str
     cmd_speed_template: str
@@ -85,6 +86,7 @@ def get_config() -> AppConfig:
 
     cmd_joy = os.getenv("CMD_JOY", "joy")
     cmd_focus = os.getenv("CMD_FOCUS", "focus")
+    cmd_face_forward = os.getenv("CMD_FACE_FORWARD", "face")
     cmd_rotate_template = os.getenv("CMD_ROTATE_TEMPLATE", "w {value}")
     cmd_dir_template = os.getenv("CMD_DIR_TEMPLATE", "dir {angle}")
     cmd_speed_template = os.getenv("CMD_SPEED_TEMPLATE", "speed {speed}")
@@ -113,6 +115,7 @@ def get_config() -> AppConfig:
         bt_reconnect_interval_s=bt_reconnect_interval_s,
         cmd_joy=cmd_joy,
         cmd_focus=cmd_focus,
+        cmd_face_forward=cmd_face_forward,
         cmd_rotate_template=cmd_rotate_template,
         cmd_dir_template=cmd_dir_template,
         cmd_speed_template=cmd_speed_template,

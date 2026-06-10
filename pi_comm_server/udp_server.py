@@ -1458,13 +1458,18 @@ class OMNIUDPServer:
 
     def _default_get_trajectory(self) -> Optional[Trajectory]:
         """Forward the latest ROS2 trajectory knots without modifying values."""
-        planner_data_fresh = self.ros2_bridge.planner_data_is_fresh(max_age_ms=800)
-        path_points = self.ros2_bridge.get_planned_path_points(max_points=64) if planner_data_fresh else []
-        path_velocities = self.ros2_bridge.get_planned_path_velocities(max_points=64) if planner_data_fresh else []
+        with self.ros2_bridge.path_lock:
+            latest_path = self.ros2_bridge.latest_path
+
+        if latest_path is not None and not latest_path.poses:
+            return None
+
+        path_points = self.ros2_bridge.get_planned_path_points(max_points=64)
+        path_velocities = self.ros2_bridge.get_planned_path_velocities(max_points=64)
         now_ms = self._now_ms()
 
         if not path_points or not path_velocities:
-            if planner_data_fresh and self._last_valid_traj is not None:
+            if self._last_valid_traj is not None:
                 return self._last_valid_traj
 
             # Keep publishing a short-horizon HOLD knot whenever no valid path
@@ -1518,8 +1523,9 @@ class OMNIUDPServer:
         self._hold_traj_t0_ms = None
         self._hold_until_ms = 0
 
-        # Planner publishes knots at 100 Hz; keep TRAJ knot spacing metadata aligned
-        # even though the full TRAJ packet is refreshed at 5 Hz.
+        # The MCU accepts a short fixed-horizon packet; keep the knot spacing
+        # aligned to the planner's 100 Hz output so the received lookahead stays
+        # within the firmware limits.
         dt = 0.01
         knots: List[Tuple[float, float, float, float, float]] = []
 
@@ -1672,7 +1678,7 @@ class ROS2Bridge:
         return (path_age_ms <= max_age_ms) and (vel_age_ms <= max_age_ms)
 
     def get_planned_path_points(self, max_points: int = 64) -> List[Tuple[float, float, Optional[float]]]:
-        """Return [(x,y,yaw|None), ...] from the latest /planned_path."""
+        """Return uniformly sampled [(x,y,yaw|None), ...] from the latest /planned_path."""
         with self.path_lock:
             path = self.latest_path
 
@@ -1710,7 +1716,7 @@ class ROS2Bridge:
         return pts
 
     def get_planned_path_velocities(self, max_points: int = 64) -> List[Tuple[float, float]]:
-        """Return [(vx, vy), ...] from the latest /planned_path_velocities."""
+        """Return uniformly sampled [(vx, vy), ...] from the latest /planned_path_velocities."""
         with self.path_lock:
             vels = self.latest_velocities
             path = self.latest_path

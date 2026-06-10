@@ -9,6 +9,7 @@ const spin2Btn = document.getElementById("spin2Btn");
 const spin1Btn = document.getElementById("spin1Btn");
 const spin0Btn = document.getElementById("spin0Btn");
 const focusBtn = document.getElementById("focusBtn");
+const faceForwardBtn = document.getElementById("faceForwardBtn");
 const estopBtn = document.getElementById("estopBtn");
 const operatorNoticeEl = document.getElementById("operatorNotice");
 
@@ -20,8 +21,10 @@ let holdSendTimer = null;
 const HOLD_RESEND_MS = 50;
 let joyModeEnabled = false;
 let focusEnabled = false;
+let faceForwardEnabled = false;
 let controllerBusy = false;
 let lastFocusRequestMs = 0;
+let lastFaceForwardRequestMs = 0;
 
 const joystickState = {
   x: 0,
@@ -67,11 +70,16 @@ function renderJoyModeButton() {
   spin1Btn.disabled = disableControls || !joyModeEnabled;
   spin0Btn.disabled = disableControls || !joyModeEnabled;
   focusBtn.disabled = disableControls;
+  faceForwardBtn.disabled = disableControls;
   joystickEl.classList.toggle("disabled", disableControls);
 }
 
 function renderFocusButton() {
   focusBtn.textContent = focusEnabled ? "focus off" : "focus on";
+}
+
+function renderFaceForwardButton() {
+  faceForwardBtn.textContent = faceForwardEnabled ? "face fwd off" : "face fwd on";
 }
 
 function requestFocusToggle() {
@@ -84,7 +92,29 @@ function requestFocusToggle() {
   const nextFocusEnabled = !focusEnabled;
   if (sendWsMessage({ type: "focus", enabled: nextFocusEnabled })) {
     focusEnabled = nextFocusEnabled;
+    if (focusEnabled) {
+      faceForwardEnabled = false;
+      renderFaceForwardButton();
+    }
     renderFocusButton();
+  }
+}
+
+function requestFaceForwardToggle() {
+  const nowMs = Date.now();
+  if (nowMs - lastFaceForwardRequestMs < 200) {
+    return;
+  }
+  lastFaceForwardRequestMs = nowMs;
+
+  const nextFaceForwardEnabled = !faceForwardEnabled;
+  if (sendWsMessage({ type: "face_forward", enabled: nextFaceForwardEnabled })) {
+    faceForwardEnabled = nextFaceForwardEnabled;
+    if (faceForwardEnabled) {
+      focusEnabled = false;
+      renderFocusButton();
+    }
+    renderFaceForwardButton();
   }
 }
 
@@ -145,8 +175,10 @@ function connectWebSocket() {
         speedValueEl.textContent = String(msg.speed);
         joyModeEnabled = !!msg.joy_enabled;
         focusEnabled = !!msg.focus_enabled;
+        faceForwardEnabled = !!msg.face_forward_enabled;
         renderJoyModeButton();
         renderFocusButton();
+        renderFaceForwardButton();
         const transport = (msg.transport || "link").toUpperCase();
         updatePill(
           btStatusEl,
@@ -289,6 +321,21 @@ focusBtn.addEventListener("pointerup", (event) => {
   requestFocusToggle();
 });
 
+faceForwardBtn.addEventListener("click", () => {
+  if (controllerBusy) {
+    return;
+  }
+  requestFaceForwardToggle();
+});
+
+faceForwardBtn.addEventListener("pointerup", (event) => {
+  if (controllerBusy) {
+    return;
+  }
+  event.preventDefault();
+  requestFaceForwardToggle();
+});
+
 estopBtn.addEventListener("click", () => {
   if (controllerBusy) {
     return;
@@ -305,3 +352,4 @@ window.addEventListener("beforeunload", () => {
 connectWebSocket();
 renderJoyModeButton();
 renderFocusButton();
+renderFaceForwardButton();

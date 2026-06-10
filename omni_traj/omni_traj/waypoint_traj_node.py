@@ -4906,12 +4906,6 @@ class WaypointTrajNode(Node):
             if yaw_delta >= float(self.get_parameter("trajectory_replan_min_yaw_rad").value):
                 return True
 
-        replan_hz = max(0.05, float(self.get_parameter("trajectory_replan_hz").value))
-        period_ns = int(1e9 / replan_hz)
-        now_ns = self.get_clock().now().nanoseconds
-        if now_ns - self._last_plan_ns >= period_ns:
-            return True
-
         return False
     
     def save_trajectory_json(self, xs: List[float], ys: List[float], yaws: List[float], velocities: List[float], vxs: List[float], vys: List[float]) -> None:

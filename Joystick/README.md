@@ -202,11 +202,16 @@ Focus mode command (sent from the side Focus button):
 
     CMD_FOCUS=focus
 
+Face-forward mode command (sent from the side Face Forward button):
+
+    CMD_FACE_FORWARD=face
+
 ## Web UI Controls
 
 - Enable Joystick Mode: sends joy once
 - Emergency Stop: immediate zero command
 - Focus: sends a focus toggle command (`focus`) and STM32 toggles focus mode
+- Face Forward: sends a face-forward toggle command (`face`) and STM32 aligns yaw with joystick velocity direction
 - Big touch joystick with center snap-back
 - Live display: angle, speed, websocket status, bluetooth status
 

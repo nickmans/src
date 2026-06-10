@@ -14,6 +14,7 @@ CMD_JOY_MODE_OFF = 101
 CMD_JOY_VECTOR = 102
 CMD_JOY_SPIN = 103
 CMD_JOY_FOCUS = 104
+CMD_JOY_FACE_FORWARD = 105
 
 
 class EthernetUdpLink:
@@ -111,3 +112,14 @@ class EthernetUdpLink:
 
         arg = struct.pack("<B", 1 if enabled else 0)
         return self._send(CMD_JOY_FOCUS, arg, f"focus {'on' if enabled else 'off'}")
+
+    def send_face_forward(self, enabled: Optional[bool] = None) -> bool:
+        if enabled is None:
+            return self._send(CMD_JOY_FACE_FORWARD, b"", "face-forward toggle")
+
+        arg = struct.pack("<B", 1 if enabled else 0)
+        return self._send(
+            CMD_JOY_FACE_FORWARD,
+            arg,
+            f"face-forward {'on' if enabled else 'off'}",
+        )

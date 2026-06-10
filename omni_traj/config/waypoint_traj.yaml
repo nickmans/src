@@ -52,7 +52,7 @@ waypoint_traj:
     blank_geofence_height_m: 7.0
     blank_geofence_align_to_start_yaw: false
 
-    hard_inflate_radius: 0.25
+    hard_inflate_radius: 0.3
     soft_inflate_radius: 0.0
     planning_obstacle_hysteresis_enable: true
     planning_hard_obstacle_confirm_scans: 1
@@ -65,7 +65,7 @@ waypoint_traj:
  
     wheel_radius_m: 0.09
     wheelbase_m: 0.200
-    max_wheel_acceleration_ms2: 1.4
+    max_wheel_acceleration_ms2: 1.0
     max_wheel_jerk_rs3: 200.0
     braking_decel_safety_factor: 0.95
     max_linear_velocity_ms: 0.8
